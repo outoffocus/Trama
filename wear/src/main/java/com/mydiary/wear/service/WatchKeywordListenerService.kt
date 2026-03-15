@@ -8,7 +8,6 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.BatteryManager
 import android.os.Build
-import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
@@ -42,7 +41,6 @@ class WatchKeywordListenerService : LifecycleService() {
     private var audioRecorder: AudioRecorder? = null
     private var speechEngine: SpeechEngine? = null
     private var audioJob: Job? = null
-    private var wakeLock: PowerManager.WakeLock? = null
     private var repository: DiaryRepository? = null
 
     private val defaultKeywords = listOf("recordar", "nota", "destacar", "pendiente")
@@ -73,17 +71,18 @@ class WatchKeywordListenerService : LifecycleService() {
             startForeground(NOTIFICATION_ID, buildNotification("Inicializando..."))
         }
 
-        acquireWakeLock()
         loadModelAndStart()
 
         return START_STICKY
     }
 
     override fun onDestroy() {
+        // Order matters: stop recorder first to unblock read(), then cancel job, then close engine
+        audioRecorder?.stop()
+        audioRecorder = null
         stopAudioLoop()
         speechEngine?.close()
-        audioRecorder?.stop()
-        releaseWakeLock()
+        speechEngine = null
         super.onDestroy()
     }
 
@@ -97,6 +96,11 @@ class WatchKeywordListenerService : LifecycleService() {
     }
 
     private fun loadModelAndStart() {
+        // Guard against double-start
+        if (audioJob != null) {
+            Log.w(TAG, "Audio loop already running, skipping start")
+            return
+        }
         VoskModelManager.load(
             context = this,
             onReady = { model ->
@@ -124,22 +128,39 @@ class WatchKeywordListenerService : LifecycleService() {
         updateNotification("Escuchando...")
 
         audioJob = lifecycleScope.launch(Dispatchers.Default) {
-            val buffer = ByteArray(audioRecorder!!.bufferSize)
-            val engine = speechEngine!!
+            val readSize = 4096
+            val buffer = ByteArray(readSize)
+            val engine = speechEngine ?: return@launch
+            val recorder = audioRecorder ?: return@launch
+            var frameCount = 0
+
+            // Discard first 3 reads to let AudioRecord stabilize
+            repeat(3) {
+                if (!isActive) return@launch
+                recorder.read(buffer)
+            }
 
             while (isActive) {
-                if (isBatteryLow()) {
-                    Log.w(TAG, "Battery low, pausing service")
-                    updateNotification("Pausado: batería baja")
-                    stopSelf()
-                    return@launch
-                }
-
-                val bytesRead = audioRecorder!!.read(buffer)
+                val bytesRead = recorder.read(buffer)
                 if (bytesRead <= 0) continue
 
+                // Check battery every ~30 seconds
+                if (++frameCount % 3600 == 0) {
+                    if (isBatteryLow()) {
+                        Log.w(TAG, "Battery low, pausing service")
+                        updateNotification("Pausado: batería baja")
+                        stopSelf()
+                        return@launch
+                    }
+                }
+
                 val wasRecording = engine.isRecording
-                val entry = engine.acceptWaveForm(buffer, bytesRead)
+                val entry = try {
+                    engine.acceptWaveForm(buffer, bytesRead)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Vosk processing error", e)
+                    null
+                }
 
                 if (!wasRecording && engine.isRecording) {
                     updateNotification("Grabando...")
@@ -156,8 +177,9 @@ class WatchKeywordListenerService : LifecycleService() {
 
     private fun saveEntry(keyword: String, text: String, confidence: Float) {
         lifecycleScope.launch(Dispatchers.IO) {
+            val fullText = if (text.startsWith(keyword, ignoreCase = true)) text else "$keyword $text"
             val entry = DiaryEntry(
-                text = text,
+                text = fullText,
                 keyword = keyword,
                 category = Category.fromKeyword(keyword),
                 confidence = confidence,
@@ -207,18 +229,5 @@ class WatchKeywordListenerService : LifecycleService() {
     private fun updateNotification(text: String) {
         getSystemService(NotificationManager::class.java)
             .notify(NOTIFICATION_ID, buildNotification(text))
-    }
-
-    private fun acquireWakeLock() {
-        val pm = getSystemService(PowerManager::class.java)
-        wakeLock = pm.newWakeLock(
-            PowerManager.PARTIAL_WAKE_LOCK,
-            "MyDiary::WatchListener"
-        ).apply { acquire() }
-    }
-
-    private fun releaseWakeLock() {
-        wakeLock?.let { if (it.isHeld) it.release() }
-        wakeLock = null
     }
 }

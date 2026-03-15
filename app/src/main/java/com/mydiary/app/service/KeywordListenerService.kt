@@ -210,8 +210,9 @@ class KeywordListenerService : LifecycleService() {
 
     private fun saveEntry(keyword: String, text: String, confidence: Float) {
         lifecycleScope.launch(Dispatchers.IO) {
+            val fullText = if (text.startsWith(keyword, ignoreCase = true)) text else "$keyword $text"
             val entry = DiaryEntry(
-                text = text,
+                text = fullText,
                 keyword = keyword,
                 category = keywordCategoryMap[keyword] ?: Category.fromKeyword(keyword),
                 confidence = confidence,
