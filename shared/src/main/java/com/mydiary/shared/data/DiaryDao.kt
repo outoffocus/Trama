@@ -1,0 +1,37 @@
+package com.mydiary.shared.data
+
+import androidx.room.Dao
+import androidx.room.Delete
+import androidx.room.Insert
+import androidx.room.Query
+import com.mydiary.shared.model.Category
+import com.mydiary.shared.model.DiaryEntry
+import kotlinx.coroutines.flow.Flow
+
+@Dao
+interface DiaryDao {
+
+    @Query("SELECT * FROM diary_entries ORDER BY createdAt DESC")
+    fun getAll(): Flow<List<DiaryEntry>>
+
+    @Query("SELECT * FROM diary_entries WHERE category = :category ORDER BY createdAt DESC")
+    fun byCategory(category: Category): Flow<List<DiaryEntry>>
+
+    @Query("SELECT * FROM diary_entries WHERE createdAt BETWEEN :startTime AND :endTime ORDER BY createdAt DESC")
+    fun byDateRange(startTime: Long, endTime: Long): Flow<List<DiaryEntry>>
+
+    @Query("SELECT * FROM diary_entries WHERE isSynced = 0")
+    suspend fun getUnsynced(): List<DiaryEntry>
+
+    @Query("SELECT * FROM diary_entries WHERE text LIKE '%' || :query || '%' ORDER BY createdAt DESC")
+    fun search(query: String): Flow<List<DiaryEntry>>
+
+    @Insert
+    suspend fun insert(entry: DiaryEntry): Long
+
+    @Delete
+    suspend fun delete(entry: DiaryEntry): Int
+
+    @Query("UPDATE diary_entries SET isSynced = 1 WHERE id IN (:ids)")
+    suspend fun markSynced(ids: List<Long>): Int
+}

@@ -1,0 +1,48 @@
+# Built application files
+*.apk
+*.aar
+*.ap_
+*.aab
+
+# Files for the ART/Dalvik VM
+*.dex
+
+# Java class files
+*.class
+
+# Generated files
+bin/
+gen/
+out/
+build/
+
+# Gradle files
+.gradle/
+local.properties
+
+# Android Studio
+.idea/
+*.iml
+*.hprof
+.cxx/
+
+# Signing files
+*.jks
+*.keystore
+
+# Google Services (if applicable)
+google-services.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Vosk model files (large binary, download separately)
+app/src/main/assets/model-es/am/
+app/src/main/assets/model-es/graph/
+app/src/main/assets/model-es/ivector/
+app/src/main/assets/model-es/conf/
+wear/src/main/assets/model-es/am/
+wear/src/main/assets/model-es/graph/
+wear/src/main/assets/model-es/ivector/
+wear/src/main/assets/model-es/conf/
