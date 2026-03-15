@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.mydiary.shared.model.Category
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -18,10 +19,10 @@ class SettingsDataStore(private val context: Context) {
     companion object {
         val RECORDING_DURATION = intPreferencesKey("recording_duration")
         val AUTO_START = booleanPreferencesKey("auto_start")
-        val KEYWORDS = stringPreferencesKey("keywords")
+        val KEYWORD_MAPPINGS = stringPreferencesKey("keyword_mappings")
 
         const val DEFAULT_DURATION = 10
-        const val DEFAULT_KEYWORDS = "recordar,nota,destacar,pendiente"
+        const val DEFAULT_MAPPINGS = "recordar:TODO,nota:NOTE,destacar:HIGHLIGHT,pendiente:REMINDER"
     }
 
     val recordingDuration: Flow<Int> = context.dataStore.data.map { prefs ->
@@ -32,9 +33,11 @@ class SettingsDataStore(private val context: Context) {
         prefs[AUTO_START] ?: false
     }
 
-    val keywords: Flow<List<String>> = context.dataStore.data.map { prefs ->
-        (prefs[KEYWORDS] ?: DEFAULT_KEYWORDS).split(",").map { it.trim() }
+    val keywordMappings: Flow<Map<String, Category>> = context.dataStore.data.map { prefs ->
+        parseMappings(prefs[KEYWORD_MAPPINGS] ?: DEFAULT_MAPPINGS)
     }
+
+    val keywords: Flow<List<String>> = keywordMappings.map { it.keys.toList() }
 
     suspend fun setRecordingDuration(seconds: Int) {
         context.dataStore.edit { it[RECORDING_DURATION] = seconds }
@@ -44,7 +47,23 @@ class SettingsDataStore(private val context: Context) {
         context.dataStore.edit { it[AUTO_START] = enabled }
     }
 
-    suspend fun setKeywords(keywords: List<String>) {
-        context.dataStore.edit { it[KEYWORDS] = keywords.joinToString(",") }
+    suspend fun setKeywordMappings(mappings: Map<String, Category>) {
+        val raw = mappings.entries.joinToString(",") { "${it.key}:${it.value.name}" }
+        context.dataStore.edit { it[KEYWORD_MAPPINGS] = raw }
+    }
+
+    private fun parseMappings(raw: String): Map<String, Category> {
+        return raw.split(",").mapNotNull { pair ->
+            val parts = pair.trim().split(":")
+            if (parts.size == 2) {
+                val keyword = parts[0].trim().lowercase()
+                val category = try {
+                    Category.valueOf(parts[1].trim())
+                } catch (e: Exception) {
+                    Category.NOTE
+                }
+                keyword to category
+            } else null
+        }.toMap()
     }
 }

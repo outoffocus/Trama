@@ -1,5 +1,11 @@
 package com.mydiary.app.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Search
@@ -24,29 +31,31 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import android.Manifest
-import android.content.pm.PackageManager
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import com.mydiary.app.service.ServiceController
 import com.mydiary.app.ui.DatabaseProvider
 import com.mydiary.app.ui.components.CategoryChip
 import com.mydiary.app.ui.components.EntryCard
 import com.mydiary.shared.model.Category
-import com.mydiary.shared.model.DiaryEntry
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -60,6 +69,7 @@ fun HomeScreen(
 ) {
     val context = LocalContext.current
     val repository = remember { DatabaseProvider.getRepository(context) }
+    val scope = rememberCoroutineScope()
     var selectedCategory by remember { mutableStateOf<Category?>(null) }
     var serviceRunning by remember { mutableStateOf(ServiceController.isRunning(context)) }
 
@@ -77,7 +87,6 @@ fun HomeScreen(
         else repository.getAll()
     ).collectAsState(initial = emptyList())
 
-    // Group entries by date
     val dateFormat = SimpleDateFormat("dd MMMM yyyy", Locale("es"))
     val grouped = entries.groupBy { dateFormat.format(Date(it.createdAt)) }
 
@@ -123,7 +132,6 @@ fun HomeScreen(
         }
     ) { padding ->
         Column(modifier = Modifier.padding(padding)) {
-            // Category filter chips
             FlowRow(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -147,7 +155,7 @@ fun HomeScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "No hay entradas aún.\nDi \"recordar\" para empezar.",
+                        text = "No hay entradas aún.\nDi una palabra clave para empezar.",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -158,7 +166,7 @@ fun HomeScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     grouped.forEach { (date, dateEntries) ->
-                        item {
+                        item(key = "header_$date") {
                             Text(
                                 text = date,
                                 style = MaterialTheme.typography.titleMedium,
@@ -166,12 +174,49 @@ fun HomeScreen(
                             )
                         }
                         items(dateEntries, key = { it.id }) { entry ->
-                            EntryCard(
-                                entry = entry,
-                                onClick = { onEntryClick(entry.id) }
+                            val dismissState = rememberSwipeToDismissBoxState(
+                                confirmValueChange = { value ->
+                                    if (value == SwipeToDismissBoxValue.EndToStart) {
+                                        scope.launch { repository.deleteById(entry.id) }
+                                        true
+                                    } else false
+                                }
                             )
+
+                            SwipeToDismissBox(
+                                state = dismissState,
+                                backgroundContent = {
+                                    val color by animateColorAsState(
+                                        if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart)
+                                            MaterialTheme.colorScheme.errorContainer
+                                        else Color.Transparent,
+                                        label = "swipe_bg"
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .background(color, MaterialTheme.shapes.medium)
+                                            .padding(end = 20.dp),
+                                        contentAlignment = Alignment.CenterEnd
+                                    ) {
+                                        if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart) {
+                                            Icon(
+                                                Icons.Default.Delete,
+                                                contentDescription = "Eliminar",
+                                                tint = MaterialTheme.colorScheme.onErrorContainer
+                                            )
+                                        }
+                                    }
+                                },
+                                enableDismissFromStartToEnd = false
+                            ) {
+                                EntryCard(
+                                    entry = entry,
+                                    onClick = { onEntryClick(entry.id) }
+                                )
+                            }
                         }
-                        item { Spacer(modifier = Modifier.height(8.dp)) }
+                        item(key = "spacer_$date") { Spacer(modifier = Modifier.height(8.dp)) }
                     }
                 }
             }

@@ -49,6 +49,12 @@ class KeywordListenerService : LifecycleService() {
     private lateinit var settings: SettingsDataStore
 
     private var keywords = listOf("recordar", "nota", "destacar", "pendiente")
+    private var keywordCategoryMap = mapOf(
+        "recordar" to Category.TODO,
+        "nota" to Category.NOTE,
+        "destacar" to Category.HIGHLIGHT,
+        "pendiente" to Category.REMINDER
+    )
     private var recordingDurationSec = 10
 
     override fun onCreate() {
@@ -84,14 +90,15 @@ class KeywordListenerService : LifecycleService() {
         stopAudioLoop()
         speechEngine?.close()
         speechEngine = null
+        ServiceController.notifyStopped()
         super.onDestroy()
     }
 
     private fun loadSettings() {
-        // Read settings synchronously at startup (fast, local DataStore)
         runBlocking {
             recordingDurationSec = settings.recordingDuration.first()
-            keywords = settings.keywords.first()
+            keywordCategoryMap = settings.keywordMappings.first()
+            keywords = keywordCategoryMap.keys.toList()
         }
     }
 
@@ -206,7 +213,7 @@ class KeywordListenerService : LifecycleService() {
             val entry = DiaryEntry(
                 text = text,
                 keyword = keyword,
-                category = Category.fromKeyword(keyword),
+                category = keywordCategoryMap[keyword] ?: Category.fromKeyword(keyword),
                 confidence = confidence,
                 source = Source.PHONE,
                 duration = recordingDurationSec

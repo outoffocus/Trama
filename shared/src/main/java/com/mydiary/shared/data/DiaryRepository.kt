@@ -21,5 +21,11 @@ class DiaryRepository(private val dao: DiaryDao) {
 
     suspend fun delete(entry: DiaryEntry) = dao.delete(entry)
 
+    suspend fun deleteById(id: Long) = dao.deleteById(id)
+
+    suspend fun updateText(id: Long, text: String) = dao.updateText(id, text)
+
+    suspend fun updateCategory(id: Long, category: Category) = dao.updateCategory(id, category)
+
     suspend fun markSynced(ids: List<Long>) = dao.markSynced(ids)
 }

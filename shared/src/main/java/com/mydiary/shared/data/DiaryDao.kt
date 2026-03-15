@@ -32,6 +32,15 @@ interface DiaryDao {
     @Delete
     suspend fun delete(entry: DiaryEntry): Int
 
+    @Query("DELETE FROM diary_entries WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
+    @Query("UPDATE diary_entries SET text = :text WHERE id = :id")
+    suspend fun updateText(id: Long, text: String)
+
+    @Query("UPDATE diary_entries SET category = :category WHERE id = :id")
+    suspend fun updateCategory(id: Long, category: Category)
+
     @Query("UPDATE diary_entries SET isSynced = 1 WHERE id IN (:ids)")
     suspend fun markSynced(ids: List<Long>): Int
 }
