@@ -4,7 +4,11 @@
       "WebFetch(domain:github.com)",
       "WebFetch(domain:alphacephei.com)",
       "Bash(mkdir -p /Users/pabmon/.claude/session-env/fe8ffc16-6778-4d34-bc53-2a64d638b94e)",
-      "Bash(gh auth:*)"
+      "Bash(gh auth:*)",
+      "Bash(./gradlew :app:compileDebugKotlin)",
+      "Bash(/Users/pabmon/Documents/Projects/MyDiary/gradlew :app:compileDebugKotlin)",
+      "WebSearch",
+      "WebFetch(domain:developers.google.com)"
     ]
   }
 }

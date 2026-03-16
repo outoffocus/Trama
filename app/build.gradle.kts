@@ -58,6 +58,9 @@ dependencies {
     // Vosk speech recognition
     implementation(libs.vosk.android)
 
+    // Gemini Nano on-device AI
+    implementation(libs.mlkit.genai.prompt)
+
     // Compose
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.material3)

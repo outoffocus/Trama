@@ -21,7 +21,7 @@ data class SyncEntry(
     fun toDiaryEntry(): DiaryEntry = DiaryEntry(
         text = text,
         keyword = keyword,
-        category = Category.valueOf(category),
+        category = category,
         confidence = confidence,
         createdAt = createdAt,
         source = Source.valueOf(source),
@@ -34,7 +34,7 @@ data class SyncEntry(
             id = entry.id,
             text = entry.text,
             keyword = entry.keyword,
-            category = entry.category.name,
+            category = entry.category,
             confidence = entry.confidence,
             createdAt = entry.createdAt,
             source = entry.source.name,

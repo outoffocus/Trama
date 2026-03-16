@@ -9,7 +9,7 @@ data class DiaryEntry(
     val id: Long = 0,
     val text: String,
     val keyword: String,
-    val category: Category,
+    val category: String,
     val confidence: Float,
     val createdAt: Long = System.currentTimeMillis(),
     val source: Source,

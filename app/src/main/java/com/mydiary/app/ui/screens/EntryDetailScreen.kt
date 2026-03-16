@@ -43,14 +43,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.mydiary.app.speech.PersonalDictionary
 import com.mydiary.app.ui.DatabaseProvider
-import com.mydiary.app.ui.theme.HighlightColor
-import com.mydiary.app.ui.theme.NoteColor
-import com.mydiary.app.ui.theme.ReminderColor
-import com.mydiary.app.ui.theme.TodoColor
-import com.mydiary.shared.model.Category
+import com.mydiary.app.ui.SettingsDataStore
+import com.mydiary.shared.model.CategoryInfo
 import com.mydiary.shared.model.Source
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -65,31 +64,35 @@ fun EntryDetailScreen(
 ) {
     val context = LocalContext.current
     val repository = remember { DatabaseProvider.getRepository(context) }
+    val settings = remember { SettingsDataStore(context) }
+    val dictionary = remember { PersonalDictionary(context) }
     val scope = rememberCoroutineScope()
 
-    val entries by repository.getAll().collectAsState(initial = emptyList())
-    val entry = entries.find { it.id == entryId }
+    val entry by repository.getById(entryId).collectAsState(initial = null)
+    val categories by settings.categories.collectAsState(initial = CategoryInfo.DEFAULTS)
 
     var showDeleteDialog by remember { mutableStateOf(false) }
     var isEditing by remember { mutableStateOf(false) }
     var editedText by remember(entry?.text) { mutableStateOf(entry?.text ?: "") }
 
-    if (entry == null) {
-        onBack()
+    val currentEntry = entry
+    if (currentEntry == null) {
         return
     }
 
+    val catInfo = categories.find { it.id == currentEntry.category }
+    val catLabel = catInfo?.label ?: currentEntry.category
     val dateFormat = SimpleDateFormat("dd MMMM yyyy, HH:mm", Locale("es"))
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(categoryLabel(entry.category)) },
+                title = { Text(catLabel) },
                 navigationIcon = {
                     IconButton(onClick = {
                         if (isEditing) {
                             isEditing = false
-                            editedText = entry.text
+                            editedText = currentEntry.text
                         } else {
                             onBack()
                         }
@@ -104,7 +107,9 @@ fun EntryDetailScreen(
                     if (isEditing) {
                         IconButton(onClick = {
                             scope.launch {
-                                repository.updateText(entryId, editedText.trim())
+                                val trimmed = editedText.trim()
+                                repository.updateText(entryId, trimmed)
+                                dictionary.learnFromEdit(currentEntry.text, trimmed)
                             }
                             isEditing = false
                         }) {
@@ -117,7 +122,7 @@ fun EntryDetailScreen(
                         IconButton(onClick = {
                             val sendIntent = android.content.Intent().apply {
                                 action = android.content.Intent.ACTION_SEND
-                                putExtra(android.content.Intent.EXTRA_TEXT, entry.text)
+                                putExtra(android.content.Intent.EXTRA_TEXT, currentEntry.text)
                                 type = "text/plain"
                             }
                             context.startActivity(android.content.Intent.createChooser(sendIntent, "Compartir"))
@@ -148,18 +153,18 @@ fun EntryDetailScreen(
                 )
             } else {
                 Text(
-                    text = entry.text,
+                    text = currentEntry.text,
                     style = MaterialTheme.typography.bodyLarge
                 )
             }
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Category selector
             CategorySelector(
-                currentCategory = entry.category,
-                onCategoryChange = { newCategory ->
-                    scope.launch { repository.updateCategory(entryId, newCategory) }
+                currentCategoryId = currentEntry.category,
+                categories = categories,
+                onCategoryChange = { newCatId ->
+                    scope.launch { repository.updateCategory(entryId, newCatId) }
                 }
             )
 
@@ -167,11 +172,11 @@ fun EntryDetailScreen(
 
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    DetailRow("Fecha", dateFormat.format(Date(entry.createdAt)))
-                    DetailRow("Palabra clave", entry.keyword)
-                    DetailRow("Fuente", if (entry.source == Source.PHONE) "Teléfono" else "Reloj")
-                    DetailRow("Confianza", "${(entry.confidence * 100).toInt()}%")
-                    DetailRow("Duración grabación", "${entry.duration}s")
+                    DetailRow("Fecha", dateFormat.format(Date(currentEntry.createdAt)))
+                    DetailRow("Palabra clave", currentEntry.keyword)
+                    DetailRow("Fuente", if (currentEntry.source == Source.PHONE) "Teléfono" else "Reloj")
+                    DetailRow("Confianza", "${(currentEntry.confidence * 100).toInt()}%")
+                    DetailRow("Duración grabación", "${currentEntry.duration}s")
                 }
             }
         }
@@ -185,11 +190,11 @@ fun EntryDetailScreen(
             confirmButton = {
                 TextButton(onClick = {
                     scope.launch {
-                        repository.delete(entry)
-                        onBack()
+                        repository.deleteById(entryId)
                     }
+                    onBack()
                 }) {
-                    Text("Eliminar")
+                    Text("Eliminar", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
@@ -204,17 +209,16 @@ fun EntryDetailScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CategorySelector(
-    currentCategory: Category,
-    onCategoryChange: (Category) -> Unit
+    currentCategoryId: String,
+    categories: List<CategoryInfo>,
+    onCategoryChange: (String) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
 
-    val color = when (currentCategory) {
-        Category.TODO -> TodoColor
-        Category.REMINDER -> ReminderColor
-        Category.HIGHLIGHT -> HighlightColor
-        Category.NOTE -> NoteColor
-    }
+    val catInfo = categories.find { it.id == currentCategoryId }
+    val color = catInfo?.let { Color(it.colorHex.toLong(16)) }
+        ?: MaterialTheme.colorScheme.primary
+    val label = catInfo?.label ?: currentCategoryId
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -239,7 +243,7 @@ private fun CategorySelector(
                     modifier = Modifier.width(100.dp)
                 )
                 Text(
-                    text = categoryLabel(currentCategory),
+                    text = label,
                     style = MaterialTheme.typography.bodyMedium,
                     color = color
                 )
@@ -247,11 +251,11 @@ private fun CategorySelector(
                 ExposedDropdownMenuDefaults.TrailingIcon(expanded)
             }
             ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                Category.entries.forEach { cat ->
+                categories.forEach { cat ->
                     DropdownMenuItem(
-                        text = { Text(categoryLabel(cat)) },
+                        text = { Text(cat.label) },
                         onClick = {
-                            onCategoryChange(cat)
+                            onCategoryChange(cat.id)
                             expanded = false
                         }
                     )
@@ -275,11 +279,4 @@ private fun DetailRow(label: String, value: String) {
             style = MaterialTheme.typography.bodyMedium
         )
     }
-}
-
-private fun categoryLabel(category: Category): String = when (category) {
-    Category.TODO -> "Por hacer"
-    Category.REMINDER -> "Recordatorio"
-    Category.HIGHLIGHT -> "Destacado"
-    Category.NOTE -> "Nota"
 }

@@ -18,12 +18,14 @@ import androidx.lifecycle.lifecycleScope
 import com.mydiary.app.MainActivity
 import com.mydiary.app.R
 import com.mydiary.app.speech.AudioRecorder
+import com.mydiary.app.speech.GeminiProcessor
+import com.mydiary.app.speech.PersonalDictionary
 import com.mydiary.app.speech.SpeechEngine
 import com.mydiary.app.speech.VoskModelManager
 import com.mydiary.app.ui.DatabaseProvider
 import com.mydiary.app.ui.SettingsDataStore
 import com.mydiary.shared.data.DiaryRepository
-import com.mydiary.shared.model.Category
+import com.mydiary.shared.model.CategoryInfo
 import com.mydiary.shared.model.DiaryEntry
 import com.mydiary.shared.model.Source
 import kotlinx.coroutines.Dispatchers
@@ -47,14 +49,18 @@ class KeywordListenerService : LifecycleService() {
     private var audioJob: Job? = null
     private var repository: DiaryRepository? = null
     private lateinit var settings: SettingsDataStore
+    private lateinit var dictionary: PersonalDictionary
+    private var gemini: GeminiProcessor? = null
+    private var geminiEnabled = false
 
     private var keywords = listOf("recordar", "nota", "destacar", "pendiente")
     private var keywordCategoryMap = mapOf(
-        "recordar" to Category.TODO,
-        "nota" to Category.NOTE,
-        "destacar" to Category.HIGHLIGHT,
-        "pendiente" to Category.REMINDER
+        "recordar" to "TODO",
+        "nota" to "NOTE",
+        "destacar" to "HIGHLIGHT",
+        "pendiente" to "REMINDER"
     )
+    private var categoryList = CategoryInfo.DEFAULTS
     private var recordingDurationSec = 10
 
     override fun onCreate() {
@@ -62,7 +68,9 @@ class KeywordListenerService : LifecycleService() {
         createNotificationChannels()
         initDatabase()
         settings = SettingsDataStore(applicationContext)
+        dictionary = PersonalDictionary(applicationContext)
         loadSettings()
+        initGemini()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -84,12 +92,13 @@ class KeywordListenerService : LifecycleService() {
     }
 
     override fun onDestroy() {
-        // Order matters: stop recorder first to unblock read(), then cancel job, then close engine
         audioRecorder?.stop()
         audioRecorder = null
         stopAudioLoop()
         speechEngine?.close()
         speechEngine = null
+        gemini?.close()
+        gemini = null
         ServiceController.notifyStopped()
         super.onDestroy()
     }
@@ -99,6 +108,21 @@ class KeywordListenerService : LifecycleService() {
             recordingDurationSec = settings.recordingDuration.first()
             keywordCategoryMap = settings.keywordMappings.first()
             keywords = keywordCategoryMap.keys.toList()
+            categoryList = settings.categories.first()
+            geminiEnabled = settings.geminiEnabled.first()
+        }
+    }
+
+    private fun initGemini() {
+        if (!geminiEnabled) return
+        lifecycleScope.launch(Dispatchers.IO) {
+            val processor = GeminiProcessor()
+            if (processor.initialize()) {
+                gemini = processor
+                Log.i(TAG, "Gemini Nano initialized successfully")
+            } else {
+                Log.w(TAG, "Gemini Nano not available on this device")
+            }
         }
     }
 
@@ -107,7 +131,6 @@ class KeywordListenerService : LifecycleService() {
     }
 
     private fun loadModelAndStart() {
-        // Guard against double-start
         if (audioJob != null) {
             Log.w(TAG, "Audio loop already running, skipping start")
             return
@@ -140,14 +163,12 @@ class KeywordListenerService : LifecycleService() {
         updateNotification("Escuchando...")
 
         audioJob = lifecycleScope.launch(Dispatchers.Default) {
-            // Use a fixed read size (4096 = 128ms at 16kHz/16-bit) for stable Vosk feeding
             val readSize = 4096
             val buffer = ByteArray(readSize)
             val engine = speechEngine ?: return@launch
             val recorder = audioRecorder ?: return@launch
             var frameCount = 0
 
-            // Discard first 3 reads to let AudioRecord stabilize
             repeat(3) {
                 if (!isActive) return@launch
                 recorder.read(buffer)
@@ -157,7 +178,6 @@ class KeywordListenerService : LifecycleService() {
                 val bytesRead = recorder.read(buffer)
                 if (bytesRead <= 0) continue
 
-                // Check battery every ~30 seconds
                 if (++frameCount % 3600 == 0) {
                     if (isBatteryLow()) {
                         Log.w(TAG, "Battery low, stopping service")
@@ -175,13 +195,12 @@ class KeywordListenerService : LifecycleService() {
                     null
                 }
 
-                // Vibrate on state changes
                 if (!wasRecording && engine.isRecording) {
                     updateNotification("Grabando...")
-                    vibrate(longArrayOf(0, 100, 50, 100)) // Double pulse: recording started
+                    vibrate(longArrayOf(0, 100, 50, 100))
                 } else if (wasRecording && !engine.isRecording) {
                     updateNotification("Escuchando...")
-                    vibrate(longArrayOf(0, 200)) // Single pulse: recording done
+                    vibrate(longArrayOf(0, 200))
                 }
 
                 if (entry != null) {
@@ -210,17 +229,34 @@ class KeywordListenerService : LifecycleService() {
 
     private fun saveEntry(keyword: String, text: String, confidence: Float) {
         lifecycleScope.launch(Dispatchers.IO) {
-            val fullText = if (text.startsWith(keyword, ignoreCase = true)) text else "$keyword $text"
+            val rawText = if (text.startsWith(keyword, ignoreCase = true)) text else "$keyword $text"
+
+            // Step 1: Apply personal dictionary corrections
+            var fullText = dictionary.correct(rawText)
+
+            // Step 2: If Gemini available, also correct with AI
+            val gp = gemini
+            if (gp != null) {
+                fullText = gp.correctText(fullText)
+            }
+
+            // Step 3: Categorize — Gemini if available, otherwise keyword mapping
+            val categoryId = if (gp != null) {
+                gp.categorize(fullText, categoryList) ?: keywordCategoryMap[keyword] ?: "NOTE"
+            } else {
+                keywordCategoryMap[keyword] ?: "NOTE"
+            }
+
             val entry = DiaryEntry(
                 text = fullText,
                 keyword = keyword,
-                category = keywordCategoryMap[keyword] ?: Category.fromKeyword(keyword),
+                category = categoryId,
                 confidence = confidence,
                 source = Source.PHONE,
                 duration = recordingDurationSec
             )
             repository?.insert(entry)
-            Log.i(TAG, "Entry saved: $text (category: ${entry.category})")
+            Log.i(TAG, "Entry saved: $fullText (category: ${entry.category}, gemini: ${gp != null})")
             showNewEntryNotification(entry)
         }
     }
@@ -229,8 +265,6 @@ class KeywordListenerService : LifecycleService() {
         audioJob?.cancel()
         audioJob = null
     }
-
-    // --- Notifications ---
 
     private fun createNotificationChannels() {
         val manager = getSystemService(NotificationManager::class.java)
@@ -282,12 +316,7 @@ class KeywordListenerService : LifecycleService() {
             PendingIntent.FLAG_IMMUTABLE
         )
 
-        val categoryLabel = when (entry.category) {
-            Category.TODO -> "Por hacer"
-            Category.REMINDER -> "Recordatorio"
-            Category.HIGHLIGHT -> "Destacado"
-            Category.NOTE -> "Nota"
-        }
+        val categoryLabel = categoryList.find { it.id == entry.category }?.label ?: entry.category
 
         val notification = NotificationCompat.Builder(this, NEW_ENTRY_CHANNEL_ID)
             .setContentTitle("Nueva entrada: $categoryLabel")

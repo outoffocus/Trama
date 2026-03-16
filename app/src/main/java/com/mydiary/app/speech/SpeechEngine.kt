@@ -18,7 +18,7 @@ class SpeechEngine(model: Model, private val keywords: List<String>) {
     private var closed = false
 
     companion object {
-        private const val SILENCE_TIMEOUT_MS = 2000L  // Stop after 2s of silence
+        private const val SILENCE_TIMEOUT_MS = 3000L  // Stop after 3s of silence
         private const val MIN_RECORDING_MS = 500L     // Don't stop before 0.5s
     }
 

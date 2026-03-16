@@ -1,6 +1,7 @@
 package com.mydiary.app.ui.components
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,45 +21,39 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.mydiary.app.ui.theme.HighlightColor
-import com.mydiary.app.ui.theme.NoteColor
-import com.mydiary.app.ui.theme.ReminderColor
-import com.mydiary.app.ui.theme.TodoColor
-import com.mydiary.shared.model.Category
+import com.mydiary.shared.model.CategoryInfo
 import com.mydiary.shared.model.DiaryEntry
 import com.mydiary.shared.model.Source
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun EntryCard(
     entry: DiaryEntry,
+    categories: List<CategoryInfo>,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    val categoryColor = when (entry.category) {
-        Category.TODO -> TodoColor
-        Category.REMINDER -> ReminderColor
-        Category.HIGHLIGHT -> HighlightColor
-        Category.NOTE -> NoteColor
-    }
-
-    val categoryLabel = when (entry.category) {
-        Category.TODO -> "Por hacer"
-        Category.REMINDER -> "Recordatorio"
-        Category.HIGHLIGHT -> "Destacado"
-        Category.NOTE -> "Nota"
-    }
+    val catInfo = categories.find { it.id == entry.category }
+    val categoryColor = catInfo?.let { Color(it.colorHex.toLong(16)) }
+        ?: MaterialTheme.colorScheme.primary
+    val categoryLabel = catInfo?.label ?: entry.category
 
     val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
 
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            ),
         colors = CardDefaults.cardColors(
             containerColor = categoryColor.copy(alpha = 0.1f)
         )

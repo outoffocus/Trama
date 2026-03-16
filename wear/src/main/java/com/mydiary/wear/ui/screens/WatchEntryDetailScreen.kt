@@ -13,7 +13,7 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
-import com.mydiary.shared.model.Category
+import com.mydiary.shared.model.CategoryInfo
 import com.mydiary.wear.ui.DatabaseProvider
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -23,21 +23,17 @@ import java.util.Locale
 fun WatchEntryDetailScreen(entryId: Long) {
     val context = LocalContext.current
     val repository = remember { DatabaseProvider.getRepository(context) }
-    val entries by repository.getAll().collectAsState(initial = emptyList())
-    val entry = entries.find { it.id == entryId }
+    val entry by repository.getById(entryId).collectAsState(initial = null)
 
     val dateFormat = SimpleDateFormat("dd MMM HH:mm", Locale("es"))
 
     ScalingLazyColumn(
         modifier = Modifier.fillMaxSize()
     ) {
-        if (entry != null) {
-            val categoryLabel = when (entry.category) {
-                Category.TODO -> "Por hacer"
-                Category.REMINDER -> "Recordatorio"
-                Category.HIGHLIGHT -> "Destacado"
-                Category.NOTE -> "Nota"
-            }
+        val currentEntry = entry
+        if (currentEntry != null) {
+            val catInfo = CategoryInfo.DEFAULTS.find { it.id == currentEntry.category }
+            val categoryLabel = catInfo?.label ?: currentEntry.category
 
             item {
                 Text(
@@ -49,7 +45,7 @@ fun WatchEntryDetailScreen(entryId: Long) {
 
             item {
                 Text(
-                    text = dateFormat.format(Date(entry.createdAt)),
+                    text = dateFormat.format(Date(currentEntry.createdAt)),
                     style = MaterialTheme.typography.caption2,
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
@@ -57,7 +53,7 @@ fun WatchEntryDetailScreen(entryId: Long) {
 
             item {
                 Text(
-                    text = entry.text,
+                    text = currentEntry.text,
                     style = MaterialTheme.typography.body1,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -65,7 +61,7 @@ fun WatchEntryDetailScreen(entryId: Long) {
         } else {
             item {
                 Text(
-                    text = "Entrada no encontrada",
+                    text = "Cargando...",
                     style = MaterialTheme.typography.body2
                 )
             }

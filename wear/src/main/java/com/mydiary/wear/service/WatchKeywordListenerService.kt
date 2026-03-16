@@ -20,7 +20,6 @@ import com.mydiary.wear.speech.VoskModelManager
 import com.mydiary.wear.ui.WatchMainActivity
 import com.mydiary.shared.data.DiaryDatabase
 import com.mydiary.shared.data.DiaryRepository
-import com.mydiary.shared.model.Category
 import com.mydiary.shared.model.DiaryEntry
 import com.mydiary.shared.model.Source
 import kotlinx.coroutines.Dispatchers
@@ -35,7 +34,7 @@ class WatchKeywordListenerService : LifecycleService() {
         private const val CHANNEL_ID = "mydiary_watch_listener"
         private const val NOTIFICATION_ID = 1
         private const val LOW_BATTERY_THRESHOLD = 20
-        private const val DEFAULT_RECORDING_DURATION_SEC = 10
+        private const val DEFAULT_RECORDING_DURATION_SEC = 30
     }
 
     private var audioRecorder: AudioRecorder? = null
@@ -181,7 +180,7 @@ class WatchKeywordListenerService : LifecycleService() {
             val entry = DiaryEntry(
                 text = fullText,
                 keyword = keyword,
-                category = Category.fromKeyword(keyword),
+                category = keywordToCategory(keyword),
                 confidence = confidence,
                 source = Source.WATCH,
                 duration = recordingDurationSec
@@ -189,6 +188,17 @@ class WatchKeywordListenerService : LifecycleService() {
             repository?.insert(entry)
             Log.i(TAG, "Entry saved: $text")
         }
+    }
+
+    private val defaultKeywordCategoryMap = mapOf(
+        "recordar" to "TODO",
+        "nota" to "NOTE",
+        "destacar" to "HIGHLIGHT",
+        "pendiente" to "REMINDER"
+    )
+
+    private fun keywordToCategory(keyword: String): String {
+        return defaultKeywordCategoryMap[keyword.lowercase()] ?: "NOTE"
     }
 
     private fun stopAudioLoop() {

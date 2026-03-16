@@ -22,8 +22,7 @@ import androidx.wear.compose.material.ChipDefaults
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.ToggleChip
-import androidx.wear.compose.material.ToggleChipDefaults
-import com.mydiary.shared.model.Category
+import com.mydiary.shared.model.CategoryInfo
 import com.mydiary.shared.model.DiaryEntry
 import com.mydiary.wear.service.WatchServiceController
 import com.mydiary.wear.ui.DatabaseProvider
@@ -48,7 +47,6 @@ fun WatchHomeScreen(
     ScalingLazyColumn(
         modifier = Modifier.fillMaxSize()
     ) {
-        // Service toggle
         item {
             ToggleChip(
                 checked = serviceRunning,
@@ -70,7 +68,6 @@ fun WatchHomeScreen(
             )
         }
 
-        // Settings
         item {
             Chip(
                 onClick = onSettingsClick,
@@ -109,12 +106,8 @@ private fun WatchEntryCard(
     timeFormat: SimpleDateFormat,
     onClick: () -> Unit
 ) {
-    val categoryLabel = when (entry.category) {
-        Category.TODO -> "TODO"
-        Category.REMINDER -> "REC"
-        Category.HIGHLIGHT -> "DEST"
-        Category.NOTE -> "NOTA"
-    }
+    val catInfo = CategoryInfo.DEFAULTS.find { it.id == entry.category }
+    val categoryLabel = catInfo?.label?.take(4)?.uppercase() ?: entry.category.take(4)
 
     Card(
         onClick = onClick,
