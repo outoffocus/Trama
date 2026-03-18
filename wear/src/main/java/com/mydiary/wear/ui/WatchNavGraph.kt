@@ -8,12 +8,10 @@ import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.mydiary.wear.ui.screens.WatchEntryDetailScreen
 import com.mydiary.wear.ui.screens.WatchHomeScreen
-import com.mydiary.wear.ui.screens.WatchSettingsScreen
 
 object WatchRoutes {
     const val HOME = "home"
     const val DETAIL = "detail/{entryId}"
-    const val SETTINGS = "settings"
 
     fun detail(entryId: Long) = "detail/$entryId"
 }
@@ -28,8 +26,7 @@ fun WatchNavGraph() {
     ) {
         composable(WatchRoutes.HOME) {
             WatchHomeScreen(
-                onEntryClick = { entryId -> navController.navigate(WatchRoutes.detail(entryId)) },
-                onSettingsClick = { navController.navigate(WatchRoutes.SETTINGS) }
+                onEntryClick = { entryId -> navController.navigate(WatchRoutes.detail(entryId)) }
             )
         }
 
@@ -39,10 +36,6 @@ fun WatchNavGraph() {
         ) { backStackEntry ->
             val entryId = backStackEntry.arguments?.getLong("entryId") ?: return@composable
             WatchEntryDetailScreen(entryId = entryId)
-        }
-
-        composable(WatchRoutes.SETTINGS) {
-            WatchSettingsScreen()
         }
     }
 }

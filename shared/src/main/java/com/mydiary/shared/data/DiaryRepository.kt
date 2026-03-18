@@ -32,4 +32,7 @@ class DiaryRepository(private val dao: DiaryDao) {
         dao.reassignCategory(oldCategory, newCategory)
 
     suspend fun markSynced(ids: List<Long>) = dao.markSynced(ids)
+
+    suspend fun existsByCreatedAtAndText(createdAt: Long, text: String): Boolean =
+        dao.existsByCreatedAtAndText(createdAt, text)
 }

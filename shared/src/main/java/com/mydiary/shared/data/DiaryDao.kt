@@ -48,4 +48,8 @@ interface DiaryDao {
 
     @Query("UPDATE diary_entries SET isSynced = 1 WHERE id IN (:ids)")
     suspend fun markSynced(ids: List<Long>): Int
+
+    /** Dedup check for sync: entry already exists with same timestamp and text */
+    @Query("SELECT COUNT(*) > 0 FROM diary_entries WHERE createdAt = :createdAt AND text = :text")
+    suspend fun existsByCreatedAtAndText(createdAt: Long, text: String): Boolean
 }

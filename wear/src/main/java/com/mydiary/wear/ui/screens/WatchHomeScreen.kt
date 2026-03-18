@@ -6,9 +6,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -17,8 +15,6 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.material.Card
-import androidx.wear.compose.material.Chip
-import androidx.wear.compose.material.ChipDefaults
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.ToggleChip
@@ -32,12 +28,11 @@ import java.util.Locale
 
 @Composable
 fun WatchHomeScreen(
-    onEntryClick: (Long) -> Unit,
-    onSettingsClick: () -> Unit
+    onEntryClick: (Long) -> Unit
 ) {
     val context = LocalContext.current
     val repository = remember { DatabaseProvider.getRepository(context) }
-    var serviceRunning by remember { mutableStateOf(WatchServiceController.isRunning(context)) }
+    val serviceRunning by WatchServiceController.isRunning.collectAsState()
 
     val entries by repository.getAll().collectAsState(initial = emptyList())
     val recentEntries = entries.take(10)
@@ -52,11 +47,10 @@ fun WatchHomeScreen(
                 checked = serviceRunning,
                 onCheckedChange = {
                     if (serviceRunning) {
-                        WatchServiceController.stop(context)
+                        WatchServiceController.stopByUser(context)
                     } else {
                         WatchServiceController.start(context)
                     }
-                    serviceRunning = !serviceRunning
                 },
                 label = {
                     Text(if (serviceRunning) "Escuchando" else "Detenido")
@@ -64,15 +58,6 @@ fun WatchHomeScreen(
                 toggleControl = {
                     androidx.wear.compose.material.Switch(checked = serviceRunning)
                 },
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-
-        item {
-            Chip(
-                onClick = onSettingsClick,
-                label = { Text("Ajustes") },
-                colors = ChipDefaults.secondaryChipColors(),
                 modifier = Modifier.fillMaxWidth()
             )
         }

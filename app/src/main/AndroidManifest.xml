@@ -41,7 +41,7 @@
             android:foregroundServiceType="microphone"
             android:exported="false" />
 
-        <!-- Receives synced data from watch -->
+        <!-- Receives synced data and mic commands from watch -->
         <service
             android:name=".sync.WatchDataReceiverService"
             android:exported="true">
@@ -51,6 +51,13 @@
                     android:scheme="wear"
                     android:host="*"
                     android:pathPrefix="/mydiary/sync" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data
+                    android:scheme="wear"
+                    android:host="*"
+                    android:pathPrefix="/mydiary/mic" />
             </intent-filter>
         </service>
 
