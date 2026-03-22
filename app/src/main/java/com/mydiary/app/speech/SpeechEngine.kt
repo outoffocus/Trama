@@ -8,6 +8,7 @@ import org.vosk.Recognizer
 /**
  * Single open-vocabulary recognizer that continuously transcribes audio.
  * Detects keywords in the transcription stream and captures text after them.
+ * Stops recording on silence (no speech for SILENCE_TIMEOUT_MS) or max duration.
  */
 class SpeechEngine(model: Model, private val keywords: List<String>) {
 
@@ -15,6 +16,11 @@ class SpeechEngine(model: Model, private val keywords: List<String>) {
     private var recognizer: Recognizer? = Recognizer(model, 16000f)
     @Volatile
     private var closed = false
+
+    companion object {
+        private const val SILENCE_TIMEOUT_MS = 3000L  // Stop after 3s of silence
+        private const val MIN_RECORDING_MS = 500L     // Don't stop before 0.5s
+    }
 
     data class CapturedEntry(
         val keyword: String,
@@ -25,8 +31,10 @@ class SpeechEngine(model: Model, private val keywords: List<String>) {
     private var state = State.LISTENING
     private var detectedKeyword: String? = null
     private var recordingStartTime = 0L
+    private var lastSpeechTime = 0L
     private var recordingDurationMs = 10_000L
     private val collectedTexts = mutableListOf<String>()
+    private var hasReceivedSpeech = false
 
     private enum class State { LISTENING, RECORDING }
 
@@ -34,22 +42,27 @@ class SpeechEngine(model: Model, private val keywords: List<String>) {
         recordingDurationMs = seconds * 1000L
     }
 
-    /**
-     * Feed audio data. Returns a CapturedEntry when recording finishes, null otherwise.
-     */
     fun acceptWaveForm(data: ByteArray, length: Int): CapturedEntry? {
         if (closed) return null
-        // Ensure even byte count (16-bit PCM = 2 bytes per sample)
         val safeLength = length and 0xFFFFFFFE.toInt()
-        if (safeLength < 2) return checkRecordingTimeout()
+        if (safeLength < 2) return checkTimeout()
         return processChunk(data, safeLength)
     }
 
-    private fun checkRecordingTimeout(): CapturedEntry? {
-        if (state == State.RECORDING &&
-            System.currentTimeMillis() - recordingStartTime >= recordingDurationMs) {
-            return finishRecording()
+    private fun checkTimeout(): CapturedEntry? {
+        if (state != State.RECORDING) return null
+        val now = System.currentTimeMillis()
+        val elapsed = now - recordingStartTime
+
+        // Max duration reached
+        if (elapsed >= recordingDurationMs) return finishRecording()
+
+        // Silence timeout: only after we received some speech and min recording time passed
+        if (hasReceivedSpeech && elapsed >= MIN_RECORDING_MS) {
+            val silenceDuration = now - lastSpeechTime
+            if (silenceDuration >= SILENCE_TIMEOUT_MS) return finishRecording()
         }
+
         return null
     }
 
@@ -75,15 +88,38 @@ class SpeechEngine(model: Model, private val keywords: List<String>) {
                 }
             }
             State.RECORDING -> {
+                val now = System.currentTimeMillis()
+
                 if (accepted) {
+                    // Final result = Vosk detected a pause in speech
                     val text = parseText(rec.result)
                     if (!text.isNullOrBlank()) {
                         collectedTexts.add(text)
+                        lastSpeechTime = now
+                        hasReceivedSpeech = true
+                    }
+                    // If we already have text and this final result is empty → silence
+                    // The silence timer (lastSpeechTime) handles this automatically
+                } else {
+                    val partial = parsePartial(rec.partialResult)
+                    if (!partial.isNullOrBlank()) {
+                        lastSpeechTime = now
+                        hasReceivedSpeech = true
                     }
                 }
 
-                if (System.currentTimeMillis() - recordingStartTime >= recordingDurationMs) {
-                    return finishRecording()
+                val elapsed = now - recordingStartTime
+
+                // Max duration
+                if (elapsed >= recordingDurationMs) return finishRecording()
+
+                // Silence detection: after min time and some speech, stop on silence
+                if (hasReceivedSpeech && elapsed >= MIN_RECORDING_MS) {
+                    val silenceDuration = now - lastSpeechTime
+                    if (silenceDuration >= SILENCE_TIMEOUT_MS) {
+                        Log.i(TAG, "Silence detected (${silenceDuration}ms), finishing recording")
+                        return finishRecording()
+                    }
                 }
             }
         }
@@ -96,7 +132,10 @@ class SpeechEngine(model: Model, private val keywords: List<String>) {
         Log.i(TAG, "Keyword detected: $keyword — recording started")
         state = State.RECORDING
         detectedKeyword = keyword
-        recordingStartTime = System.currentTimeMillis()
+        val now = System.currentTimeMillis()
+        recordingStartTime = now
+        lastSpeechTime = now
+        hasReceivedSpeech = false
         collectedTexts.clear()
         return null
     }
@@ -116,6 +155,7 @@ class SpeechEngine(model: Model, private val keywords: List<String>) {
         state = State.LISTENING
         detectedKeyword = null
         collectedTexts.clear()
+        hasReceivedSpeech = false
 
         if (fullText.isBlank()) {
             return null
@@ -124,7 +164,7 @@ class SpeechEngine(model: Model, private val keywords: List<String>) {
         return CapturedEntry(
             keyword = keyword,
             text = fullText,
-            confidence = 0.8f // Vosk small model doesn't give reliable per-word confidence
+            confidence = 0.8f
         )
     }
 
@@ -132,6 +172,7 @@ class SpeechEngine(model: Model, private val keywords: List<String>) {
         state = State.LISTENING
         detectedKeyword = null
         collectedTexts.clear()
+        hasReceivedSpeech = false
         return null
     }
 

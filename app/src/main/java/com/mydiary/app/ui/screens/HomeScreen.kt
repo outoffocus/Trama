@@ -1,5 +1,10 @@
 package com.mydiary.app.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,40 +23,47 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import android.Manifest
-import android.content.pm.PackageManager
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import com.mydiary.app.service.ServiceController
 import com.mydiary.app.ui.DatabaseProvider
+import com.mydiary.app.ui.SettingsDataStore
+import com.mydiary.app.ui.components.CalendarBar
 import com.mydiary.app.ui.components.CategoryChip
 import com.mydiary.app.ui.components.EntryCard
-import com.mydiary.shared.model.Category
+import com.mydiary.shared.model.CategoryInfo
 import com.mydiary.shared.model.DiaryEntry
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.LocalDate
+import java.time.YearMonth
+import java.time.ZoneId
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(
     onEntryClick: (Long) -> Unit,
@@ -60,8 +72,16 @@ fun HomeScreen(
 ) {
     val context = LocalContext.current
     val repository = remember { DatabaseProvider.getRepository(context) }
-    var selectedCategory by remember { mutableStateOf<Category?>(null) }
+    val settings = remember { SettingsDataStore(context) }
+    val scope = rememberCoroutineScope()
+    var selectedCategoryId by remember { mutableStateOf<String?>(null) }
+    var selectedDate by remember { mutableStateOf<LocalDate?>(null) }
+    var calendarExpanded by remember { mutableStateOf(false) }
+    var currentMonth by remember { mutableStateOf(YearMonth.now()) }
     var serviceRunning by remember { mutableStateOf(ServiceController.isRunning(context)) }
+    var entryToDelete by remember { mutableStateOf<DiaryEntry?>(null) }
+
+    val categories by settings.categories.collectAsState(initial = CategoryInfo.DEFAULTS)
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -72,12 +92,22 @@ fun HomeScreen(
         }
     }
 
-    val entries by (
-        if (selectedCategory != null) repository.byCategory(selectedCategory!!)
-        else repository.getAll()
-    ).collectAsState(initial = emptyList())
+    val allEntries by repository.getAll().collectAsState(initial = emptyList())
 
-    // Group entries by date
+    val entries = allEntries
+        .let { list ->
+            if (selectedCategoryId != null) list.filter { it.category == selectedCategoryId }
+            else list
+        }
+        .let { list ->
+            if (selectedDate != null) list.filter { entry ->
+                Instant.ofEpochMilli(entry.createdAt)
+                    .atZone(ZoneId.systemDefault())
+                    .toLocalDate() == selectedDate
+            }
+            else list
+        }
+
     val dateFormat = SimpleDateFormat("dd MMMM yyyy", Locale("es"))
     val grouped = entries.groupBy { dateFormat.format(Date(it.createdAt)) }
 
@@ -123,23 +153,40 @@ fun HomeScreen(
         }
     ) { padding ->
         Column(modifier = Modifier.padding(padding)) {
-            // Category filter chips
+            CalendarBar(
+                entries = allEntries,
+                categories = categories,
+                selectedDate = selectedDate,
+                expanded = calendarExpanded,
+                currentMonth = currentMonth,
+                onToggleExpanded = { calendarExpanded = !calendarExpanded },
+                onDateSelected = { date ->
+                    selectedDate = date
+                    if (date != null) {
+                        currentMonth = YearMonth.from(date)
+                    }
+                },
+                onMonthChange = { currentMonth = it }
+            )
+
             FlowRow(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Category.entries.forEach { category ->
+                categories.forEach { category ->
                     CategoryChip(
                         category = category,
-                        selected = selectedCategory == category,
+                        selected = selectedCategoryId == category.id,
                         onClick = {
-                            selectedCategory = if (selectedCategory == category) null else category
+                            selectedCategoryId = if (selectedCategoryId == category.id) null else category.id
                         }
                     )
                 }
             }
+
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
 
             if (entries.isEmpty()) {
                 Box(
@@ -147,7 +194,10 @@ fun HomeScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "No hay entradas aún.\nDi \"recordar\" para empezar.",
+                        text = if (selectedDate != null || selectedCategoryId != null)
+                            "No hay entradas con estos filtros."
+                        else
+                            "No hay entradas aún.\nDi una palabra clave para empezar.",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -158,7 +208,7 @@ fun HomeScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     grouped.forEach { (date, dateEntries) ->
-                        item {
+                        item(key = "header_$date") {
                             Text(
                                 text = date,
                                 style = MaterialTheme.typography.titleMedium,
@@ -168,13 +218,37 @@ fun HomeScreen(
                         items(dateEntries, key = { it.id }) { entry ->
                             EntryCard(
                                 entry = entry,
-                                onClick = { onEntryClick(entry.id) }
+                                categories = categories,
+                                onClick = { onEntryClick(entry.id) },
+                                onLongClick = { entryToDelete = entry }
                             )
                         }
-                        item { Spacer(modifier = Modifier.height(8.dp)) }
+                        item(key = "spacer_$date") { Spacer(modifier = Modifier.height(8.dp)) }
                     }
                 }
             }
         }
+    }
+
+    entryToDelete?.let { entry ->
+        val preview = if (entry.text.length > 50) entry.text.take(50) + "..." else entry.text
+        AlertDialog(
+            onDismissRequest = { entryToDelete = null },
+            title = { Text("Eliminar entrada") },
+            text = { Text("¿Eliminar \"$preview\"?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch { repository.deleteById(entry.id) }
+                    entryToDelete = null
+                }) {
+                    Text("Eliminar", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { entryToDelete = null }) {
+                    Text("Cancelar")
+                }
+            }
+        )
     }
 }

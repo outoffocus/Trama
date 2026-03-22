@@ -19,7 +19,7 @@ class AudioRecorder {
     private var audioRecord: AudioRecord? = null
     val bufferSize: Int = maxOf(
         AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL, ENCODING),
-        2048 // Smaller buffer for watch
+        2048
     )
 
     @SuppressLint("MissingPermission")
@@ -43,13 +43,21 @@ class AudioRecorder {
         }
     }
 
-    fun read(buffer: ByteArray): Int = audioRecord?.read(buffer, 0, buffer.size) ?: -1
+    fun read(buffer: ByteArray): Int {
+        return try {
+            audioRecord?.read(buffer, 0, buffer.size) ?: -1
+        } catch (e: Exception) {
+            Log.w(TAG, "Read error", e)
+            -1
+        }
+    }
 
     fun stop() {
         try {
             audioRecord?.stop()
             audioRecord?.release()
             audioRecord = null
+            Log.i(TAG, "Recording stopped")
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping recording", e)
         }

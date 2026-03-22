@@ -1,5 +1,6 @@
 package com.mydiary.app.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,14 +13,23 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -31,11 +41,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.mydiary.app.speech.PersonalDictionary
 import com.mydiary.app.ui.DatabaseProvider
-import com.mydiary.shared.model.Category
+import com.mydiary.app.ui.SettingsDataStore
+import com.mydiary.shared.model.CategoryInfo
 import com.mydiary.shared.model.Source
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -50,49 +64,74 @@ fun EntryDetailScreen(
 ) {
     val context = LocalContext.current
     val repository = remember { DatabaseProvider.getRepository(context) }
+    val settings = remember { SettingsDataStore(context) }
+    val dictionary = remember { PersonalDictionary(context) }
     val scope = rememberCoroutineScope()
 
-    val entries by repository.getAll().collectAsState(initial = emptyList())
-    val entry = entries.find { it.id == entryId }
+    val entry by repository.getById(entryId).collectAsState(initial = null)
+    val categories by settings.categories.collectAsState(initial = CategoryInfo.DEFAULTS)
 
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var isEditing by remember { mutableStateOf(false) }
+    var editedText by remember(entry?.text) { mutableStateOf(entry?.text ?: "") }
 
-    if (entry == null) {
-        onBack()
+    val currentEntry = entry
+    if (currentEntry == null) {
         return
     }
 
-    val categoryLabel = when (entry.category) {
-        Category.TODO -> "Por hacer"
-        Category.REMINDER -> "Recordatorio"
-        Category.HIGHLIGHT -> "Destacado"
-        Category.NOTE -> "Nota"
-    }
-
+    val catInfo = categories.find { it.id == currentEntry.category }
+    val catLabel = catInfo?.label ?: currentEntry.category
     val dateFormat = SimpleDateFormat("dd MMMM yyyy, HH:mm", Locale("es"))
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(categoryLabel) },
+                title = { Text(catLabel) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
+                    IconButton(onClick = {
+                        if (isEditing) {
+                            isEditing = false
+                            editedText = currentEntry.text
+                        } else {
+                            onBack()
+                        }
+                    }) {
+                        Icon(
+                            if (isEditing) Icons.Default.Close else Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = if (isEditing) "Cancelar" else "Volver"
+                        )
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
-                        val sendIntent = android.content.Intent().apply {
-                            action = android.content.Intent.ACTION_SEND
-                            putExtra(android.content.Intent.EXTRA_TEXT, entry.text)
-                            type = "text/plain"
+                    if (isEditing) {
+                        IconButton(onClick = {
+                            scope.launch {
+                                val trimmed = editedText.trim()
+                                repository.updateText(entryId, trimmed)
+                                dictionary.learnFromEdit(currentEntry.text, trimmed)
+                            }
+                            isEditing = false
+                        }) {
+                            Icon(Icons.Default.Check, contentDescription = "Guardar")
                         }
-                        context.startActivity(android.content.Intent.createChooser(sendIntent, "Compartir"))
-                    }) {
-                        Icon(Icons.Default.Share, contentDescription = "Compartir")
-                    }
-                    IconButton(onClick = { showDeleteDialog = true }) {
-                        Icon(Icons.Default.Delete, contentDescription = "Eliminar")
+                    } else {
+                        IconButton(onClick = { isEditing = true }) {
+                            Icon(Icons.Default.Edit, contentDescription = "Editar")
+                        }
+                        IconButton(onClick = {
+                            val sendIntent = android.content.Intent().apply {
+                                action = android.content.Intent.ACTION_SEND
+                                putExtra(android.content.Intent.EXTRA_TEXT, currentEntry.text)
+                                type = "text/plain"
+                            }
+                            context.startActivity(android.content.Intent.createChooser(sendIntent, "Compartir"))
+                        }) {
+                            Icon(Icons.Default.Share, contentDescription = "Compartir")
+                        }
+                        IconButton(onClick = { showDeleteDialog = true }) {
+                            Icon(Icons.Default.Delete, contentDescription = "Eliminar")
+                        }
                     }
                 }
             )
@@ -105,20 +144,39 @@ fun EntryDetailScreen(
                 .padding(16.dp)
                 .verticalScroll(rememberScrollState())
         ) {
-            Text(
-                text = entry.text,
-                style = MaterialTheme.typography.bodyLarge
-            )
+            if (isEditing) {
+                OutlinedTextField(
+                    value = editedText,
+                    onValueChange = { editedText = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 4
+                )
+            } else {
+                Text(
+                    text = currentEntry.text,
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            }
 
             Spacer(modifier = Modifier.height(24.dp))
 
+            CategorySelector(
+                currentCategoryId = currentEntry.category,
+                categories = categories,
+                onCategoryChange = { newCatId ->
+                    scope.launch { repository.updateCategory(entryId, newCatId) }
+                }
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    DetailRow("Fecha", dateFormat.format(Date(entry.createdAt)))
-                    DetailRow("Palabra clave", entry.keyword)
-                    DetailRow("Fuente", if (entry.source == Source.PHONE) "Teléfono" else "Reloj")
-                    DetailRow("Confianza", "${(entry.confidence * 100).toInt()}%")
-                    DetailRow("Duración grabación", "${entry.duration}s")
+                    DetailRow("Fecha", dateFormat.format(Date(currentEntry.createdAt)))
+                    DetailRow("Palabra clave", currentEntry.keyword)
+                    DetailRow("Fuente", if (currentEntry.source == Source.PHONE) "Teléfono" else "Reloj")
+                    DetailRow("Confianza", "${(currentEntry.confidence * 100).toInt()}%")
+                    DetailRow("Duración grabación", "${currentEntry.duration}s")
                 }
             }
         }
@@ -132,11 +190,11 @@ fun EntryDetailScreen(
             confirmButton = {
                 TextButton(onClick = {
                     scope.launch {
-                        repository.delete(entry)
-                        onBack()
+                        repository.deleteById(entryId)
                     }
+                    onBack()
                 }) {
-                    Text("Eliminar")
+                    Text("Eliminar", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
@@ -145,6 +203,65 @@ fun EntryDetailScreen(
                 }
             }
         )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CategorySelector(
+    currentCategoryId: String,
+    categories: List<CategoryInfo>,
+    onCategoryChange: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    val catInfo = categories.find { it.id == currentCategoryId }
+    val color = catInfo?.let { Color(it.colorHex.toLong(16)) }
+        ?: MaterialTheme.colorScheme.primary
+    val label = catInfo?.label ?: currentCategoryId
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.1f))
+    ) {
+        ExposedDropdownMenuBox(
+            expanded = expanded,
+            onExpandedChange = { expanded = it },
+            modifier = Modifier.padding(12.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                    .clickable { expanded = true }
+            ) {
+                Text(
+                    text = "Categoría:",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.width(100.dp)
+                )
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = color
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                ExposedDropdownMenuDefaults.TrailingIcon(expanded)
+            }
+            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                categories.forEach { cat ->
+                    DropdownMenuItem(
+                        text = { Text(cat.label) },
+                        onClick = {
+                            onCategoryChange(cat.id)
+                            expanded = false
+                        }
+                    )
+                }
+            }
+        }
     }
 }
 

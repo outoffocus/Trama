@@ -28,7 +28,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.mydiary.app.ui.DatabaseProvider
+import com.mydiary.app.ui.SettingsDataStore
 import com.mydiary.app.ui.components.EntryCard
+import com.mydiary.shared.model.CategoryInfo
 import kotlinx.coroutines.flow.flowOf
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -39,7 +41,9 @@ fun SearchScreen(
 ) {
     val context = LocalContext.current
     val repository = remember { DatabaseProvider.getRepository(context) }
+    val settings = remember { SettingsDataStore(context) }
     var query by remember { mutableStateOf("") }
+    val categories by settings.categories.collectAsState(initial = CategoryInfo.DEFAULTS)
 
     val results by (
         if (query.length >= 2) repository.search(query)
@@ -87,6 +91,7 @@ fun SearchScreen(
                 items(results, key = { it.id }) { entry ->
                     EntryCard(
                         entry = entry,
+                        categories = categories,
                         onClick = { onEntryClick(entry.id) }
                     )
                 }
