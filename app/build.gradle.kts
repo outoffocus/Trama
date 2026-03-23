@@ -8,12 +8,12 @@ plugins {
 
 android {
     namespace = "com.mydiary.app"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.mydiary.app"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 35
         versionCode = 1
         versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -42,6 +42,15 @@ android {
         compose = true
     }
 
+    // Native build disabled — whisper.cpp has ARM64 f16 compatibility issues
+    // ndkVersion = "27.0.12077973"
+    // externalNativeBuild {
+    //     cmake {
+    //         path = file("src/main/cpp/CMakeLists.txt")
+    //         version = "3.22.1"
+    //     }
+    // }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -54,12 +63,6 @@ dependencies {
 
     // Room (needed for database builder in service)
     implementation(libs.room.runtime)
-
-    // Vosk speech recognition
-    implementation(libs.vosk.android)
-
-    // Gemini Nano on-device AI
-    implementation(libs.mlkit.genai.prompt)
 
     // Compose
     implementation(platform(libs.compose.bom))
@@ -80,6 +83,12 @@ dependencies {
 
     // Wearable Data Layer (for watch sync)
     implementation(libs.play.services.wearable)
+
+    // Google Generative AI (Gemini for daily summary)
+    implementation(libs.generativeai)
+
+    // WorkManager (scheduled summary)
+    implementation(libs.work.runtime.ktx)
 
     // Coroutines
     implementation(libs.coroutines.android)

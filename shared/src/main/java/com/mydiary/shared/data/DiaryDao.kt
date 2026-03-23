@@ -16,9 +16,6 @@ interface DiaryDao {
     @Query("SELECT * FROM diary_entries ORDER BY createdAt DESC")
     fun getAll(): Flow<List<DiaryEntry>>
 
-    @Query("SELECT * FROM diary_entries WHERE category = :category ORDER BY createdAt DESC")
-    fun byCategory(category: String): Flow<List<DiaryEntry>>
-
     @Query("SELECT * FROM diary_entries WHERE createdAt BETWEEN :startTime AND :endTime ORDER BY createdAt DESC")
     fun byDateRange(startTime: Long, endTime: Long): Flow<List<DiaryEntry>>
 
@@ -40,16 +37,18 @@ interface DiaryDao {
     @Query("UPDATE diary_entries SET text = :text WHERE id = :id")
     suspend fun updateText(id: Long, text: String)
 
-    @Query("UPDATE diary_entries SET category = :category WHERE id = :id")
-    suspend fun updateCategory(id: Long, category: String)
-
-    @Query("UPDATE diary_entries SET category = :newCategory WHERE category = :oldCategory")
-    suspend fun reassignCategory(oldCategory: String, newCategory: String)
-
     @Query("UPDATE diary_entries SET isSynced = 1 WHERE id IN (:ids)")
     suspend fun markSynced(ids: List<Long>): Int
 
     /** Dedup check for sync: entry already exists with same timestamp and text */
     @Query("SELECT COUNT(*) > 0 FROM diary_entries WHERE createdAt = :createdAt AND text = :text")
     suspend fun existsByCreatedAtAndText(createdAt: Long, text: String): Boolean
+
+    /** Batch delete by IDs */
+    @Query("DELETE FROM diary_entries WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<Long>)
+
+    /** Update LLM-corrected text and review status */
+    @Query("UPDATE diary_entries SET correctedText = :correctedText, wasReviewedByLLM = 1, llmConfidence = :confidence WHERE id = :id")
+    suspend fun updateLLMReview(id: Long, correctedText: String?, confidence: Float)
 }

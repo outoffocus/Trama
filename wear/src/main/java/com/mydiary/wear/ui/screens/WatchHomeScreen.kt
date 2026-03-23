@@ -4,9 +4,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -18,10 +21,12 @@ import androidx.wear.compose.material.Card
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.ToggleChip
-import com.mydiary.shared.model.CategoryInfo
+import com.mydiary.shared.data.DiaryRepository
 import com.mydiary.shared.model.DiaryEntry
 import com.mydiary.wear.service.WatchServiceController
 import com.mydiary.wear.ui.DatabaseProvider
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -31,10 +36,18 @@ fun WatchHomeScreen(
     onEntryClick: (Long) -> Unit
 ) {
     val context = LocalContext.current
-    val repository = remember { DatabaseProvider.getRepository(context) }
     val serviceRunning by WatchServiceController.isRunning.collectAsState()
 
-    val entries by repository.getAll().collectAsState(initial = emptyList())
+    // Defer database access to background thread
+    var repository by remember { mutableStateOf<DiaryRepository?>(null) }
+    LaunchedEffect(Unit) {
+        repository = withContext(Dispatchers.IO) {
+            DatabaseProvider.getRepository(context)
+        }
+    }
+
+    val entries by repository?.getAll()?.collectAsState(initial = emptyList())
+        ?: remember { mutableStateOf(emptyList<DiaryEntry>()) }
     val recentEntries = entries.take(10)
 
     val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
@@ -91,15 +104,12 @@ private fun WatchEntryCard(
     timeFormat: SimpleDateFormat,
     onClick: () -> Unit
 ) {
-    val catInfo = CategoryInfo.DEFAULTS.find { it.id == entry.category }
-    val categoryLabel = catInfo?.label?.take(4)?.uppercase() ?: entry.category.take(4)
-
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth()
     ) {
         Text(
-            text = "$categoryLabel ${timeFormat.format(Date(entry.createdAt))}",
+            text = timeFormat.format(Date(entry.createdAt)),
             style = MaterialTheme.typography.caption2
         )
         Text(

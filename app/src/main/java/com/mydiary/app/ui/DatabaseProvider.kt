@@ -16,7 +16,9 @@ object DatabaseProvider {
                 context.applicationContext,
                 DiaryDatabase::class.java,
                 "mydiary-database"
-            ).build().also { database = it }
+            )
+                .addMigrations(DiaryDatabase.MIGRATION_1_2)
+                .build().also { database = it }
         }
     }
 

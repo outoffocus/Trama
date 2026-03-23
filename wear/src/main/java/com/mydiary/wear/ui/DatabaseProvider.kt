@@ -4,11 +4,27 @@ import android.content.Context
 import androidx.room.Room
 import com.mydiary.shared.data.DiaryDatabase
 import com.mydiary.shared.data.DiaryRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 object DatabaseProvider {
 
     @Volatile
     private var database: DiaryDatabase? = null
+
+    @Volatile
+    private var repository: DiaryRepository? = null
+
+    /**
+     * Call from Application.onCreate() to start building the database
+     * on a background thread, so it's ready when the UI needs it.
+     */
+    fun preWarm(context: Context) {
+        CoroutineScope(Dispatchers.IO).launch {
+            getDatabase(context)
+        }
+    }
 
     fun getDatabase(context: Context): DiaryDatabase {
         return database ?: synchronized(this) {
@@ -16,11 +32,15 @@ object DatabaseProvider {
                 context.applicationContext,
                 DiaryDatabase::class.java,
                 "mydiary-database"
-            ).build().also { database = it }
+            )
+                .addMigrations(DiaryDatabase.MIGRATION_1_2)
+                .build().also { database = it }
         }
     }
 
     fun getRepository(context: Context): DiaryRepository {
-        return DiaryRepository(getDatabase(context).diaryDao())
+        return repository ?: synchronized(this) {
+            repository ?: DiaryRepository(getDatabase(context).diaryDao()).also { repository = it }
+        }
     }
 }

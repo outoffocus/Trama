@@ -17,6 +17,10 @@
     <!-- Vibration feedback -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- Calendar integration for daily summary actions -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
+
     <application
         android:name=".MyDiaryApplication"
         android:allowBackup="true"

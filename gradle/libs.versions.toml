@@ -5,8 +5,7 @@ ksp = "2.2.10-2.0.2"
 composeBom = "2024.12.01"
 wearCompose = "1.4.0"
 room = "2.7.0-alpha11"
-vosk = "0.3.75"
-mlkitGenaiPrompt = "1.0.0-beta1"
+
 playServicesWearable = "18.2.0"
 coroutines = "1.8.1"
 lifecycleService = "2.8.7"
@@ -16,6 +15,8 @@ coreKtx = "1.13.1"
 datastorePreferences = "1.1.1"
 serializationJson = "1.6.3"
 horologist = "0.6.20"
+workRuntime = "2.10.0"
+generativeai = "0.9.0"
 junit = "4.13.2"
 androidxTestExt = "1.2.1"
 espresso = "3.6.1"
@@ -41,14 +42,12 @@ room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 room-testing = { group = "androidx.room", name = "room-testing", version.ref = "room" }
 
-# Vosk
-vosk-android = { group = "com.alphacephei", name = "vosk-android", version.ref = "vosk" }
-
-# ML Kit GenAI
-mlkit-genai-prompt = { group = "com.google.mlkit", name = "genai-prompt", version.ref = "mlkitGenaiPrompt" }
-
 # Play Services
 play-services-wearable = { group = "com.google.android.gms", name = "play-services-wearable", version.ref = "playServicesWearable" }
+generativeai = { group = "com.google.ai.client.generativeai", name = "generativeai", version.ref = "generativeai" }
+
+# WorkManager
+work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "workRuntime" }
 
 # Kotlin / Coroutines
 coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }

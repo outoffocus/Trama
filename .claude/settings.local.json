@@ -8,7 +8,13 @@
       "Bash(./gradlew :app:compileDebugKotlin)",
       "Bash(/Users/pabmon/Documents/Projects/MyDiary/gradlew :app:compileDebugKotlin)",
       "WebSearch",
-      "WebFetch(domain:developers.google.com)"
+      "WebFetch(domain:developers.google.com)",
+      "Bash(find ~/.gradle/caches -path *genai* -name *.jar)",
+      "Bash(find /Users/pabmon/.gradle/caches -path *genai* -name *.jar)",
+      "Bash(jar tf:*)",
+      "Bash(grep '\\\\.class$')",
+      "Bash(./gradlew assembleDebug)",
+      "Bash(/Users/pabmon/Documents/Projects/MyDiary/gradlew assembleDebug)"
     ]
   }
 }

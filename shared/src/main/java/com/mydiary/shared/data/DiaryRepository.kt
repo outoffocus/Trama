@@ -9,8 +9,6 @@ class DiaryRepository(private val dao: DiaryDao) {
 
     fun getAll(): Flow<List<DiaryEntry>> = dao.getAll()
 
-    fun byCategory(category: String): Flow<List<DiaryEntry>> = dao.byCategory(category)
-
     fun byDateRange(startTime: Long, endTime: Long): Flow<List<DiaryEntry>> =
         dao.byDateRange(startTime, endTime)
 
@@ -26,13 +24,13 @@ class DiaryRepository(private val dao: DiaryDao) {
 
     suspend fun updateText(id: Long, text: String) = dao.updateText(id, text)
 
-    suspend fun updateCategory(id: Long, category: String) = dao.updateCategory(id, category)
-
-    suspend fun reassignCategory(oldCategory: String, newCategory: String) =
-        dao.reassignCategory(oldCategory, newCategory)
-
     suspend fun markSynced(ids: List<Long>) = dao.markSynced(ids)
 
     suspend fun existsByCreatedAtAndText(createdAt: Long, text: String): Boolean =
         dao.existsByCreatedAtAndText(createdAt, text)
+
+    suspend fun deleteByIds(ids: List<Long>) = dao.deleteByIds(ids)
+
+    suspend fun updateLLMReview(id: Long, correctedText: String?, confidence: Float) =
+        dao.updateLLMReview(id, correctedText, confidence)
 }

@@ -1,6 +1,3 @@
-# Vosk - keep native methods
--keep class org.vosk.** { *; }
-
 # Room
 -keep class * extends androidx.room.RoomDatabase
 -keep @androidx.room.Entity class *

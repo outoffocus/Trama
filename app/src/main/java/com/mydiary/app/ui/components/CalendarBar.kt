@@ -26,12 +26,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.mydiary.shared.model.CategoryInfo
 import com.mydiary.shared.model.DiaryEntry
 import java.time.LocalDate
 import java.time.YearMonth
@@ -41,7 +39,6 @@ import java.util.Locale
 @Composable
 fun CalendarBar(
     entries: List<DiaryEntry>,
-    categories: List<CategoryInfo>,
     selectedDate: LocalDate?,
     expanded: Boolean,
     currentMonth: YearMonth,
@@ -112,7 +109,6 @@ fun CalendarBar(
             CalendarGrid(
                 yearMonth = currentMonth,
                 entriesByDate = entriesByDate,
-                categories = categories,
                 selectedDate = selectedDate,
                 onDateSelected = onDateSelected
             )
@@ -124,7 +120,6 @@ fun CalendarBar(
 private fun CalendarGrid(
     yearMonth: YearMonth,
     entriesByDate: Map<LocalDate, List<DiaryEntry>>,
-    categories: List<CategoryInfo>,
     selectedDate: LocalDate?,
     onDateSelected: (LocalDate?) -> Unit
 ) {
@@ -173,15 +168,9 @@ private fun CalendarGrid(
                         val isSelected = date == selectedDate
                         val isToday = date == today
 
-                        val dominantCatId = dayEntries.dominantCategoryId()
-                        val dotColor = dominantCatId?.let { id ->
-                            categories.find { it.id == id }?.let { Color(it.colorHex.toLong(16)) }
-                        }
-
                         DayCell(
                             day = dayCounter,
                             hasEntries = dayEntries.isNotEmpty(),
-                            dotColor = dotColor,
                             entryCount = dayEntries.size,
                             isSelected = isSelected,
                             isToday = isToday,
@@ -202,7 +191,6 @@ private fun CalendarGrid(
 private fun DayCell(
     day: Int,
     hasEntries: Boolean,
-    dotColor: Color?,
     entryCount: Int,
     isSelected: Boolean,
     isToday: Boolean,
@@ -244,20 +232,13 @@ private fun DayCell(
                     modifier = Modifier
                         .size(if (entryCount > 3) 6.dp else 4.dp)
                         .background(
-                            dotColor ?: MaterialTheme.colorScheme.primary,
+                            MaterialTheme.colorScheme.primary,
                             CircleShape
                         )
                 )
             }
         }
     }
-}
-
-private fun List<DiaryEntry>.dominantCategoryId(): String? {
-    if (isEmpty()) return null
-    return groupBy { it.category }
-        .maxByOrNull { it.value.size }
-        ?.key
 }
 
 private fun formatSelectedDate(date: LocalDate, locale: Locale): String {

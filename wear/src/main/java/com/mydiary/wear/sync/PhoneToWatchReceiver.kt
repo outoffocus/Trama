@@ -18,7 +18,7 @@ import kotlinx.serialization.json.Json
 
 /**
  * Receives data and messages from the phone:
- * - /mydiary/settings: keyword mappings (DataClient)
+ * - /mydiary/settings: intent patterns + custom keywords (DataClient)
  * - /mydiary/phone-entries: diary entries from phone (DataClient)
  * - /mydiary/mic: mic coordination commands PAUSE/RESUME (MessageClient)
  */
@@ -32,7 +32,7 @@ class PhoneToWatchReceiver : WearableListenerService() {
         private const val CMD_PAUSE = "PAUSE"
         private const val CMD_RESUME = "RESUME"
 
-        private const val PREFS = "watch_sync_prefs"
+        const val PREFS = "watch_sync_prefs"
         private const val KEY_PHONE_ACTIVE = "phone_active"
     }
 
@@ -48,8 +48,10 @@ class PhoneToWatchReceiver : WearableListenerService() {
 
                 when (path) {
                     SETTINGS_PATH -> {
-                        val mappingsStr = dataMap.getString("keyword_mappings") ?: return@forEach
-                        handleSettings(mappingsStr)
+                        val patternsJson = dataMap.getString("intent_patterns_json")
+                        val keywordsStr = dataMap.getString("keyword_mappings")
+                        val speakerProfileJson = dataMap.getString("speaker_profile_json")
+                        handleSettings(patternsJson, keywordsStr, speakerProfileJson)
                     }
                     ENTRIES_PATH -> {
                         val json = dataMap.getString("payload") ?: return@forEach
@@ -60,26 +62,26 @@ class PhoneToWatchReceiver : WearableListenerService() {
         }
     }
 
-    private fun handleSettings(mappingsStr: String) {
-        // Parse "keyword:category,keyword:category"
-        val mappings = mappingsStr.split(",").mapNotNull { pair ->
-            val parts = pair.trim().split(":")
-            if (parts.size == 2) parts[0].trim().lowercase() to parts[1].trim()
-            else null
-        }.toMap()
+    private fun handleSettings(patternsJson: String?, keywordsStr: String?, speakerProfileJson: String?) {
+        val prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
 
-        if (mappings.isEmpty()) return
+        if (!patternsJson.isNullOrBlank()) {
+            prefs.putString("intent_patterns_json", patternsJson)
+            Log.i(TAG, "Intent patterns received from phone")
+        }
 
-        // Store in SharedPreferences for the watch service to pick up
-        getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString("keyword_mappings", mappingsStr)
-            .apply()
+        if (!keywordsStr.isNullOrBlank()) {
+            prefs.putString("keyword_mappings", keywordsStr)
+        }
 
-        Log.i(TAG, "Settings received: ${mappings.size} keywords: ${mappings.keys}")
+        if (!speakerProfileJson.isNullOrBlank()) {
+            prefs.putString("speaker_profile_json", speakerProfileJson)
+            Log.i(TAG, "Speaker profile received from phone")
+        }
 
-        // Notify the running service via broadcast
-        val intent = android.content.Intent("com.mydiary.wear.SETTINGS_UPDATED")
-        sendBroadcast(intent)
+        prefs.apply()
+
+        sendBroadcast(android.content.Intent("com.mydiary.wear.SETTINGS_UPDATED"))
     }
 
     private fun handleEntries(json: String) {
@@ -114,13 +116,11 @@ class PhoneToWatchReceiver : WearableListenerService() {
 
         when (command) {
             CMD_PAUSE -> {
-                // Phone is listening → stop watch service
                 prefs.edit().putBoolean(KEY_PHONE_ACTIVE, true).apply()
                 WatchServiceController.stop(applicationContext)
                 Log.i(TAG, "Watch service stopped (phone is active)")
             }
             CMD_RESUME -> {
-                // Phone stopped → restart watch service if user had it enabled
                 prefs.edit().putBoolean(KEY_PHONE_ACTIVE, false).apply()
                 WatchServiceController.resumeIfAllowed(applicationContext)
                 Log.i(TAG, "Watch auto-resume attempted (phone released)")

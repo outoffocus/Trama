@@ -1,6 +1,5 @@
 package com.mydiary.app.ui.screens
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,15 +19,10 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -41,15 +35,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.mydiary.app.speech.PersonalDictionary
 import com.mydiary.app.ui.DatabaseProvider
-import com.mydiary.app.ui.SettingsDataStore
-import com.mydiary.shared.model.CategoryInfo
 import com.mydiary.shared.model.Source
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -64,12 +54,10 @@ fun EntryDetailScreen(
 ) {
     val context = LocalContext.current
     val repository = remember { DatabaseProvider.getRepository(context) }
-    val settings = remember { SettingsDataStore(context) }
     val dictionary = remember { PersonalDictionary(context) }
     val scope = rememberCoroutineScope()
 
     val entry by repository.getById(entryId).collectAsState(initial = null)
-    val categories by settings.categories.collectAsState(initial = CategoryInfo.DEFAULTS)
 
     var showDeleteDialog by remember { mutableStateOf(false) }
     var isEditing by remember { mutableStateOf(false) }
@@ -80,14 +68,12 @@ fun EntryDetailScreen(
         return
     }
 
-    val catInfo = categories.find { it.id == currentEntry.category }
-    val catLabel = catInfo?.label ?: currentEntry.category
     val dateFormat = SimpleDateFormat("dd MMMM yyyy, HH:mm", Locale("es"))
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(catLabel) },
+                title = { Text("Detalle") },
                 navigationIcon = {
                     IconButton(onClick = {
                         if (isEditing) {
@@ -160,16 +146,6 @@ fun EntryDetailScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            CategorySelector(
-                currentCategoryId = currentEntry.category,
-                categories = categories,
-                onCategoryChange = { newCatId ->
-                    scope.launch { repository.updateCategory(entryId, newCatId) }
-                }
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     DetailRow("Fecha", dateFormat.format(Date(currentEntry.createdAt)))
@@ -203,65 +179,6 @@ fun EntryDetailScreen(
                 }
             }
         )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun CategorySelector(
-    currentCategoryId: String,
-    categories: List<CategoryInfo>,
-    onCategoryChange: (String) -> Unit
-) {
-    var expanded by remember { mutableStateOf(false) }
-
-    val catInfo = categories.find { it.id == currentCategoryId }
-    val color = catInfo?.let { Color(it.colorHex.toLong(16)) }
-        ?: MaterialTheme.colorScheme.primary
-    val label = catInfo?.label ?: currentCategoryId
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.1f))
-    ) {
-        ExposedDropdownMenuBox(
-            expanded = expanded,
-            onExpandedChange = { expanded = it },
-            modifier = Modifier.padding(12.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .menuAnchor(MenuAnchorType.PrimaryNotEditable)
-                    .clickable { expanded = true }
-            ) {
-                Text(
-                    text = "Categoría:",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.width(100.dp)
-                )
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = color
-                )
-                Spacer(modifier = Modifier.weight(1f))
-                ExposedDropdownMenuDefaults.TrailingIcon(expanded)
-            }
-            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                categories.forEach { cat ->
-                    DropdownMenuItem(
-                        text = { Text(cat.label) },
-                        onClick = {
-                            onCategoryChange(cat.id)
-                            expanded = false
-                        }
-                    )
-                }
-            }
-        }
     }
 }
 

@@ -10,12 +10,14 @@ import com.mydiary.app.ui.screens.EntryDetailScreen
 import com.mydiary.app.ui.screens.HomeScreen
 import com.mydiary.app.ui.screens.SearchScreen
 import com.mydiary.app.ui.screens.SettingsScreen
+import com.mydiary.app.ui.screens.SummaryScreen
 
 object Routes {
     const val HOME = "home"
     const val DETAIL = "detail/{entryId}"
     const val SETTINGS = "settings"
     const val SEARCH = "search"
+    const val SUMMARY = "summary"
 
     fun detail(entryId: Long) = "detail/$entryId"
 }
@@ -29,7 +31,8 @@ fun NavGraph() {
             HomeScreen(
                 onEntryClick = { entryId -> navController.navigate(Routes.detail(entryId)) },
                 onSettingsClick = { navController.navigate(Routes.SETTINGS) },
-                onSearchClick = { navController.navigate(Routes.SEARCH) }
+                onSearchClick = { navController.navigate(Routes.SEARCH) },
+                onSummaryClick = { navController.navigate(Routes.SUMMARY) }
             )
         }
 
@@ -53,6 +56,10 @@ fun NavGraph() {
                 onEntryClick = { entryId -> navController.navigate(Routes.detail(entryId)) },
                 onBack = { navController.popBackStack() }
             )
+        }
+
+        composable(Routes.SUMMARY) {
+            SummaryScreen(onBack = { navController.popBackStack() })
         }
     }
 }

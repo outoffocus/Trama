@@ -9,8 +9,14 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import com.mydiary.app.service.ServiceController
+import com.mydiary.app.sync.SettingsSyncer
 import com.mydiary.app.ui.NavGraph
+import com.mydiary.app.ui.SettingsDataStore
 import com.mydiary.app.ui.theme.MyDiaryTheme
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -32,6 +38,9 @@ class MainActivity : ComponentActivity() {
             requestPermissions()
         }
 
+        // Sync keywords to watch on every app open
+        syncSettingsToWatch()
+
         setContent {
             MyDiaryTheme {
                 NavGraph()
@@ -46,13 +55,25 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startListenerService() {
-        if (!ServiceController.isRunning(this)) {
+        if (!ServiceController.isRunning.value) {
             ServiceController.start(this)
         }
     }
 
+    private fun syncSettingsToWatch() {
+        CoroutineScope(Dispatchers.IO).launch {
+            val settings = SettingsDataStore(applicationContext)
+            val kwList = settings.keywords.first()
+            SettingsSyncer(applicationContext).syncSettings(kwList)
+        }
+    }
+
     private fun requestPermissions() {
-        val permissions = mutableListOf(Manifest.permission.RECORD_AUDIO)
+        val permissions = mutableListOf(
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.READ_CALENDAR,
+            Manifest.permission.WRITE_CALENDAR
+        )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
         }

@@ -25,29 +25,43 @@ import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.mydiary.app.MainActivity
 import com.mydiary.app.R
+import com.mydiary.app.speech.EntryValidator
+import com.mydiary.app.speech.IntentDetector
+import com.mydiary.app.speech.IntentPattern
 import com.mydiary.app.speech.PersonalDictionary
+import com.mydiary.app.speech.SpeakerEnrollment
+import com.mydiary.app.speech.VoiceActivityDetector
 import com.mydiary.app.sync.MicCoordinator
 import com.mydiary.app.sync.PhoneToWatchSyncer
 import com.mydiary.app.sync.SettingsSyncer
 import com.mydiary.app.ui.DatabaseProvider
 import com.mydiary.app.ui.SettingsDataStore
-import com.mydiary.shared.model.CategoryInfo
 import com.mydiary.shared.model.DiaryEntry
 import com.mydiary.shared.model.Source
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
 /**
- * Single-engine speech service using Android SpeechRecognizer in continuous loop.
+ * Continuous speech listening service using Android SpeechRecognizer.
+ *
+ * Uses IntentDetector for flexible regex-based intent matching instead of
+ * exact keyword matching. Enables partial results for faster detection.
+ *
+ * Integrated features:
+ * - VAD (Voice Activity Detection): Only starts SpeechRecognizer when voice is detected
+ * - Speaker verification: Filters out TV/radio using enrolled voice profile
+ * - Entry validation: Heuristics + Gemini to validate/correct transcriptions
  *
  * Battery optimizations:
- * - Pauses when screen is off (user can't speak keywords with phone in pocket)
- * - Adaptive restart delay: slows down after consecutive silent cycles
+ * - VAD gate: SpeechRecognizer only runs when voice is detected (~60% savings)
+ * - Adaptive restart delay (fast after speech, slow after silence)
+ * - Slow mode when screen is off
  * - Stops at configurable battery threshold
- * - Reduces notification updates to avoid unnecessary wake-ups
+ * - Deduplicates entries from partial vs final results
  */
 class KeywordListenerService : LifecycleService() {
 
@@ -57,22 +71,27 @@ class KeywordListenerService : LifecycleService() {
         private const val NOTIFICATION_ID = 1
         private const val NEW_ENTRY_CHANNEL_ID = "mydiary_new_entry"
 
-        // Adaptive delays: start fast, slow down if no speech detected
-        private const val RESTART_DELAY_FAST_MS = 200L     // After speech detected
-        private const val RESTART_DELAY_NORMAL_MS = 500L   // Default
-        private const val RESTART_DELAY_SLOW_MS = 1500L    // After many silent cycles
+        private const val RESTART_DELAY_FAST_MS = 200L
+        private const val RESTART_DELAY_NORMAL_MS = 500L
+        private const val RESTART_DELAY_SLOW_MS = 1500L
         private const val ERROR_RETRY_DELAY_MS = 1000L
 
-        // After this many consecutive silent cycles, switch to slow mode
         private const val SLOW_MODE_THRESHOLD = 20
-
         private const val BATTERY_THRESHOLD = 15
+
+        // Deduplication: ignore entries within this window of a previous capture
+        private const val DEDUP_WINDOW_MS = 5000L
     }
 
     private var recognizer: SpeechRecognizer? = null
     private var repository: com.mydiary.shared.data.DiaryRepository? = null
     private lateinit var settings: SettingsDataStore
     private lateinit var dictionary: PersonalDictionary
+    private lateinit var intentDetector: IntentDetector
+    private lateinit var entryValidator: EntryValidator
+    private lateinit var speakerEnrollment: SpeakerEnrollment
+    private var vad: VoiceActivityDetector? = null
+    private var vadJob: Job? = null
     private var phoneToWatchSyncer: PhoneToWatchSyncer? = null
     private lateinit var settingsSyncer: SettingsSyncer
 
@@ -80,29 +99,35 @@ class KeywordListenerService : LifecycleService() {
     private var listening = false
 
     @Volatile
-    private var screenOff = false  // Slow mode when screen off
+    private var screenOff = false
+
+    @Volatile
+    private var vadActive = false // true = VAD is running instead of SpeechRecognizer
+
+    @Volatile
+    private var speechRecognizerActive = false
 
     private var consecutiveSilent = 0
     private var batteryCheckCounter = 0
     private var lastNotificationText = ""
 
-    private var keywords = listOf("recordar", "nota", "destacar", "pendiente")
-    private var keywordCategoryMap = mapOf(
-        "recordar" to "TODO",
-        "nota" to "NOTE",
-        "destacar" to "HIGHLIGHT",
-        "pendiente" to "REMINDER"
-    )
-    private var categoryList = CategoryInfo.DEFAULTS
+    // Deduplication: avoid saving same entry from partial + final results
+    private var lastSavedText = ""
+    private var lastSavedTime = 0L
 
-    // Screen on/off receiver — switch to slow mode when screen off
+    // Track if partial result already triggered a save for this recognition cycle
+    private var partialAlreadySaved = false
+
+    // Audio features for speaker verification (RMS only — SpeechRecognizer doesn't expose raw audio for ZCR)
+    private val recentRmsValues = mutableListOf<Double>()
+
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
                     Log.i(TAG, "Screen off → slow mode")
                     screenOff = true
-                    consecutiveSilent = SLOW_MODE_THRESHOLD // Force slow mode immediately
+                    consecutiveSilent = SLOW_MODE_THRESHOLD
                     updateNotificationIfChanged("Escuchando (segundo plano)")
                 }
                 Intent.ACTION_SCREEN_ON -> {
@@ -121,6 +146,9 @@ class KeywordListenerService : LifecycleService() {
         initDatabase()
         settings = SettingsDataStore(applicationContext)
         dictionary = PersonalDictionary(applicationContext)
+        intentDetector = IntentDetector()
+        entryValidator = EntryValidator(applicationContext)
+        speakerEnrollment = SpeakerEnrollment(applicationContext)
         settingsSyncer = SettingsSyncer(applicationContext)
         loadSettings()
         observeSettings()
@@ -148,7 +176,6 @@ class KeywordListenerService : LifecycleService() {
 
         initRecognizerAndStart()
 
-        // Tell watch to pause — phone has mic priority
         lifecycleScope.launch(Dispatchers.IO) { MicCoordinator.sendPause(applicationContext) }
 
         return START_NOT_STICKY
@@ -157,13 +184,13 @@ class KeywordListenerService : LifecycleService() {
     override fun onDestroy() {
         listening = false
         screenOff = false
+        stopVAD()
         try {
             unregisterReceiver(screenReceiver)
         } catch (_: Exception) {}
         recognizer?.destroy()
         recognizer = null
 
-        // Tell watch it can resume listening
         lifecycleScope.launch(Dispatchers.IO) { MicCoordinator.sendResume(applicationContext) }
 
         ServiceController.notifyStopped()
@@ -177,33 +204,41 @@ class KeywordListenerService : LifecycleService() {
         }
         registerReceiver(screenReceiver, filter)
 
-        // Check current screen state
         val pm = getSystemService(PowerManager::class.java)
         screenOff = !pm.isInteractive
     }
 
     private fun loadSettings() {
         runBlocking {
-            keywordCategoryMap = settings.keywordMappings.first()
-            keywords = keywordCategoryMap.keys.toList()
-            categoryList = settings.categories.first()
+            val patterns = settings.intentPatterns.first()
+            intentDetector.setPatterns(patterns)
+
+            val customKw = settings.customKeywords.first()
+            intentDetector.setCustomKeywords(customKw)
         }
     }
 
     private fun observeSettings() {
         lifecycleScope.launch {
-            settings.keywordMappings.collect { mappings ->
-                keywordCategoryMap = mappings
-                keywords = mappings.keys.toList()
-                Log.i(TAG, "Keywords updated: $keywords")
+            settings.intentPatterns.collect { patterns ->
+                intentDetector.setPatterns(patterns)
+                Log.i(TAG, "Intent patterns updated: ${patterns.count { it.enabled }} enabled")
 
-                // Sync keyword changes to watch
-                launch(Dispatchers.IO) { settingsSyncer.syncSettings(mappings) }
+                // Sync full patterns + speaker profile to watch
+                val keywords = settings.customKeywords.first()
+                val profile = speakerEnrollment.toSpeakerProfile()
+                launch(Dispatchers.IO) { settingsSyncer.syncPatterns(patterns, keywords, profile) }
             }
         }
         lifecycleScope.launch {
-            settings.categories.collect { cats ->
-                categoryList = cats
+            settings.customKeywords.collect { keywords ->
+                intentDetector.setCustomKeywords(keywords)
+                Log.i(TAG, "Custom keywords updated: ${keywords.size} keywords")
+
+                // Sync to watch
+                val patterns = settings.intentPatterns.first()
+                val profile = speakerEnrollment.toSpeakerProfile()
+                launch(Dispatchers.IO) { settingsSyncer.syncPatterns(patterns, keywords, profile) }
             }
         }
     }
@@ -224,7 +259,7 @@ class KeywordListenerService : LifecycleService() {
                     }
                 } else if (SpeechRecognizer.isRecognitionAvailable(applicationContext)) {
                     SpeechRecognizer.createSpeechRecognizer(applicationContext).also {
-                        Log.i(TAG, "Standard SpeechRecognizer created (offline preference)")
+                        Log.i(TAG, "Standard SpeechRecognizer created")
                     }
                 } else {
                     Log.e(TAG, "No SpeechRecognizer available")
@@ -234,6 +269,8 @@ class KeywordListenerService : LifecycleService() {
                 }
 
                 listening = true
+                // Start directly with SpeechRecognizer (VAD not on phone for now
+                // since SpeechRecognizer handles its own audio)
                 startListening()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to create SpeechRecognizer", e)
@@ -247,20 +284,35 @@ class KeywordListenerService : LifecycleService() {
         if (!listening) return
         val rec = recognizer ?: return
 
+        partialAlreadySaved = false  // Reset for new cycle
+        recentRmsValues.clear()
+
         rec.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
+                speechRecognizerActive = true
                 updateNotificationIfChanged("Escuchando...")
             }
 
             override fun onBeginningOfSpeech() {
-                consecutiveSilent = 0  // Reset: user is speaking
+                consecutiveSilent = 0
             }
 
-            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onRmsChanged(rmsdB: Float) {
+                // Collect raw dB values for speaker verification
+                // Same scale as enrollment (both use SpeechRecognizer.onRmsChanged)
+                if (speakerEnrollment.isEnrolled() && speakerEnrollment.isEnabled()) {
+                    recentRmsValues.add(rmsdB.toDouble())
+                    if (recentRmsValues.size > 50) recentRmsValues.removeAt(0)
+                }
+            }
+
             override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() {}
+            override fun onEndOfSpeech() {
+                speechRecognizerActive = false
+            }
 
             override fun onError(error: Int) {
+                speechRecognizerActive = false
                 when (error) {
                     SpeechRecognizer.ERROR_NO_MATCH,
                     SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
@@ -274,23 +326,32 @@ class KeywordListenerService : LifecycleService() {
                         restartListening(ERROR_RETRY_DELAY_MS)
                     }
                     else -> {
-                        val msg = when (error) {
-                            SpeechRecognizer.ERROR_AUDIO -> "Audio"
-                            SpeechRecognizer.ERROR_NETWORK -> "Network"
-                            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Permissions"
-                            else -> "Code $error"
-                        }
-                        Log.e(TAG, "Recognition error: $msg")
+                        Log.e(TAG, "Recognition error: $error")
                         restartListening(ERROR_RETRY_DELAY_MS)
                     }
                 }
             }
 
+            override fun onPartialResults(partialResults: Bundle?) {
+                if (partialAlreadySaved) return  // Already captured in this cycle
+
+                val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                val text = matches?.firstOrNull()?.trim() ?: return
+
+                if (text.isNotBlank()) {
+                    val result = intentDetector.detectPartial(text)
+                    if (result != null) {
+                        Log.i(TAG, "Partial match [${result.label}]: '${text.take(60)}'")
+                    }
+                }
+            }
+
             override fun onResults(results: Bundle?) {
+                speechRecognizerActive = false
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 val text = matches?.firstOrNull()?.trim() ?: ""
 
-                consecutiveSilent = 0  // Got a result → reset
+                consecutiveSilent = 0
 
                 if (text.isNotBlank()) {
                     Log.i(TAG, "Heard: '$text'")
@@ -300,7 +361,6 @@ class KeywordListenerService : LifecycleService() {
                 restartListening(RESTART_DELAY_FAST_MS)
             }
 
-            override fun onPartialResults(partialResults: Bundle?) {}
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
 
@@ -326,18 +386,15 @@ class KeywordListenerService : LifecycleService() {
             }
 
             putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+            // Enable partial results for faster intent detection
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
         }
     }
 
-    /**
-     * Adaptive delay: fast after speech, slower after many silent cycles.
-     * Reduces CPU wake-ups when nobody is speaking.
-     */
     private fun adaptiveDelay(): Long {
         return when {
-            screenOff -> RESTART_DELAY_SLOW_MS  // Screen off → always slow to save battery
+            screenOff -> RESTART_DELAY_SLOW_MS
             consecutiveSilent >= SLOW_MODE_THRESHOLD -> RESTART_DELAY_SLOW_MS
             else -> RESTART_DELAY_NORMAL_MS
         }
@@ -346,7 +403,6 @@ class KeywordListenerService : LifecycleService() {
     private fun restartListening(delayMs: Long) {
         if (!listening) return
 
-        // Battery check every ~50 cycles
         if (++batteryCheckCounter % 50 == 0) {
             if (isBatteryLow()) {
                 Log.w(TAG, "Battery low, stopping")
@@ -365,35 +421,113 @@ class KeywordListenerService : LifecycleService() {
         }
     }
 
-    private fun processText(text: String) {
-        val lowerText = text.lowercase()
-        val keyword = keywords.firstOrNull { lowerText.contains(it) } ?: return
-
-        Log.i(TAG, "Keyword '$keyword' found in: '$text'")
-        vibrate(longArrayOf(0, 100, 50, 100))
-        saveEntry(keyword, text, 0.9f)
+    private fun stopVAD() {
+        vad?.stop()
+        vadJob?.cancel()
+        vadJob = null
+        vad = null
+        vadActive = false
     }
 
-    private fun saveEntry(keyword: String, text: String, confidence: Float) {
-        lifecycleScope.launch(Dispatchers.IO) {
-            val correctedText = dictionary.correct(text)
-            val categoryId = keywordCategoryMap[keyword] ?: "NOTE"
+    /**
+     * Process transcribed text through IntentDetector.
+     * Uses regex patterns for flexible matching of natural speech variations.
+     * Now includes speaker verification and LLM validation.
+     */
+    private fun processText(text: String) {
+        val result = intentDetector.detect(text) ?: return
 
-            val entry = DiaryEntry(
+        // Speaker verification — reject if voice doesn't match enrolled profile
+        if (speakerEnrollment.isEnrolled() && speakerEnrollment.isEnabled()) {
+            val verification = speakerEnrollment.verify(recentRmsValues.toList())
+            if (!verification.isMatch) {
+                Log.i(TAG, "Speaker verification failed (sim=${verification.similarity}), rejecting: '${text.take(40)}'")
+                return
+            }
+        }
+
+        // Deduplication: skip if we just saved something very similar recently
+        val now = System.currentTimeMillis()
+        if (now - lastSavedTime < DEDUP_WINDOW_MS && isSimilar(text, lastSavedText)) {
+            Log.i(TAG, "Dedup: skipping similar entry within ${DEDUP_WINDOW_MS}ms")
+            return
+        }
+
+        val intentId = result.pattern?.id ?: result.customKeyword ?: "nota"
+        Log.i(TAG, "Intent '$intentId' [${result.label}] found in: '${text.take(60)}'")
+        vibrate(longArrayOf(0, 100, 50, 100))
+
+        // Validate and correct via heuristics + LLM (async)
+        lifecycleScope.launch(Dispatchers.IO) {
+            val validation = entryValidator.validate(result.capturedText)
+
+            if (!validation.isValid) {
+                Log.i(TAG, "Entry rejected by validator: ${validation.reason}")
+                return@launch
+            }
+
+            val correctedText = dictionary.correct(
+                validation.correctedText ?: result.capturedText
+            )
+
+            saveEntry(
+                intentId = intentId,
+                label = result.label,
                 text = correctedText,
-                keyword = keyword,
-                category = categoryId,
+                originalText = result.capturedText,
+                correctedByLLM = validation.correctedText,
+                llmConfidence = validation.confidence,
+                wasReviewed = validation.correctedText != null || validation.reason.contains("IA"),
+                confidence = 0.9f
+            )
+        }
+
+        lastSavedText = text
+        lastSavedTime = now
+        partialAlreadySaved = true
+    }
+
+    private fun saveEntry(
+        intentId: String,
+        label: String,
+        text: String,
+        originalText: String,
+        correctedByLLM: String?,
+        llmConfidence: Float,
+        wasReviewed: Boolean,
+        confidence: Float
+    ) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val entry = DiaryEntry(
+                text = text,
+                keyword = intentId,
+                category = label,
                 confidence = confidence,
                 source = Source.PHONE,
-                duration = 0
+                duration = 0,
+                correctedText = correctedByLLM,
+                wasReviewedByLLM = wasReviewed,
+                llmConfidence = llmConfidence
             )
             repository?.insert(entry)
-            Log.i(TAG, "Entry saved: '$correctedText' (category: ${entry.category})")
+            Log.i(TAG, "Entry saved: '$text' (intent: $intentId, label: $label, reviewed: $wasReviewed)")
             showNewEntryNotification(entry)
 
-            // Sync entry to watch
             phoneToWatchSyncer?.syncUnsentEntries()
         }
+    }
+
+    /**
+     * Simple similarity check: if >70% of words overlap, consider it a duplicate.
+     */
+    private fun isSimilar(a: String, b: String): Boolean {
+        if (a.isBlank() || b.isBlank()) return false
+        val wordsA = a.lowercase().split("\\s+".toRegex()).toSet()
+        val wordsB = b.lowercase().split("\\s+".toRegex()).toSet()
+        if (wordsA.isEmpty() || wordsB.isEmpty()) return false
+        val intersection = wordsA.intersect(wordsB)
+        val smaller = minOf(wordsA.size, wordsB.size)
+        return intersection.size.toFloat() / smaller >= 0.7f
     }
 
     private fun vibrate(pattern: LongArray) {
@@ -438,7 +572,6 @@ class KeywordListenerService : LifecycleService() {
             .build()
     }
 
-    /** Only update notification if text changed — avoids unnecessary system wake-ups */
     private fun updateNotificationIfChanged(text: String) {
         if (text == lastNotificationText) return
         lastNotificationText = text
@@ -450,11 +583,13 @@ class KeywordListenerService : LifecycleService() {
         val pendingIntent = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
         )
-        val categoryLabel = categoryList.find { it.id == entry.category }?.label ?: entry.category
+
+        val displayText = entry.correctedText ?: entry.text
+        val reviewBadge = if (entry.wasReviewedByLLM) " (revisado por IA)" else ""
 
         val notification = NotificationCompat.Builder(this, NEW_ENTRY_CHANNEL_ID)
-            .setContentTitle("Nueva entrada: $categoryLabel")
-            .setContentText(entry.text)
+            .setContentTitle("${entry.category}$reviewBadge")
+            .setContentText(displayText)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)

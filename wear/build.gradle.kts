@@ -54,9 +54,6 @@ dependencies {
     // Room (needed for database builder in service)
     implementation(libs.room.runtime)
 
-    // Vosk speech recognition
-    implementation(libs.vosk.android)
-
     // Wear Compose
     implementation(platform(libs.compose.bom))
     implementation(libs.wear.compose.material)

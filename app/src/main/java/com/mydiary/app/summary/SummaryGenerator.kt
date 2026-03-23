@@ -114,6 +114,7 @@ Reglas CRITICAS para "groups":
 - MINIMIZA el numero de categorias: fusiona las que sean similares
 - Por ejemplo: "tengo que", "debería", "hay que", "necesito" → TODO ES "Pendientes"
 - Por ejemplo: "cita médico", "me duele", "farmacia" → TODO ES "Salud"
+- Las notas pueden ser dichas por el usuario para sí mismo o para un "nosotros" (grupo, familia, equipo)
 - Cada categoria debe tener un label corto (1-2 palabras) y un emoji representativo
 - Maximo 5-6 categorias. Si solo hay 1-2 temas, usa 1-2 categorias
 - Los items deben ser frases cortas que resuman cada nota, NO copiar el texto entero
