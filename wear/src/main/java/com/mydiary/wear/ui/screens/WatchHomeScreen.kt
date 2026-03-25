@@ -4,57 +4,47 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
-import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.material.Card
+import androidx.wear.compose.material.Chip
+import androidx.wear.compose.material.ChipDefaults
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.ToggleChip
-import com.mydiary.shared.data.DiaryRepository
-import com.mydiary.shared.model.DiaryEntry
 import com.mydiary.wear.service.WatchServiceController
 import com.mydiary.wear.ui.DatabaseProvider
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 @Composable
 fun WatchHomeScreen(
-    onEntryClick: (Long) -> Unit
+    onEntryClick: (Long) -> Unit,
+    onViewAll: () -> Unit,
+    onSettingsClick: () -> Unit
 ) {
     val context = LocalContext.current
     val serviceRunning by WatchServiceController.isRunning.collectAsState()
 
-    // Defer database access to background thread
-    var repository by remember { mutableStateOf<DiaryRepository?>(null) }
-    LaunchedEffect(Unit) {
-        repository = withContext(Dispatchers.IO) {
-            DatabaseProvider.getRepository(context)
-        }
-    }
+    // Lightweight queries — only fetch last entry + count, not all entries
+    val repository = remember { DatabaseProvider.getRepository(context) }
+    val lastEntry by repository.getLatest().collectAsState(initial = null)
+    val totalCount by repository.countAll().collectAsState(initial = 0)
 
-    val entries by repository?.getAll()?.collectAsState(initial = emptyList())
-        ?: remember { mutableStateOf(emptyList<DiaryEntry>()) }
-    val recentEntries = entries.take(10)
-
-    val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+    val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
 
     ScalingLazyColumn(
         modifier = Modifier.fillMaxSize()
     ) {
+        // Toggle: start/stop listening
         item {
             ToggleChip(
                 checked = serviceRunning,
@@ -75,7 +65,51 @@ fun WatchHomeScreen(
             )
         }
 
-        if (recentEntries.isEmpty()) {
+        // Show only the last captured entry
+        val entry = lastEntry
+        if (entry != null) {
+            item {
+                Text(
+                    text = "Última captura",
+                    style = MaterialTheme.typography.caption2,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp, bottom = 2.dp)
+                )
+            }
+
+            item {
+                Card(
+                    onClick = { onEntryClick(entry.id) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = timeFormat.format(Date(entry.createdAt)),
+                        style = MaterialTheme.typography.caption2
+                    )
+                    Text(
+                        text = entry.displayText,
+                        style = MaterialTheme.typography.body2,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            // "Ver todo" button — only if there are more entries
+            if (totalCount > 1) {
+                item {
+                    Chip(
+                        onClick = onViewAll,
+                        label = {
+                            Text("Ver todo ($totalCount)")
+                        },
+                        colors = ChipDefaults.secondaryChipColors(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        } else {
             item {
                 Text(
                     text = "Sin entradas",
@@ -86,37 +120,16 @@ fun WatchHomeScreen(
                         .padding(top = 16.dp)
                 )
             }
-        } else {
-            items(recentEntries, key = { it.id }) { entry ->
-                WatchEntryCard(
-                    entry = entry,
-                    timeFormat = timeFormat,
-                    onClick = { onEntryClick(entry.id) }
-                )
-            }
         }
-    }
-}
 
-@Composable
-private fun WatchEntryCard(
-    entry: DiaryEntry,
-    timeFormat: SimpleDateFormat,
-    onClick: () -> Unit
-) {
-    Card(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Text(
-            text = timeFormat.format(Date(entry.createdAt)),
-            style = MaterialTheme.typography.caption2
-        )
-        Text(
-            text = entry.text,
-            style = MaterialTheme.typography.body2,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
-        )
+        // Settings button
+        item {
+            Chip(
+                onClick = onSettingsClick,
+                label = { Text("Ajustes") },
+                colors = ChipDefaults.secondaryChipColors(),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
     }
 }

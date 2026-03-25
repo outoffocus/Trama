@@ -85,7 +85,13 @@ class SummaryGenerator(private val context: Context) {
         val entriesText = entries.joinToString("\n") { entry ->
             val time = timeFormat.format(Date(entry.createdAt))
             val source = if (entry.source.name == "WATCH") " [reloj]" else ""
-            "- $time$source \"${entry.text}\""
+            val status = if (entry.status == "COMPLETED") " [COMPLETADA]" else ""
+            val displayText = entry.displayText
+            val age = if (entry.createdAt < System.currentTimeMillis() - 86400000) {
+                val days = ((System.currentTimeMillis() - entry.createdAt) / 86400000).toInt()
+                " (hace ${days}d)"
+            } else ""
+            "- $time$source$status$age \"$displayText\""
         }
 
         // Include calendar context so LLM avoids duplicates and considers existing schedule
@@ -119,6 +125,8 @@ Reglas CRITICAS para "groups":
 - Maximo 5-6 categorias. Si solo hay 1-2 temas, usa 1-2 categorias
 - Los items deben ser frases cortas que resuman cada nota, NO copiar el texto entero
 - NUNCA repitas una misma nota en dos categorias distintas
+- Las notas marcadas [COMPLETADA] deben mencionarse como logros del dia
+- Las notas con "(hace Xd)" son pendientes acumulados de dias anteriores - destaca las mas antiguas
 
 Reglas para "actions":
 - Solo incluye acciones que se deduzcan claramente de las notas

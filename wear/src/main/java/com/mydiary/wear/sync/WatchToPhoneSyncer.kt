@@ -34,7 +34,7 @@ class WatchToPhoneSyncer(
             val request = PutDataMapRequest.create(SYNC_PATH).apply {
                 dataMap.putString("payload", json)
                 dataMap.putLong("timestamp", System.currentTimeMillis())
-            }.asPutDataRequest().setUrgent()
+            }.asPutDataRequest()  // No setUrgent() — let DataClient batch naturally
 
             Wearable.getDataClient(context).putDataItem(request).await()
             repository.markSynced(unsynced.map { it.id })

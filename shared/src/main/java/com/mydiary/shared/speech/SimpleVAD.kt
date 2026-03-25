@@ -1,32 +1,50 @@
 package com.mydiary.shared.speech
 
-import kotlin.math.log10
 import kotlin.math.sqrt
 
 /**
- * Simple Voice Activity Detector using audio energy (dB threshold).
+ * Simple Voice Activity Detector using audio energy (RMS threshold).
  *
  * Ultra-lightweight — zero dependencies, works on watch.
  * Analyzes audio frames and determines if someone is speaking.
  *
- * Usage:
- * 1. Feed audio frames via processFrame()
- * 2. Check isSpeaking to determine if SpeechRecognizer should be active
+ * Battery optimized (gentle):
+ * - Processes 1 of every [FRAME_SKIP] frames to reduce CPU (~50% saving)
+ * - Uses pre-computed RMS thresholds to avoid log10()
+ * - Caller should add delay(INTER_FRAME_DELAY_MS) between reads
+ * - Designed to trigger fast (~90ms) so SpeechRecognizer catches full phrase
  */
 class SimpleVAD {
 
     companion object {
-        // Thresholds (dBFS - decibels relative to full scale)
-        private const val SPEECH_THRESHOLD_DB = -38.0
-        private const val SILENCE_THRESHOLD_DB = -45.0
-
         // Require sustained speech/silence to avoid false triggers
-        private const val SPEECH_FRAMES_REQUIRED = 8    // ~256ms
-        private const val SILENCE_FRAMES_REQUIRED = 60  // ~2s
+        // SPEECH_FRAMES_REQUIRED = 2 → triggers in ~2 processed frames (~90ms)
+        private const val SPEECH_FRAMES_REQUIRED = 2
+        private const val SILENCE_FRAMES_REQUIRED = 20
+
+        // Process 1 of every N frames to save CPU (2 = 50% saving)
+        const val FRAME_SKIP = 2
+
+        // Delay between AudioRecord reads (ms) — lets CPU sleep briefly
+        const val INTER_FRAME_DELAY_MS = 10L
+
+        // VAD timeout: fallback to SpeechRecognizer if no voice detected
+        // ~30s = 30000ms / (32ms frame + 10ms delay) / FRAME_SKIP ≈ 357 processed frames
+        const val FALLBACK_TIMEOUT_FRAMES = 357
+
+        // Pre-computed RMS thresholds — sensitive for watch mic
+        // dBFS = 20 * log10(rms / 32768)
+        // rms = 32768 * 10^(dBFS/20)
+        // -48 dBFS → rms ≈ 130.4  (speech)
+        // -55 dBFS → rms ≈ 58.3   (silence)
+        private const val SPEECH_RMS_THRESHOLD = 130.4
+        private const val SILENCE_RMS_THRESHOLD = 58.3
     }
 
     private var speechFrameCount = 0
     private var silenceFrameCount = 0
+    private var frameCounter = 0
+    private var processedFrameCount = 0
 
     @Volatile
     var isSpeaking = false
@@ -34,19 +52,22 @@ class SimpleVAD {
 
     var onVoiceStart: (() -> Unit)? = null
     var onVoiceEnd: (() -> Unit)? = null
+    var onTimeout: (() -> Unit)? = null
 
     /**
      * Process a frame of 16-bit PCM audio.
-     * Call this for each audio buffer chunk.
+     * Skips [FRAME_SKIP-1] out of every [FRAME_SKIP] frames.
      *
-     * @param buffer PCM 16-bit audio samples
-     * @param length number of valid samples in buffer
+     * @return true if this frame was actually processed (not skipped)
      */
-    fun processFrame(buffer: ShortArray, length: Int) {
-        val rms = calculateRMS(buffer, length)
-        val dbFS = if (rms > 0) 20.0 * log10(rms / 32768.0) else -100.0
+    fun processFrame(buffer: ShortArray, length: Int): Boolean {
+        frameCounter++
+        if (frameCounter % FRAME_SKIP != 0) return false
 
-        if (dbFS > SPEECH_THRESHOLD_DB) {
+        processedFrameCount++
+        val rms = calculateRMS(buffer, length)
+
+        if (rms > SPEECH_RMS_THRESHOLD) {
             speechFrameCount++
             silenceFrameCount = 0
 
@@ -54,7 +75,7 @@ class SimpleVAD {
                 isSpeaking = true
                 onVoiceStart?.invoke()
             }
-        } else if (dbFS < SILENCE_THRESHOLD_DB) {
+        } else if (rms < SILENCE_RMS_THRESHOLD) {
             silenceFrameCount++
             speechFrameCount = 0
 
@@ -63,23 +84,30 @@ class SimpleVAD {
                 onVoiceEnd?.invoke()
             }
         }
+
+        // Timeout: if no voice detected, notify caller to fallback
+        if (!isSpeaking && processedFrameCount >= FALLBACK_TIMEOUT_FRAMES) {
+            processedFrameCount = 0
+            onTimeout?.invoke()
+        }
+
+        return true
     }
 
-    /**
-     * Reset state. Call when restarting the detection cycle.
-     */
     fun reset() {
         speechFrameCount = 0
         silenceFrameCount = 0
+        frameCounter = 0
+        processedFrameCount = 0
         isSpeaking = false
     }
 
     private fun calculateRMS(buffer: ShortArray, length: Int): Double {
-        var sum = 0.0
+        var sum = 0L
         for (i in 0 until length) {
-            val sample = buffer[i].toDouble()
+            val sample = buffer[i].toLong()
             sum += sample * sample
         }
-        return sqrt(sum / length)
+        return sqrt(sum.toDouble() / length)
     }
 }

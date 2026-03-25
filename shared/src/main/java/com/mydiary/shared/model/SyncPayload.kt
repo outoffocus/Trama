@@ -16,7 +16,12 @@ data class SyncEntry(
     val confidence: Float,
     val createdAt: Long,
     val source: String,
-    val duration: Int
+    val duration: Int,
+    val status: String = "PENDING",
+    val actionType: String = "GENERIC",
+    val cleanText: String? = null,
+    val dueDate: Long? = null,
+    val priority: String = "NORMAL"
 ) {
     fun toDiaryEntry(): DiaryEntry = DiaryEntry(
         text = text,
@@ -26,7 +31,12 @@ data class SyncEntry(
         createdAt = createdAt,
         source = Source.valueOf(source),
         isSynced = true,
-        duration = duration
+        duration = duration,
+        status = status,
+        actionType = actionType,
+        cleanText = cleanText,
+        dueDate = dueDate,
+        priority = priority
     )
 
     companion object {
@@ -38,7 +48,12 @@ data class SyncEntry(
             confidence = entry.confidence,
             createdAt = entry.createdAt,
             source = entry.source.name,
-            duration = entry.duration
+            duration = entry.duration,
+            status = entry.status,
+            actionType = entry.actionType,
+            cleanText = entry.cleanText,
+            dueDate = entry.dueDate,
+            priority = entry.priority
         )
     }
 }

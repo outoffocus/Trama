@@ -31,6 +31,7 @@ import com.mydiary.app.speech.IntentPattern
 import com.mydiary.app.speech.PersonalDictionary
 import com.mydiary.app.speech.SpeakerEnrollment
 import com.mydiary.app.speech.VoiceActivityDetector
+import com.mydiary.app.summary.ActionItemProcessor
 import com.mydiary.app.sync.MicCoordinator
 import com.mydiary.app.sync.PhoneToWatchSyncer
 import com.mydiary.app.sync.SettingsSyncer
@@ -509,11 +510,21 @@ class KeywordListenerService : LifecycleService() {
                 wasReviewedByLLM = wasReviewed,
                 llmConfidence = llmConfidence
             )
-            repository?.insert(entry)
+            val entryId = repository?.insert(entry) ?: return@launch
             Log.i(TAG, "Entry saved: '$text' (intent: $intentId, label: $label, reviewed: $wasReviewed)")
             showNewEntryNotification(entry)
 
             phoneToWatchSyncer?.syncUnsentEntries()
+
+            // Fire-and-forget: process entry through AI to extract action metadata
+            repository?.let { repo ->
+                try {
+                    val processor = ActionItemProcessor(this@KeywordListenerService)
+                    processor.process(entryId, text, repo)
+                } catch (e: Exception) {
+                    Log.w(TAG, "ActionItemProcessor failed for entry $entryId", e)
+                }
+            }
         }
     }
 

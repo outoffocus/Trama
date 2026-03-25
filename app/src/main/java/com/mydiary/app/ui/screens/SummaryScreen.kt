@@ -4,15 +4,10 @@ import android.Manifest
 import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.slideInVertically
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,16 +16,16 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Message
 import androidx.compose.material.icons.filled.NotificationImportant
@@ -38,12 +33,22 @@ import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.TaskAlt
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -53,10 +58,14 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,23 +73,20 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.mydiary.app.summary.ActionExecutor
 import com.mydiary.app.summary.ActionType
 import com.mydiary.app.summary.CalendarHelper
 import com.mydiary.app.summary.DailySummary
-import com.mydiary.app.summary.EntryGroup
 import com.mydiary.app.summary.SuggestedAction
 import com.mydiary.app.summary.SummaryGenerator
 import com.mydiary.app.ui.DatabaseProvider
-import com.mydiary.app.ui.theme.CategoryColors
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
@@ -94,68 +100,103 @@ import java.util.Locale
 fun SummaryScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val repository = remember { DatabaseProvider.getRepository(context) }
 
     var summary by remember { mutableStateOf<DailySummary?>(null) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    // Edit dialog state for calendar events & reminders
-    var editingAction by remember { mutableStateOf<SuggestedAction?>(null) }
+    // Pending count for header
+    val pendingEntries by repository.getPending().collectAsState(initial = emptyList())
 
-    // Calendar permission flow
-    var pendingAction by remember { mutableStateOf<SuggestedAction?>(null) }
+    // Calendar event dialog
+    var editingAction by remember { mutableStateOf<IndexedAction?>(null) }
+    var pendingAction by remember { mutableStateOf<IndexedAction?>(null) }
     val calendarPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
         val writeGranted = results[Manifest.permission.WRITE_CALENDAR] == true
-        pendingAction?.let { action ->
-            if (writeGranted) {
-                editingAction = action
-            } else {
-                ActionExecutor.execute(context, action)
-            }
+        pendingAction?.let { ia ->
+            if (writeGranted) editingAction = ia
+            else ActionExecutor.execute(context, ia.action)
             pendingAction = null
         }
     }
 
-    // Load saved summary on launch
+    // Load saved summary
     LaunchedEffect(Unit) {
-        summary = loadLatestSummary(context)
+        summary = loadSummary(context)
     }
 
-    // Edit dialog for calendar events and reminders
-    editingAction?.let { action ->
+    // Calendar edit dialog
+    editingAction?.let { ia ->
+        val action = ia.action
         val isReminder = action.type == ActionType.REMINDER
         CalendarEventDialog(
             action = action,
-            dialogTitle = if (isReminder) "Crear recordatorio" else "Añadir evento al calendario",
+            dialogTitle = if (isReminder) "Crear recordatorio" else "Añadir al calendario",
             confirmLabel = if (isReminder) "Crear" else "Añadir",
-            showReminderNote = isReminder,
             onDismiss = { editingAction = null },
-            onConfirm = { title, description, date, time ->
-                editingAction = null
+            onConfirm = { title, description, date, time, calendarId ->
                 val datetime = "${date}T${time}"
-                val updatedAction = action.copy(
-                    title = title,
-                    description = description,
-                    datetime = datetime
-                )
-                val eventId = CalendarHelper.insertEventFromAction(
-                    context, updatedAction, isReminder = isReminder
-                )
-                if (eventId != null) {
-                    val msg = if (isReminder) "Recordatorio creado"
-                             else "Evento añadido al calendario"
-                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
+                val updatedAction = action.copy(title = title, description = description, datetime = datetime)
+                val startMillis = try {
+                    SimpleDateFormat("yyyy-MM-dd'T'HH:mm", Locale.getDefault()).parse(datetime)?.time
+                } catch (_: Exception) { null }
+
+                val eventId = if (startMillis != null && calendarId != null) {
+                    CalendarHelper.insertEventInCalendar(
+                        context, calendarId, title, description.ifBlank { null },
+                        startMillis, reminderMinutes = if (isReminder) 15 else 0
+                    )
                 } else {
-                    android.widget.Toast.makeText(
-                        context, "Error al crear evento, abriendo calendario...",
-                        android.widget.Toast.LENGTH_SHORT
-                    ).show()
+                    CalendarHelper.insertEventFromAction(context, updatedAction, isReminder = isReminder)
+                }
+                if (eventId != null) {
+                    android.widget.Toast.makeText(context,
+                        if (isReminder) "Recordatorio creado" else "Evento añadido", android.widget.Toast.LENGTH_SHORT).show()
+                    // Mark as done
+                    summary = summary?.let { s ->
+                        val newActions = s.actions.toMutableList()
+                        newActions[ia.index] = newActions[ia.index].copy(done = true)
+                        s.copy(actions = newActions).also { saveSummary(context, it) }
+                    }
+                } else {
+                    android.widget.Toast.makeText(context, "Error, abriendo calendario...", android.widget.Toast.LENGTH_SHORT).show()
                     ActionExecutor.execute(context, updatedAction)
                 }
+                editingAction = null
             }
         )
+    }
+
+    fun executeAction(index: Int, action: SuggestedAction) {
+        if (action.type == ActionType.CALENDAR_EVENT || action.type == ActionType.REMINDER) {
+            if (CalendarHelper.hasWriteCalendarPermission(context)) {
+                editingAction = IndexedAction(index, action)
+            } else {
+                pendingAction = IndexedAction(index, action)
+                calendarPermissionLauncher.launch(arrayOf(
+                    Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR
+                ))
+            }
+        } else {
+            ActionExecutor.execute(context, action)
+            // Mark as done
+            summary = summary?.let { s ->
+                val newActions = s.actions.toMutableList()
+                newActions[index] = newActions[index].copy(done = true)
+                s.copy(actions = newActions).also { saveSummary(context, it) }
+            }
+        }
+    }
+
+    fun toggleActionDone(index: Int) {
+        summary = summary?.let { s ->
+            val newActions = s.actions.toMutableList()
+            newActions[index] = newActions[index].copy(done = !newActions[index].done)
+            s.copy(actions = newActions).also { saveSummary(context, it) }
+        }
     }
 
     Scaffold(
@@ -163,14 +204,10 @@ fun SummaryScreen(onBack: () -> Unit) {
             TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Default.AutoAwesome,
-                            contentDescription = null,
-                            modifier = Modifier.size(22.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null,
+                            modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Resumen del dia")
+                        Text("Acciones sugeridas")
                     }
                 },
                 navigationIcon = {
@@ -179,268 +216,109 @@ fun SummaryScreen(onBack: () -> Unit) {
                     }
                 },
                 actions = {
-                    if (summary != null) {
-                        IconButton(
-                            onClick = {
-                                scope.launch {
-                                    loading = true
-                                    error = null
-                                    try {
-                                        summary = generateSummaryNow(context)
-                                    } catch (e: Exception) {
-                                        error = e.message
-                                    }
-                                    loading = false
-                                }
-                            },
-                            enabled = !loading
-                        ) {
-                            Icon(Icons.Default.Refresh, contentDescription = "Regenerar")
-                        }
-                    }
+                    IconButton(
+                        onClick = {
+                            scope.launch {
+                                loading = true; error = null
+                                try { summary = generateNow(context) }
+                                catch (e: Exception) { error = e.message }
+                                loading = false
+                            }
+                        },
+                        enabled = !loading
+                    ) { Icon(Icons.Default.Refresh, contentDescription = "Regenerar") }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                )
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
             )
         }
     ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-        ) {
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             if (loading) {
-                LoadingState()
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(modifier = Modifier.size(40.dp), strokeWidth = 3.dp)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("Analizando ${pendingEntries.size} pendientes...",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
                 return@Scaffold
             }
 
             error?.let {
-                ErrorCard(it)
-                Spacer(modifier = Modifier.height(16.dp))
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth().padding(16.dp)
+                ) {
+                    Text("Error: $it", modifier = Modifier.padding(16.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onErrorContainer)
+                }
             }
 
             val s = summary
             if (s == null) {
-                EmptyState(onGenerate = {
-                    scope.launch {
-                        loading = true
-                        error = null
-                        try {
-                            summary = generateSummaryNow(context)
-                        } catch (e: Exception) {
-                            error = e.message
-                        }
-                        loading = false
-                    }
-                })
-            } else {
-                SummaryContent(
-                    summary = s,
-                    onActionExecute = { action ->
-                        if (action.type == ActionType.CALENDAR_EVENT ||
-                            action.type == ActionType.REMINDER
+                // Empty state
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null,
+                            modifier = Modifier.size(56.dp),
+                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("Sin resumen", style = MaterialTheme.typography.titleMedium)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("Analiza tus notas pendientes y genera acciones concretas.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(modifier = Modifier.height(24.dp))
+                        FilledTonalButton(
+                            onClick = {
+                                scope.launch {
+                                    loading = true; error = null
+                                    try { summary = generateNow(context) }
+                                    catch (e: Exception) { error = e.message }
+                                    loading = false
+                                }
+                            },
+                            shape = RoundedCornerShape(14.dp)
                         ) {
-                            if (CalendarHelper.hasWriteCalendarPermission(context)) {
-                                editingAction = action
-                            } else {
-                                pendingAction = action
-                                calendarPermissionLauncher.launch(
-                                    arrayOf(
-                                        Manifest.permission.READ_CALENDAR,
-                                        Manifest.permission.WRITE_CALENDAR
-                                    )
-                                )
-                            }
-                        } else {
-                            ActionExecutor.execute(context, action)
+                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Generar acciones")
                         }
                     }
-                )
-            }
-        }
-    }
-}
-
-// ── Summary Content ─────────────────────────────────────────────────────────
-
-@Composable
-private fun SummaryContent(
-    summary: DailySummary,
-    onActionExecute: (SuggestedAction) -> Unit
-) {
-    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // Date header
-        Text(
-            text = formatDate(summary.date),
-            style = MaterialTheme.typography.headlineMedium,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-        Text(
-            text = "${summary.entryCount} entradas capturadas",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        // Narrative card with gradient
-        NarrativeCard(summary.narrative)
-
-        // Entry groups
-        if (summary.groups.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(28.dp))
-            summary.groups.forEachIndexed { index, group ->
-                AnimatedVisibility(
-                    visible = true,
-                    enter = fadeIn() + slideInVertically { it / 2 }
-                ) {
-                    GroupCard(
-                        group = group,
-                        colorIndex = index
+                }
+            } else {
+                // Header
+                Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                    Text(
+                        text = formatDate(s.date),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    val doneCount = s.actions.count { it.done }
+                    Text(
+                        text = "${s.actions.size} acciones, $doneCount completadas",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Spacer(modifier = Modifier.height(12.dp))
-            }
-        }
 
-        // Actions
-        if (summary.actions.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = "Acciones sugeridas",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-
-            summary.actions.forEach { action ->
-                ActionCard(
-                    action = action,
-                    onExecute = { onActionExecute(action) }
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-        } else {
-            Spacer(modifier = Modifier.height(20.dp))
-            Text(
-                text = "Sin acciones sugeridas para hoy.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-
-        Spacer(modifier = Modifier.height(32.dp))
-    }
-}
-
-// ── Narrative Card ──────────────────────────────────────────────────────────
-
-@Composable
-private fun NarrativeCard(narrative: String) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
-                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                // Action list
+                LazyColumn(
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    itemsIndexed(s.actions) { index, action ->
+                        ActionCard(
+                            action = action,
+                            onExecute = { executeAction(index, action) },
+                            onToggleDone = { toggleActionDone(index) }
                         )
-                    )
-                )
-        ) {
-            Text(
-                text = narrative,
-                modifier = Modifier.padding(20.dp),
-                style = MaterialTheme.typography.bodyLarge,
-                lineHeight = 26.sp,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
-            )
-        }
-    }
-}
-
-// ── Group Card ──────────────────────────────────────────────────────────────
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun GroupCard(
-    group: EntryGroup,
-    colorIndex: Int
-) {
-    val accentColor = CategoryColors[colorIndex % CategoryColors.size]
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            // Header with emoji + label + count
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(bottom = 10.dp)
-            ) {
-                Text(
-                    text = group.emoji,
-                    fontSize = 22.sp
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(
-                    text = group.label,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(modifier = Modifier.weight(1f))
-                Surface(
-                    shape = CircleShape,
-                    color = accentColor.copy(alpha = 0.15f)
-                ) {
-                    Text(
-                        text = "${group.items.size}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = accentColor,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
-                    )
-                }
-            }
-
-            // Items
-            group.items.forEach { item ->
-                Row(
-                    modifier = Modifier.padding(vertical = 3.dp),
-                    verticalAlignment = Alignment.Top
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .padding(top = 7.dp)
-                            .size(6.dp)
-                            .clip(CircleShape)
-                            .background(accentColor.copy(alpha = 0.6f))
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = item,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f)
-                    )
+                    }
+                    item { Spacer(modifier = Modifier.height(16.dp)) }
                 }
             }
         }
@@ -452,196 +330,111 @@ private fun GroupCard(
 @Composable
 private fun ActionCard(
     action: SuggestedAction,
-    onExecute: () -> Unit
+    onExecute: () -> Unit,
+    onToggleDone: () -> Unit
 ) {
     val icon = actionIcon(action.type)
     val accentColor = actionColor(action.type)
-    val actionLabel = actionLabel(action.type)
+    val label = actionLabel(action.type)
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        onClick = onExecute,
+        onClick = { if (!action.done) onExecute() },
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
+            containerColor = if (action.done)
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+            else
+                MaterialTheme.colorScheme.surface
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = if (action.done) 0.dp else 1.dp)
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
+            modifier = Modifier.fillMaxWidth().padding(start = 14.dp, top = 12.dp, bottom = 12.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Icon circle
+            // Icon
             Surface(
                 shape = CircleShape,
-                color = accentColor.copy(alpha = 0.12f),
-                modifier = Modifier.size(42.dp)
+                color = if (action.done) accentColor.copy(alpha = 0.06f) else accentColor.copy(alpha = 0.12f),
+                modifier = Modifier.size(40.dp)
             ) {
                 Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                     Icon(
-                        imageVector = icon,
+                        imageVector = if (action.done) Icons.Default.CheckCircle else icon,
                         contentDescription = null,
-                        tint = accentColor,
-                        modifier = Modifier.size(22.dp)
+                        tint = if (action.done) MaterialTheme.colorScheme.tertiary else accentColor,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.width(14.dp))
+            Spacer(modifier = Modifier.width(12.dp))
 
+            // Content
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = action.title,
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    color = if (action.done) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    else MaterialTheme.colorScheme.onSurface,
+                    textDecoration = if (action.done) TextDecoration.LineThrough else TextDecoration.None
                 )
                 if (action.description.isNotBlank()) {
                     Text(
                         text = action.description,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (action.done) 0.4f else 0.7f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.padding(top = 2.dp)
-                ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     action.datetime?.let {
-                        Text(
-                            text = it.replace("T", " "),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Text(it.replace("T", " "), style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
                     }
                     action.contact?.let {
-                        Text(
-                            text = it,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = accentColor
-                        )
+                        Text(it, style = MaterialTheme.typography.labelSmall, color = accentColor.copy(alpha = 0.7f))
                     }
                 }
             }
 
-            // Action label chip
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = accentColor.copy(alpha = 0.1f)
-            ) {
-                Text(
-                    text = actionLabel,
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = accentColor,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+            // Action type label + checkbox
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Surface(shape = RoundedCornerShape(6.dp), color = accentColor.copy(alpha = if (action.done) 0.05f else 0.08f)) {
+                    Text(label, style = MaterialTheme.typography.labelSmall, color = accentColor.copy(alpha = if (action.done) 0.4f else 0.8f),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
+                }
+                Checkbox(
+                    checked = action.done,
+                    onCheckedChange = { onToggleDone() },
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = MaterialTheme.colorScheme.tertiary,
+                        uncheckedColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                    )
                 )
             }
         }
     }
 }
 
-// ── Empty State ─────────────────────────────────────────────────────────────
+// ── Calendar Event Dialog ───────────────────────────────────────────────────
 
-@Composable
-private fun EmptyState(onGenerate: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 48.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Icon(
-            Icons.Default.AutoAwesome,
-            contentDescription = null,
-            modifier = Modifier.size(64.dp),
-            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            "Sin resumen todavia",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            "Genera un resumen inteligente de tus notas del dia, con categorias automaticas y acciones sugeridas.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 16.dp),
-            lineHeight = 22.sp
-        )
-        Spacer(modifier = Modifier.height(28.dp))
-        FilledTonalButton(
-            onClick = onGenerate,
-            shape = RoundedCornerShape(14.dp)
-        ) {
-            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Generar resumen")
-        }
-    }
-}
-
-// ── Loading State ───────────────────────────────────────────────────────────
-
-@Composable
-private fun LoadingState() {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 64.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        CircularProgressIndicator(
-            modifier = Modifier.size(40.dp),
-            strokeWidth = 3.dp
-        )
-        Spacer(modifier = Modifier.height(20.dp))
-        Text(
-            "Analizando tus notas...",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
-
-// ── Error Card ──────────────────────────────────────────────────────────────
-
-@Composable
-private fun ErrorCard(message: String) {
-    Card(
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.errorContainer
-        ),
-        shape = RoundedCornerShape(14.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 8.dp)
-    ) {
-        Text(
-            text = "Error: $message",
-            modifier = Modifier.padding(16.dp),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onErrorContainer
-        )
-    }
-}
-
-// ── Calendar Event Edit Dialog ──────────────────────────────────────────────
-
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CalendarEventDialog(
     action: SuggestedAction,
-    dialogTitle: String = "Añadir evento al calendario",
-    confirmLabel: String = "Añadir",
-    showReminderNote: Boolean = false,
+    dialogTitle: String,
+    confirmLabel: String,
     onDismiss: () -> Unit,
-    onConfirm: (title: String, description: String, date: String, time: String) -> Unit
+    onConfirm: (title: String, description: String, date: String, time: String, calendarId: Long?) -> Unit
 ) {
+    val context = LocalContext.current
+
     val defaultDate: String
     val defaultTime: String
 
@@ -650,22 +443,8 @@ private fun CalendarEventDialog(
         defaultDate = parts[0]
         defaultTime = parts.getOrElse(1) { "09:00" }
     } else {
-        val titleLower = action.title.lowercase()
-        val dateCal = Calendar.getInstance()
-        if (titleLower.contains("mañana")) {
-            dateCal.add(Calendar.DAY_OF_YEAR, 1)
-        }
-        defaultDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(dateCal.time)
-
-        val timeRegex = Regex("""a las (\d{1,2})(?::(\d{2}))?""")
-        val timeMatch = timeRegex.find(titleLower)
-        defaultTime = if (timeMatch != null) {
-            val hour = timeMatch.groupValues[1].toIntOrNull() ?: 9
-            val minute = timeMatch.groupValues[2].toIntOrNull() ?: 0
-            String.format(Locale.getDefault(), "%02d:%02d", hour, minute)
-        } else {
-            "09:00"
-        }
+        defaultDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Calendar.getInstance().time)
+        defaultTime = "09:00"
     }
 
     var title by remember { mutableStateOf(action.title) }
@@ -673,117 +452,191 @@ private fun CalendarEventDialog(
     var date by remember { mutableStateOf(defaultDate) }
     var time by remember { mutableStateOf(defaultTime) }
 
-    val displayDate = try {
-        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        val parsed = sdf.parse(date)
-        if (parsed != null) {
-            SimpleDateFormat("EEE, d MMM yyyy", Locale("es")).format(parsed)
-        } else date
-    } catch (_: Exception) { date }
+    // Calendar picker
+    val calendars = remember { CalendarHelper.getWritableCalendars(context) }
+    var selectedCalendarIndex by remember { mutableStateOf(0) }
+    var calendarDropdownExpanded by remember { mutableStateOf(false) }
+
+    // Date picker
+    var showDatePicker by remember { mutableStateOf(false) }
+    val datePickerState = rememberDatePickerState(
+        initialSelectedDateMillis = try {
+            SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(defaultDate)?.time
+                ?: System.currentTimeMillis()
+        } catch (_: Exception) { System.currentTimeMillis() }
+    )
+
+    // Time picker
+    var showTimePicker by remember { mutableStateOf(false) }
+    val defaultHour = defaultTime.substringBefore(":").toIntOrNull() ?: 9
+    val defaultMinute = defaultTime.substringAfter(":").toIntOrNull() ?: 0
+    val timePickerState = rememberTimePickerState(
+        initialHour = defaultHour,
+        initialMinute = defaultMinute,
+        is24Hour = true
+    )
+
+    // Date picker dialog
+    if (showDatePicker) {
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let { millis ->
+                        date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(millis)
+                    }
+                    showDatePicker = false
+                }) { Text("Aceptar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("Cancelar") }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
+
+    // Time picker dialog
+    if (showTimePicker) {
+        AlertDialog(
+            onDismissRequest = { showTimePicker = false },
+            title = { Text("Seleccionar hora") },
+            text = { TimePicker(state = timePickerState) },
+            confirmButton = {
+                TextButton(onClick = {
+                    time = "%02d:%02d".format(timePickerState.hour, timePickerState.minute)
+                    showTimePicker = false
+                }) { Text("Aceptar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTimePicker = false }) { Text("Cancelar") }
+            }
+        )
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        icon = {
-            Surface(
-                shape = CircleShape,
-                color = if (showReminderNote)
-                    MaterialTheme.colorScheme.error.copy(alpha = 0.12f)
-                else
-                    MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                modifier = Modifier.size(48.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                    Icon(
-                        if (showReminderNote) Icons.Default.NotificationImportant
-                        else Icons.Default.CalendarMonth,
-                        contentDescription = null,
-                        tint = if (showReminderNote)
-                            MaterialTheme.colorScheme.error
-                        else
-                            MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-            }
-        },
         title = { Text(dialogTitle) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text("Titulo") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp)
-                )
+                // Title
+                OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Título") },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true, shape = RoundedCornerShape(12.dp))
 
-                OutlinedTextField(
-                    value = description,
-                    onValueChange = { description = it },
-                    label = { Text("Descripcion (opcional)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 1,
-                    maxLines = 3,
-                    shape = RoundedCornerShape(12.dp)
-                )
+                // Description
+                OutlinedTextField(value = description, onValueChange = { description = it }, label = { Text("Descripción") },
+                    modifier = Modifier.fillMaxWidth(), maxLines = 2, shape = RoundedCornerShape(12.dp))
 
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+                // Calendar selector
+                if (calendars.size > 1) {
+                    ExposedDropdownMenuBox(
+                        expanded = calendarDropdownExpanded,
+                        onExpandedChange = { calendarDropdownExpanded = it }
+                    ) {
+                        OutlinedTextField(
+                            value = calendars.getOrNull(selectedCalendarIndex)?.label ?: "Seleccionar",
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Calendario") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = calendarDropdownExpanded) },
+                            modifier = Modifier.fillMaxWidth().menuAnchor(),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        ExposedDropdownMenu(
+                            expanded = calendarDropdownExpanded,
+                            onDismissRequest = { calendarDropdownExpanded = false }
+                        ) {
+                            calendars.forEachIndexed { index, cal ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(cal.displayName, fontWeight = FontWeight.Medium)
+                                            if (cal.accountName.isNotBlank()) {
+                                                Text(cal.accountName,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                        }
+                                    },
+                                    onClick = {
+                                        selectedCalendarIndex = index
+                                        calendarDropdownExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Date & Time - clickable fields that open pickers
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
-                        value = date,
-                        onValueChange = { date = it },
+                        value = formatDateShort(date),
+                        onValueChange = {},
+                        readOnly = true,
                         label = { Text("Fecha") },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).clickable { showDatePicker = true },
                         singleLine = true,
-                        supportingText = { Text(displayDate) },
-                        shape = RoundedCornerShape(12.dp)
+                        shape = RoundedCornerShape(12.dp),
+                        interactionSource = remember { MutableInteractionSource() }.also { source ->
+                            LaunchedEffect(source) {
+                                source.interactions.collect { interaction ->
+                                    if (interaction is PressInteraction.Release) showDatePicker = true
+                                }
+                            }
+                        }
                     )
-
                     OutlinedTextField(
                         value = time,
-                        onValueChange = { time = it },
+                        onValueChange = {},
+                        readOnly = true,
                         label = { Text("Hora") },
                         modifier = Modifier.weight(0.7f),
                         singleLine = true,
-                        placeholder = { Text("HH:mm") },
-                        shape = RoundedCornerShape(12.dp)
-                    )
-                }
-
-                if (showReminderNote) {
-                    Text(
-                        text = "Se creara un evento con notificacion 15 min antes.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        shape = RoundedCornerShape(12.dp),
+                        interactionSource = remember { MutableInteractionSource() }.also { source ->
+                            LaunchedEffect(source) {
+                                source.interactions.collect { interaction ->
+                                    if (interaction is PressInteraction.Release) showTimePicker = true
+                                }
+                            }
+                        }
                     )
                 }
             }
         },
         confirmButton = {
             Button(
-                onClick = { onConfirm(title, description, date, time) },
-                enabled = title.isNotBlank() && date.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))
-                    && time.matches(Regex("\\d{1,2}:\\d{2}")),
+                onClick = {
+                    val calId = calendars.getOrNull(selectedCalendarIndex)?.id
+                    onConfirm(title, description, date, time, calId)
+                },
+                enabled = title.isNotBlank() && date.matches(Regex("\\d{4}-\\d{2}-\\d{2}")) && time.matches(Regex("\\d{1,2}:\\d{2}")),
                 shape = RoundedCornerShape(10.dp)
             ) {
                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
+                Spacer(modifier = Modifier.width(4.dp))
                 Text(confirmLabel)
             }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancelar")
-            }
-        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
         shape = RoundedCornerShape(24.dp)
     )
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
+/** Format "2026-03-25" → "Mar 25, 2026" for display */
+private fun formatDateShort(dateStr: String): String {
+    return try {
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val d = sdf.parse(dateStr) ?: return dateStr
+        SimpleDateFormat("d MMM yyyy", Locale("es")).format(d)
+    } catch (_: Exception) { dateStr }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+private data class IndexedAction(val index: Int, val action: SuggestedAction)
 
 private fun actionIcon(type: ActionType): ImageVector = when (type) {
     ActionType.CALENDAR_EVENT -> Icons.Default.CalendarMonth
@@ -817,49 +670,40 @@ private fun formatDate(dateStr: String): String {
     return try {
         val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
         val date = sdf.parse(dateStr) ?: return dateStr
-        val display = SimpleDateFormat("EEEE, d 'de' MMMM", Locale("es"))
-        display.format(date).replaceFirstChar { it.uppercase() }
-    } catch (_: Exception) {
-        dateStr
-    }
+        SimpleDateFormat("EEEE, d 'de' MMMM", Locale("es")).format(date).replaceFirstChar { it.uppercase() }
+    } catch (_: Exception) { dateStr }
 }
 
-private fun loadLatestSummary(context: Context): DailySummary? {
+private fun loadSummary(context: Context): DailySummary? {
     val prefs = context.getSharedPreferences("daily_summary", Context.MODE_PRIVATE)
     val json = prefs.getString("latest_summary", null) ?: return null
-    return try {
-        Json.decodeFromString<DailySummary>(json)
-    } catch (_: Exception) {
-        null
-    }
+    return try { Json.decodeFromString<DailySummary>(json) } catch (_: Exception) { null }
 }
 
-private suspend fun generateSummaryNow(context: Context): DailySummary {
+private fun saveSummary(context: Context, summary: DailySummary) {
+    val json = Json.encodeToString(summary)
+    context.getSharedPreferences("daily_summary", Context.MODE_PRIVATE)
+        .edit().putString("latest_summary", json).apply()
+}
+
+private suspend fun generateNow(context: Context): DailySummary {
     val repository = DatabaseProvider.getRepository(context)
     val generator = SummaryGenerator(context)
 
     val cal = Calendar.getInstance()
-    val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-    val dateStr = dateFormat.format(cal.time)
+    val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(cal.time)
 
-    cal.set(Calendar.HOUR_OF_DAY, 0)
-    cal.set(Calendar.MINUTE, 0)
-    cal.set(Calendar.SECOND, 0)
-    cal.set(Calendar.MILLISECOND, 0)
+    cal.set(Calendar.HOUR_OF_DAY, 0); cal.set(Calendar.MINUTE, 0)
+    cal.set(Calendar.SECOND, 0); cal.set(Calendar.MILLISECOND, 0)
     val startOfDay = cal.timeInMillis
-
     cal.add(Calendar.DAY_OF_YEAR, 1)
     val endOfDay = cal.timeInMillis
 
-    val entries = repository.byDateRange(startOfDay, endOfDay).first()
-    val summary = generator.generate(entries, dateStr)
+    val todaysEntries = repository.byDateRange(startOfDay, endOfDay).first()
+    val pendingOlder = repository.getPending().first().filter { it.createdAt < startOfDay }
+    val allRelevant = todaysEntries + pendingOlder
 
-    // Save it
-    val jsonStr = Json.encodeToString(summary)
-    context.getSharedPreferences("daily_summary", Context.MODE_PRIVATE)
-        .edit()
-        .putString("latest_summary", jsonStr)
-        .apply()
-
+    val summary = generator.generate(allRelevant, dateStr)
+    saveSummary(context, summary)
     return summary
 }

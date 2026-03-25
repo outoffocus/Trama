@@ -6,6 +6,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.mydiary.app.ui.screens.CalendarScreen
 import com.mydiary.app.ui.screens.EntryDetailScreen
 import com.mydiary.app.ui.screens.HomeScreen
 import com.mydiary.app.ui.screens.SearchScreen
@@ -18,6 +19,7 @@ object Routes {
     const val SETTINGS = "settings"
     const val SEARCH = "search"
     const val SUMMARY = "summary"
+    const val CALENDAR = "calendar"
 
     fun detail(entryId: Long) = "detail/$entryId"
 }
@@ -32,7 +34,8 @@ fun NavGraph() {
                 onEntryClick = { entryId -> navController.navigate(Routes.detail(entryId)) },
                 onSettingsClick = { navController.navigate(Routes.SETTINGS) },
                 onSearchClick = { navController.navigate(Routes.SEARCH) },
-                onSummaryClick = { navController.navigate(Routes.SUMMARY) }
+                onSummaryClick = { navController.navigate(Routes.SUMMARY) },
+                onCalendarClick = { navController.navigate(Routes.CALENDAR) }
             )
         }
 
@@ -60,6 +63,13 @@ fun NavGraph() {
 
         composable(Routes.SUMMARY) {
             SummaryScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable(Routes.CALENDAR) {
+            CalendarScreen(
+                onEntryClick = { entryId -> navController.navigate(Routes.detail(entryId)) },
+                onBack = { navController.popBackStack() }
+            )
         }
     }
 }

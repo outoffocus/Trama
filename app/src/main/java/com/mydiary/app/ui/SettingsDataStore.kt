@@ -24,8 +24,11 @@ class SettingsDataStore(private val context: Context) {
         val CUSTOM_KEYWORDS = stringPreferencesKey("custom_keywords")
         val SUMMARY_ENABLED = booleanPreferencesKey("summary_enabled")
         val SUMMARY_HOUR = intPreferencesKey("summary_hour")
+        val BACKUP_ENABLED = booleanPreferencesKey("backup_enabled")
+        val BACKUP_HOUR = intPreferencesKey("backup_hour")
         const val DEFAULT_DURATION = 30
         const val DEFAULT_SUMMARY_HOUR = 21
+        const val DEFAULT_BACKUP_HOUR = 3  // 3:00 AM
     }
 
     val recordingDuration: Flow<Int> = context.dataStore.data.map { prefs ->
@@ -81,6 +84,14 @@ class SettingsDataStore(private val context: Context) {
         prefs[SUMMARY_HOUR] ?: DEFAULT_SUMMARY_HOUR
     }
 
+    val backupEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[BACKUP_ENABLED] ?: true
+    }
+
+    val backupHour: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[BACKUP_HOUR] ?: DEFAULT_BACKUP_HOUR
+    }
+
     suspend fun setRecordingDuration(seconds: Int) {
         context.dataStore.edit { it[RECORDING_DURATION] = seconds }
     }
@@ -95,6 +106,14 @@ class SettingsDataStore(private val context: Context) {
 
     suspend fun setSummaryHour(hour: Int) {
         context.dataStore.edit { it[SUMMARY_HOUR] = hour }
+    }
+
+    suspend fun setBackupEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[BACKUP_ENABLED] = enabled }
+    }
+
+    suspend fun setBackupHour(hour: Int) {
+        context.dataStore.edit { it[BACKUP_HOUR] = hour }
     }
 
     /**

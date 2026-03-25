@@ -264,6 +264,102 @@ object CalendarHelper {
     }
 
     /**
+     * Represents a writable calendar for the picker UI.
+     */
+    data class WritableCalendar(
+        val id: Long,
+        val displayName: String,
+        val accountName: String,
+        val accountType: String,
+        val isPrimary: Boolean
+    ) {
+        /** Short label for the dropdown: "Calendar Name (account@email)" */
+        val label: String get() = if (accountName.isNotBlank()) "$displayName ($accountName)" else displayName
+    }
+
+    /**
+     * Get all writable calendars for the calendar picker UI.
+     * Returns sorted: Google calendars first, then primary, then alphabetical.
+     */
+    fun getWritableCalendars(context: Context): List<WritableCalendar> {
+        if (!hasCalendarPermission(context)) return emptyList()
+
+        val projection = arrayOf(
+            CalendarContract.Calendars._ID,
+            CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
+            CalendarContract.Calendars.ACCOUNT_NAME,
+            CalendarContract.Calendars.ACCOUNT_TYPE,
+            CalendarContract.Calendars.IS_PRIMARY
+        )
+
+        val selection = "${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} >= " +
+            "${CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR}"
+
+        val calendars = mutableListOf<WritableCalendar>()
+
+        try {
+            context.contentResolver.query(
+                CalendarContract.Calendars.CONTENT_URI,
+                projection, selection, null, null
+            )?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    calendars.add(WritableCalendar(
+                        id = cursor.getLong(0),
+                        displayName = cursor.getString(1) ?: "(sin nombre)",
+                        accountName = cursor.getString(2) ?: "",
+                        accountType = cursor.getString(3) ?: "",
+                        isPrimary = cursor.getInt(4) == 1
+                    ))
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to query calendars", e)
+        }
+
+        // Only Google Calendar accounts
+        return calendars
+            .filter { it.accountType == "com.google" }
+            .sortedWith(compareByDescending<WritableCalendar> { it.isPrimary }.thenBy { it.displayName })
+    }
+
+    /**
+     * Insert event into a specific calendar.
+     */
+    fun insertEventInCalendar(
+        context: Context,
+        calendarId: Long,
+        title: String,
+        description: String? = null,
+        startMillis: Long,
+        endMillis: Long = startMillis + 3600_000,
+        location: String? = null,
+        reminderMinutes: Int = 0
+    ): Long? {
+        if (!hasWriteCalendarPermission(context)) return null
+
+        val values = ContentValues().apply {
+            put(CalendarContract.Events.CALENDAR_ID, calendarId)
+            put(CalendarContract.Events.TITLE, title)
+            put(CalendarContract.Events.DESCRIPTION, description ?: "")
+            put(CalendarContract.Events.DTSTART, startMillis)
+            put(CalendarContract.Events.DTEND, endMillis)
+            put(CalendarContract.Events.EVENT_TIMEZONE, TimeZone.getDefault().id)
+            location?.let { put(CalendarContract.Events.EVENT_LOCATION, it) }
+        }
+
+        return try {
+            val uri = context.contentResolver.insert(CalendarContract.Events.CONTENT_URI, values)
+            val eventId = uri?.let { ContentUris.parseId(it) }
+            Log.i(TAG, "Calendar event created in cal=$calendarId: id=$eventId, title='$title'")
+            if (eventId != null && reminderMinutes > 0) addReminder(context, eventId, reminderMinutes)
+            eventId
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to insert calendar event", e)
+            null
+        }
+    }
+
+    /**
      * Get the best calendar ID for writing events.
      * Priority: Google account calendar > primary calendar > first writable calendar.
      */

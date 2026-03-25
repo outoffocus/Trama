@@ -33,7 +33,7 @@ object DatabaseProvider {
                 DiaryDatabase::class.java,
                 "mydiary-database"
             )
-                .addMigrations(DiaryDatabase.MIGRATION_1_2)
+                .addMigrations(DiaryDatabase.MIGRATION_1_2, DiaryDatabase.MIGRATION_2_3)
                 .build().also { database = it }
         }
     }

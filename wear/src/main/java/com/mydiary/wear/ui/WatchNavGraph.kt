@@ -6,11 +6,17 @@ import androidx.navigation.navArgument
 import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
+import com.mydiary.wear.ui.screens.WatchAllEntriesScreen
+import com.mydiary.wear.ui.screens.WatchEnrollmentScreen
 import com.mydiary.wear.ui.screens.WatchEntryDetailScreen
 import com.mydiary.wear.ui.screens.WatchHomeScreen
+import com.mydiary.wear.ui.screens.WatchSettingsScreen
 
 object WatchRoutes {
     const val HOME = "home"
+    const val ALL_ENTRIES = "all_entries"
+    const val SETTINGS = "settings"
+    const val ENROLLMENT = "enrollment"
     const val DETAIL = "detail/{entryId}"
 
     fun detail(entryId: Long) = "detail/$entryId"
@@ -26,7 +32,27 @@ fun WatchNavGraph() {
     ) {
         composable(WatchRoutes.HOME) {
             WatchHomeScreen(
+                onEntryClick = { entryId -> navController.navigate(WatchRoutes.detail(entryId)) },
+                onViewAll = { navController.navigate(WatchRoutes.ALL_ENTRIES) },
+                onSettingsClick = { navController.navigate(WatchRoutes.SETTINGS) }
+            )
+        }
+
+        composable(WatchRoutes.ALL_ENTRIES) {
+            WatchAllEntriesScreen(
                 onEntryClick = { entryId -> navController.navigate(WatchRoutes.detail(entryId)) }
+            )
+        }
+
+        composable(WatchRoutes.SETTINGS) {
+            WatchSettingsScreen(
+                onEnrollClick = { navController.navigate(WatchRoutes.ENROLLMENT) }
+            )
+        }
+
+        composable(WatchRoutes.ENROLLMENT) {
+            WatchEnrollmentScreen(
+                onComplete = { navController.popBackStack() }
             )
         }
 

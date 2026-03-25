@@ -60,7 +60,7 @@ fun WatchEntryDetailScreen(entryId: Long) {
 
             item {
                 Text(
-                    text = currentEntry.text,
+                    text = currentEntry.displayText,
                     style = MaterialTheme.typography.body1,
                     modifier = Modifier.fillMaxWidth()
                 )
