@@ -10,7 +10,6 @@ import com.mydiary.wear.ui.screens.WatchAllEntriesScreen
 import com.mydiary.wear.ui.screens.WatchEnrollmentScreen
 import com.mydiary.wear.ui.screens.WatchEntryDetailScreen
 import com.mydiary.wear.ui.screens.WatchHomeScreen
-import com.mydiary.wear.ui.screens.WatchSettingsScreen
 
 object WatchRoutes {
     const val HOME = "home"

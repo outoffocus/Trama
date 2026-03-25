@@ -78,6 +78,7 @@ import java.util.concurrent.TimeUnit
 @Composable
 fun EntryCard(
     entry: DiaryEntry,
+    categories: List<CategoryInfo>,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
     onToggleComplete: (() -> Unit)? = null,

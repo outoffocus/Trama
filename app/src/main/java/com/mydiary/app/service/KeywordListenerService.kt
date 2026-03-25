@@ -525,6 +525,114 @@ class KeywordListenerService : LifecycleService() {
                     Log.w(TAG, "ActionItemProcessor failed for entry $entryId", e)
                 }
             }
+
+            override fun onResults(results: Bundle?) {
+                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                val text = matches?.firstOrNull()?.trim() ?: ""
+
+                consecutiveSilent = 0  // Got a result → reset
+
+                if (text.isNotBlank()) {
+                    Log.i(TAG, "Heard: '$text'")
+                    processText(text)
+                }
+
+                restartListening(RESTART_DELAY_FAST_MS)
+            }
+
+            override fun onPartialResults(partialResults: Bundle?) {}
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
+
+        try {
+            rec.startListening(buildRecognizerIntent())
+        } catch (e: Exception) {
+            Log.e(TAG, "startListening failed", e)
+            restartListening(ERROR_RETRY_DELAY_MS)
+        }
+    }
+
+    private fun buildRecognizerIntent(): Intent {
+        return Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-ES")
+
+            if (Build.VERSION.SDK_INT >= 34) {
+                putExtra("android.speech.extra.ENABLE_LANGUAGE_SWITCH", true)
+                putExtra(
+                    "android.speech.extra.LANGUAGE_SWITCH_ALLOWED_LANGUAGES",
+                    arrayListOf("es-ES", "en-US")
+                )
+            }
+
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+        }
+    }
+
+    /**
+     * Adaptive delay: fast after speech, slower after many silent cycles.
+     * Reduces CPU wake-ups when nobody is speaking.
+     */
+    private fun adaptiveDelay(): Long {
+        return when {
+            screenOff -> RESTART_DELAY_SLOW_MS  // Screen off → always slow to save battery
+            consecutiveSilent >= SLOW_MODE_THRESHOLD -> RESTART_DELAY_SLOW_MS
+            else -> RESTART_DELAY_NORMAL_MS
+        }
+    }
+
+    private fun restartListening(delayMs: Long) {
+        if (!listening) return
+
+        // Battery check every ~50 cycles
+        if (++batteryCheckCounter % 50 == 0) {
+            if (isBatteryLow()) {
+                Log.w(TAG, "Battery low, stopping")
+                updateNotificationIfChanged("Pausado: batería baja")
+                listening = false
+                stopSelf()
+                return
+            }
+        }
+
+        lifecycleScope.launch(Dispatchers.Main) {
+            delay(delayMs)
+            if (listening) {
+                startListening()
+            }
+        }
+    }
+
+    private fun processText(text: String) {
+        val lowerText = text.lowercase()
+        val keyword = keywords.firstOrNull { lowerText.contains(it) } ?: return
+
+        Log.i(TAG, "Keyword '$keyword' found in: '$text'")
+        vibrate(longArrayOf(0, 100, 50, 100))
+        saveEntry(keyword, text, 0.9f)
+    }
+
+    private fun saveEntry(keyword: String, text: String, confidence: Float) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val correctedText = dictionary.correct(text)
+            val categoryId = keywordCategoryMap[keyword] ?: "NOTE"
+
+            val entry = DiaryEntry(
+                text = correctedText,
+                keyword = keyword,
+                category = categoryId,
+                confidence = confidence,
+                source = Source.PHONE,
+                duration = 0
+            )
+            repository?.insert(entry)
+            Log.i(TAG, "Entry saved: '$correctedText' (category: ${entry.category})")
+            showNewEntryNotification(entry)
+
+            // Sync entry to watch
+            phoneToWatchSyncer?.syncUnsentEntries()
         }
     }
 

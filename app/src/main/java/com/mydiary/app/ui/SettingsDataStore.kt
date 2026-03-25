@@ -92,6 +92,16 @@ class SettingsDataStore(private val context: Context) {
         prefs[BACKUP_HOUR] ?: DEFAULT_BACKUP_HOUR
     }
 
+    val keywordMappings: Flow<Map<String, String>> = context.dataStore.data.map { prefs ->
+        parseMappings(prefs[KEYWORD_MAPPINGS] ?: DEFAULT_MAPPINGS)
+    }
+
+    val geminiEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[GEMINI_ENABLED] ?: false
+    }
+
+    val keywords: Flow<List<String>> = keywordMappings.map { it.keys.toList() }
+
     suspend fun setRecordingDuration(seconds: Int) {
         context.dataStore.edit { it[RECORDING_DURATION] = seconds }
     }

@@ -444,6 +444,28 @@ fun HomeScreen(
             }
         }
     }
+
+    entryToDelete?.let { entry ->
+        val preview = if (entry.text.length > 50) entry.text.take(50) + "..." else entry.text
+        AlertDialog(
+            onDismissRequest = { entryToDelete = null },
+            title = { Text("Eliminar entrada") },
+            text = { Text("¿Eliminar \"$preview\"?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch { repository.deleteById(entry.id) }
+                    entryToDelete = null
+                }) {
+                    Text("Eliminar", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { entryToDelete = null }) {
+                    Text("Cancelar")
+                }
+            }
+        )
+    }
 }
 
 // ── Entry Card Item wrapper ──────────────────────────────────────────────────
