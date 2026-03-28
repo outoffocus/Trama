@@ -109,7 +109,7 @@ Transcripción: "$text"
 """
 
         val model = GenerativeModel(
-            modelName = "gemini-2.0-flash",
+            modelName = "gemini-2.5-flash",
             apiKey = apiKey,
             generationConfig = generationConfig {
                 temperature = 0.1f

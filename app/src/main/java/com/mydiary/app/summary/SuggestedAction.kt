@@ -15,7 +15,11 @@ data class SuggestedAction(
     /** Contact name if applicable */
     val contact: String? = null,
     /** Whether the user has executed this action */
-    val done: Boolean = false
+    val done: Boolean = false,
+    /** IDs of diary entries this action was derived from */
+    val entryIds: List<Long> = emptyList(),
+    /** Timestamp when the source entry was captured (millis) */
+    val capturedAt: Long? = null
 )
 
 @Serializable

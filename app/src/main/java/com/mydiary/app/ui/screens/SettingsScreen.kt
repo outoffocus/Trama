@@ -89,9 +89,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val settings = remember { SettingsDataStore(context) }
     val repository = remember { DatabaseProvider.getRepository(context) }
-    val dictionary = remember { PersonalDictionary(context) }
     val scope = rememberCoroutineScope()
-    val repository = remember { DatabaseProvider.getRepository(context) }
 
     // Settings state
     val autoStart by settings.autoStart.collectAsState(initial = false)
@@ -411,13 +409,22 @@ fun SettingsScreen(onBack: () -> Unit) {
             val backupPrefs = remember { context.getSharedPreferences("backup", Context.MODE_PRIVATE) }
             val lastBackup = remember { backupPrefs.getLong("last_backup", 0L) }
             val lastCount = remember { backupPrefs.getInt("last_backup_count", 0) }
+            val lastError = remember { AutoBackupWorker.getLastError(context) }
             if (lastBackup > 0) {
                 val dateStr = java.text.SimpleDateFormat("d MMM yyyy, HH:mm",
                     java.util.Locale("es")).format(lastBackup)
                 Text(
-                    "Ultimo: $dateStr ($lastCount entradas)",
+                    "Último: $dateStr ($lastCount elementos)",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+            if (lastError != null) {
+                Text(
+                    "⚠ $lastError",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
                 )
                 Spacer(modifier = Modifier.height(8.dp))
             }

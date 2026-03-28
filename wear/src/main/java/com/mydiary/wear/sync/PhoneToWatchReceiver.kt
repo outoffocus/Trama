@@ -7,6 +7,7 @@ import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.WearableListenerService
+import com.mydiary.shared.model.StatusSyncPayload
 import com.mydiary.shared.model.SyncPayload
 import com.mydiary.wear.service.WatchServiceController
 import com.mydiary.wear.ui.DatabaseProvider
@@ -28,6 +29,7 @@ class PhoneToWatchReceiver : WearableListenerService() {
         private const val TAG = "PhoneToWatchReceiver"
         private const val SETTINGS_PATH = "/mydiary/settings"
         private const val ENTRIES_PATH = "/mydiary/phone-entries"
+        private const val STATUS_SYNC_PATH = "/mydiary/status-sync"
         private const val MIC_PATH = "/mydiary/mic"
         private const val CMD_PAUSE = "PAUSE"
         private const val CMD_RESUME = "RESUME"
@@ -56,6 +58,10 @@ class PhoneToWatchReceiver : WearableListenerService() {
                     ENTRIES_PATH -> {
                         val json = dataMap.getString("payload") ?: return@forEach
                         handleEntries(json)
+                    }
+                    STATUS_SYNC_PATH -> {
+                        val json = dataMap.getString("payload") ?: return@forEach
+                        handleStatusSync(json)
                     }
                 }
             }
@@ -90,16 +96,50 @@ class PhoneToWatchReceiver : WearableListenerService() {
                 val repository = DatabaseProvider.getRepository(applicationContext)
                 val payload = Json.decodeFromString<SyncPayload>(json)
                 var inserted = 0
+                var statusUpdated = 0
                 for (syncEntry in payload.entries) {
                     val entry = syncEntry.toDiaryEntry()
-                    if (!repository.existsByCreatedAtAndText(entry.createdAt, entry.text)) {
+                    val exists = repository.existsByCreatedAtAndText(entry.createdAt, entry.text)
+                    if (!exists) {
                         repository.insert(entry)
                         inserted++
+                    } else if (syncEntry.status == "COMPLETED") {
+                        // Update status of existing entry
+                        repository.markCompletedByKey(entry.createdAt, entry.text)
+                        statusUpdated++
+                    } else if (syncEntry.status == "DISCARDED") {
+                        repository.deleteByKey(entry.createdAt, entry.text)
+                        statusUpdated++
                     }
                 }
-                Log.i(TAG, "Received ${payload.entries.size} entries from phone, inserted $inserted new")
+                Log.i(TAG, "Received ${payload.entries.size} entries from phone, inserted $inserted new, updated $statusUpdated statuses")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to process phone entries", e)
+            }
+        }
+    }
+
+    private fun handleStatusSync(json: String) {
+        scope.launch {
+            try {
+                val repository = DatabaseProvider.getRepository(applicationContext)
+                val payload = Json.decodeFromString<StatusSyncPayload>(json)
+
+                var completedCount = 0
+                for (entry in payload.completed) {
+                    val rows = repository.markCompletedByKey(entry.createdAt, entry.text)
+                    if (rows > 0) completedCount++
+                }
+
+                var deletedCount = 0
+                for (entry in payload.deleted) {
+                    val rows = repository.deleteByKey(entry.createdAt, entry.text)
+                    if (rows > 0) deletedCount++
+                }
+
+                Log.i(TAG, "Status sync: $completedCount completed, $deletedCount deleted on watch")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to process status sync", e)
             }
         }
     }

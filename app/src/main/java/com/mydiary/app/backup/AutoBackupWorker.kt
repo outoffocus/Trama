@@ -62,6 +62,24 @@ class AutoBackupWorker(
                 .getInt("last_backup_count", 0)
         }
 
+        /** Get last error message, or null */
+        fun getLastError(context: Context): String? {
+            return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString("last_error", null)
+        }
+
+        private fun saveLastError(context: Context, message: String) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putString("last_error", message)
+                .putLong("last_error_time", System.currentTimeMillis())
+                .apply()
+        }
+
+        private fun clearLastError(context: Context) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .remove("last_error").remove("last_error_time").apply()
+        }
+
         /** Trigger an immediate one-time backup */
         fun runNow(context: Context) {
             val request = androidx.work.OneTimeWorkRequestBuilder<AutoBackupWorker>()
@@ -75,10 +93,26 @@ class AutoBackupWorker(
     override suspend fun doWork(): Result {
         return withContext(Dispatchers.IO) {
             try {
+                Log.i(TAG, "Auto-backup starting...")
+
                 val fileUri = getBackupFileUri(applicationContext)
                 if (fileUri == null) {
                     Log.w(TAG, "No backup file configured, skipping")
+                    saveLastError(applicationContext, "No hay archivo de backup configurado")
                     return@withContext Result.success()
+                }
+
+                // Check URI permissions
+                try {
+                    applicationContext.contentResolver.openOutputStream(fileUri, "w")?.close()
+                } catch (e: SecurityException) {
+                    Log.e(TAG, "Lost write permission to backup file: $fileUri", e)
+                    saveLastError(applicationContext, "Permiso de escritura perdido. Reconfigura la ubicación del backup.")
+                    return@withContext Result.failure()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Cannot write to backup file: $fileUri", e)
+                    saveLastError(applicationContext, "No se puede escribir al archivo: ${e.message?.take(80)}")
+                    return@withContext Result.failure()
                 }
 
                 val repository = DatabaseProvider.getRepository(applicationContext)
@@ -111,21 +145,39 @@ class AutoBackupWorker(
                     )
                 }
 
-                val backup = BackupManager.Backup(entries = backupEntries)
+                val recordings = try { repository.getAllRecordingsOnce() } catch (_: Exception) { emptyList() }
+                val backupRecordings = recordings.map { rec ->
+                    BackupManager.BackupRecording(
+                        title = rec.title,
+                        transcription = rec.transcription,
+                        summary = rec.summary,
+                        keyPoints = rec.keyPoints,
+                        durationSeconds = rec.durationSeconds,
+                        source = rec.source.name,
+                        createdAt = rec.createdAt,
+                        processingStatus = rec.processingStatus,
+                        processedLocally = rec.processedLocally
+                    )
+                }
+
+                val backup = BackupManager.Backup(entries = backupEntries, recordings = backupRecordings)
                 val jsonStr = json.encodeToString(backup)
 
                 saveToFile(fileUri, jsonStr)
 
+                val totalCount = entries.size + recordings.size
                 applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .edit()
                     .putLong("last_backup", System.currentTimeMillis())
-                    .putInt("last_backup_count", entries.size)
+                    .putInt("last_backup_count", totalCount)
                     .apply()
 
-                Log.i(TAG, "Auto-backup complete: ${entries.size} entries")
+                clearLastError(applicationContext)
+                Log.i(TAG, "Auto-backup complete: ${entries.size} entries + ${recordings.size} recordings")
                 Result.success()
             } catch (e: Exception) {
                 Log.e(TAG, "Auto-backup failed", e)
+                saveLastError(applicationContext, "Error: ${e.message?.take(100)}")
                 Result.retry()
             }
         }

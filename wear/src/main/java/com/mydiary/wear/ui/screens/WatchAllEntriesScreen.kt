@@ -30,9 +30,7 @@ import java.util.Date
 import java.util.Locale
 
 @Composable
-fun WatchAllEntriesScreen(
-    onEntryClick: (Long) -> Unit
-) {
+fun WatchAllEntriesScreen() {
     val context = LocalContext.current
 
     var repository by remember { mutableStateOf<DiaryRepository?>(null) }
@@ -42,7 +40,7 @@ fun WatchAllEntriesScreen(
         }
     }
 
-    val entries by repository?.getAll()?.collectAsState(initial = emptyList())
+    val entries by repository?.getPending()?.collectAsState(initial = emptyList())
         ?: remember { mutableStateOf(emptyList<DiaryEntry>()) }
 
     val timeFormat = SimpleDateFormat("dd MMM HH:mm", Locale("es"))
@@ -52,7 +50,7 @@ fun WatchAllEntriesScreen(
     ) {
         item {
             Text(
-                text = "Todas las entradas",
+                text = "Pendientes",
                 style = MaterialTheme.typography.title3,
                 textAlign = TextAlign.Center,
                 modifier = Modifier
@@ -75,7 +73,7 @@ fun WatchAllEntriesScreen(
         } else {
             items(entries, key = { it.id }) { entry ->
                 Card(
-                    onClick = { onEntryClick(entry.id) },
+                    onClick = { },
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(

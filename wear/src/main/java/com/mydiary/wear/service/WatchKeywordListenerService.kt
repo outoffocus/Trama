@@ -81,6 +81,7 @@ class WatchKeywordListenerService : LifecycleService() {
 
     // Speaker verification (enrolled locally on watch)
     private var speakerProfile: SpeakerProfile? = null
+    private var speakerThreshold: Float = 0.45f
     private val recentRmsValues = mutableListOf<Double>()
 
     // Deduplication
@@ -98,18 +99,18 @@ class WatchKeywordListenerService : LifecycleService() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-    }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        super.onStartCommand(intent, flags, startId)
-
-        // MUST call startForeground FIRST — before any early returns
+        // MUST call startForeground immediately in onCreate — before system timeout
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(NOTIFICATION_ID, buildNotification("Inicializando..."),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
         } else {
             startForeground(NOTIFICATION_ID, buildNotification("Inicializando..."))
         }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        super.onStartCommand(intent, flags, startId)
 
         if (WatchServiceController.isPhoneActive(applicationContext)) {
             Log.i(TAG, "Phone active, not starting")
@@ -180,10 +181,23 @@ class WatchKeywordListenerService : LifecycleService() {
             intentDetector?.setCustomKeywords(keywords)
         }
 
-        // Speaker verification disabled on watch — RMS from onRmsChanged is too noisy
-        // for reliable speaker identification (user's own voice gets sim=0.3-0.5).
-        // Keywords + heuristics provide sufficient filtering.
-        speakerProfile = null
+        // Speaker verification — user can enable/disable from watch settings
+        val watchPrefs = getSharedPreferences("watch_settings", Context.MODE_PRIVATE)
+        val speakerVerificationEnabled = watchPrefs.getBoolean("speaker_verification_enabled", false)
+        speakerThreshold = watchPrefs.getFloat("speaker_threshold", 0.45f)
+
+        if (speakerVerificationEnabled) {
+            prefs.getString("speaker_profile_json", null)?.let { json ->
+                speakerProfile = SpeakerProfile.deserialize(json)
+                Log.i(TAG, "Speaker verification enabled (threshold=${"%.0f".format(speakerThreshold * 100)}%)")
+            } ?: run {
+                speakerProfile = null
+                Log.i(TAG, "Speaker verification enabled but no profile found")
+            }
+        } else {
+            speakerProfile = null
+            Log.d(TAG, "Speaker verification disabled")
+        }
     }
 
     private fun initDatabase() {
@@ -382,7 +396,7 @@ class WatchKeywordListenerService : LifecycleService() {
         // Speaker verification (locally enrolled on watch)
         val profile = speakerProfile
         if (profile != null) {
-            val verification = SpeakerProfile.verify(recentRmsValues.toList(), profile)
+            val verification = SpeakerProfile.verify(recentRmsValues.toList(), profile, speakerThreshold)
             if (!verification.isMatch) {
                 Log.i(TAG, "Speaker rejected (sim=${"%.2f".format(verification.similarity)})")
                 return true  // keyword was there, wrong speaker — don't reset backoff

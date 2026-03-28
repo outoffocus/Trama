@@ -38,6 +38,10 @@ interface DiaryDao {
     @Query("SELECT * FROM diary_entries WHERE isSynced = 0")
     suspend fun getUnsynced(): List<DiaryEntry>
 
+    /** All entries as a one-shot list (for full sync) */
+    @Query("SELECT * FROM diary_entries ORDER BY createdAt DESC")
+    suspend fun getAllOnce(): List<DiaryEntry>
+
     @Query("SELECT * FROM diary_entries WHERE text LIKE '%' || :query || '%' OR cleanText LIKE '%' || :query || '%' ORDER BY createdAt DESC")
     fun search(query: String): Flow<List<DiaryEntry>>
 
@@ -50,7 +54,7 @@ interface DiaryDao {
     @Query("DELETE FROM diary_entries WHERE id = :id")
     suspend fun deleteById(id: Long)
 
-    @Query("UPDATE diary_entries SET text = :text WHERE id = :id")
+    @Query("UPDATE diary_entries SET text = :text, cleanText = :text, correctedText = NULL WHERE id = :id")
     suspend fun updateText(id: Long, text: String)
 
     @Query("UPDATE diary_entries SET isSynced = 1 WHERE id IN (:ids)")
@@ -88,9 +92,13 @@ interface DiaryDao {
     @Query("UPDATE diary_entries SET cleanText = :cleanText, actionType = :actionType, dueDate = :dueDate, priority = :priority, wasReviewedByLLM = 1, llmConfidence = :confidence WHERE id = :id")
     suspend fun updateAIProcessing(id: Long, cleanText: String, actionType: String, dueDate: Long?, priority: String, confidence: Float)
 
-    /** Get only the most recent entry (for watch home screen) */
+    /** Get only the most recent entry */
     @Query("SELECT * FROM diary_entries ORDER BY createdAt DESC LIMIT 1")
     fun getLatest(): Flow<DiaryEntry?>
+
+    /** Get most recent pending entry (for watch home screen) */
+    @Query("SELECT * FROM diary_entries WHERE status = 'PENDING' ORDER BY createdAt DESC LIMIT 1")
+    fun getLatestPending(): Flow<DiaryEntry?>
 
     /** Total entry count (lightweight) */
     @Query("SELECT COUNT(*) FROM diary_entries")
@@ -103,4 +111,32 @@ interface DiaryDao {
     /** Count completed today */
     @Query("SELECT COUNT(*) FROM diary_entries WHERE status = 'COMPLETED' AND completedAt >= :startOfDay")
     fun countCompletedToday(startOfDay: Long): Flow<Int>
+
+    /** Mark entry as duplicate of another */
+    @Query("UPDATE diary_entries SET duplicateOfId = :originalId WHERE id = :id")
+    suspend fun markDuplicate(id: Long, originalId: Long)
+
+    /** Clear duplicate flag */
+    @Query("UPDATE diary_entries SET duplicateOfId = NULL WHERE id = :id")
+    suspend fun clearDuplicate(id: Long)
+
+    /** Get all entries flagged as duplicates */
+    @Query("SELECT * FROM diary_entries WHERE duplicateOfId IS NOT NULL AND status = 'PENDING' ORDER BY createdAt DESC")
+    fun getDuplicates(): Flow<List<DiaryEntry>>
+
+    /** Get recent pending entries for dedup comparison (last 50) */
+    @Query("SELECT * FROM diary_entries WHERE status = 'PENDING' AND duplicateOfId IS NULL ORDER BY createdAt DESC LIMIT 50")
+    suspend fun getRecentPendingForDedup(): List<DiaryEntry>
+
+    /** Mark entry as completed by createdAt+text (for cross-device sync where IDs differ) */
+    @Query("UPDATE diary_entries SET status = 'COMPLETED', completedAt = :completedAt WHERE createdAt = :createdAt AND text = :text")
+    suspend fun markCompletedByKey(createdAt: Long, text: String, completedAt: Long = System.currentTimeMillis()): Int
+
+    /** Delete entry by createdAt+text (for cross-device sync) */
+    @Query("DELETE FROM diary_entries WHERE createdAt = :createdAt AND text = :text")
+    suspend fun deleteByKey(createdAt: Long, text: String): Int
+
+    /** Get action items extracted from a specific recording */
+    @Query("SELECT * FROM diary_entries WHERE sourceRecordingId = :recordingId ORDER BY createdAt ASC")
+    fun getByRecordingId(recordingId: Long): Flow<List<DiaryEntry>>
 }

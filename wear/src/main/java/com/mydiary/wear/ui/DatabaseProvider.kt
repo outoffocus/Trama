@@ -16,10 +16,6 @@ object DatabaseProvider {
     @Volatile
     private var repository: DiaryRepository? = null
 
-    /**
-     * Call from Application.onCreate() to start building the database
-     * on a background thread, so it's ready when the UI needs it.
-     */
     fun preWarm(context: Context) {
         CoroutineScope(Dispatchers.IO).launch {
             getDatabase(context)
@@ -33,14 +29,23 @@ object DatabaseProvider {
                 DiaryDatabase::class.java,
                 "mydiary-database"
             )
-                .addMigrations(DiaryDatabase.MIGRATION_1_2, DiaryDatabase.MIGRATION_2_3)
+                .addMigrations(
+                    DiaryDatabase.MIGRATION_1_2, DiaryDatabase.MIGRATION_2_3,
+                    DiaryDatabase.MIGRATION_3_4, DiaryDatabase.MIGRATION_4_5,
+                    DiaryDatabase.MIGRATION_5_6
+                )
+                .fallbackToDestructiveMigration(dropAllTables = true)
+                .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
                 .build().also { database = it }
         }
     }
 
     fun getRepository(context: Context): DiaryRepository {
         return repository ?: synchronized(this) {
-            repository ?: DiaryRepository(getDatabase(context).diaryDao()).also { repository = it }
+            repository ?: run {
+                val db = getDatabase(context)
+                DiaryRepository(db.diaryDao(), db.recordingDao()).also { repository = it }
+            }
         }
     }
 }

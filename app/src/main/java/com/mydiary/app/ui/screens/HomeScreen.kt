@@ -5,8 +5,6 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -28,6 +26,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -38,12 +37,17 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
@@ -53,16 +57,17 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -71,18 +76,27 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.mydiary.app.service.RecordingState
 import com.mydiary.app.service.ServiceController
+import com.mydiary.app.summary.RecordingProcessor
+import com.mydiary.shared.model.RecordingStatus
+import com.mydiary.app.sync.PhoneToWatchSyncer
 import com.mydiary.app.ui.DatabaseProvider
 import com.mydiary.app.ui.components.EntryCard
+import com.mydiary.app.ui.components.RecordingCard
+import com.mydiary.app.ui.components.RecordingIndicatorBar
 import com.mydiary.shared.model.DiaryEntry
-import com.mydiary.shared.model.EntryStatus
 import com.mydiary.shared.model.Source
+import com.mydiary.shared.model.StatusSyncEntry
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -113,17 +127,57 @@ fun HomeScreen(
     onSettingsClick: () -> Unit,
     onSearchClick: () -> Unit,
     onSummaryClick: () -> Unit = {},
-    onCalendarClick: () -> Unit = {}
+    onCalendarClick: () -> Unit = {},
+    onRecordingClick: (Long) -> Unit = {}
 ) {
     val context = LocalContext.current
     val repository = remember { DatabaseProvider.getRepository(context) }
+    val watchSyncer = remember { PhoneToWatchSyncer(context, repository) }
     val scope = rememberCoroutineScope()
+
+    // Full sync to watch on first open — ensures watch has current statuses
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            watchSyncer.syncAllToWatch()
+        }
+    }
     val serviceRunning by ServiceController.isRunning.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // Selection mode
+    // Recording state
+    val isRecording by RecordingState.isRecording.collectAsState()
+    val recElapsed by RecordingState.elapsedSeconds.collectAsState()
+    val savedRecordingId by RecordingState.savedRecordingId.collectAsState()
+    val lastError by RecordingState.lastError.collectAsState()
+
+    // Navigate to recording detail when saved
+    LaunchedEffect(savedRecordingId) {
+        val id = savedRecordingId
+        if (id != null) {
+            RecordingState.clearSaved()
+            onRecordingClick(id)
+        }
+    }
+
+    // Show processing errors as snackbar
+    LaunchedEffect(lastError) {
+        val error = lastError
+        if (error != null) {
+            snackbarHostState.showSnackbar(
+                message = error,
+                duration = SnackbarDuration.Long
+            )
+            RecordingState.clearError()
+        }
+    }
+
+    // Selection mode (entries)
     var selectionMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<Long>()) }
+
+    // Selection mode (recordings)
+    var recSelectionMode by remember { mutableStateOf(false) }
+    var selectedRecIds by remember { mutableStateOf(setOf<Long>()) }
 
     // Add manual entry dialog
     var showAddDialog by remember { mutableStateOf(false) }
@@ -131,15 +185,30 @@ fun HomeScreen(
     // Show/hide completed
     var showCompleted by remember { mutableStateOf(false) }
 
+    // Show/hide recordings section
+    var showRecordings by remember { mutableStateOf(true) }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) ServiceController.start(context)
     }
 
+    val recordPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) RecordingState.startRecording(context)
+    }
+
     // Data
-    val pendingEntries by repository.getPending().collectAsState(initial = emptyList())
+    val allPendingEntries by repository.getPending().collectAsState(initial = emptyList())
+    val duplicateEntries by repository.getDuplicates().collectAsState(initial = emptyList())
     val completedEntries by repository.getCompleted().collectAsState(initial = emptyList())
+    val recordings by repository.getAllRecordings().collectAsState(initial = emptyList())
+
+    // Filter duplicates out of the main pending list
+    val duplicateIds = duplicateEntries.map { it.id }.toSet()
+    val pendingEntries = allPendingEntries.filter { it.id !in duplicateIds }
 
     // Stats
     val startOfDay = remember {
@@ -164,14 +233,27 @@ fun HomeScreen(
 
     val dateFormat = SimpleDateFormat("dd MMM", Locale("es"))
 
-    // FAB animation
-    val fabScale by animateFloatAsState(
-        targetValue = if (serviceRunning) 1.1f else 1f, label = "fabScale"
-    )
-    val fabColor by animateColorAsState(
-        targetValue = if (serviceRunning) MaterialTheme.colorScheme.primaryContainer
-        else MaterialTheme.colorScheme.primary, label = "fabColor"
-    )
+    // FAB colors
+    val teal = Color(0xFF00897B)
+    val recRed = Color(0xFFD32F2F)
+
+    // Helper: sync a completed entry to watch
+    fun syncCompleted(entry: DiaryEntry) {
+        scope.launch {
+            watchSyncer.syncStatusChange(
+                completed = listOf(StatusSyncEntry(entry.createdAt, entry.text))
+            )
+        }
+    }
+
+    // Helper: sync a deleted entry to watch
+    fun syncDeleted(entry: DiaryEntry) {
+        scope.launch {
+            watchSyncer.syncStatusChange(
+                deleted = listOf(StatusSyncEntry(entry.createdAt, entry.text))
+            )
+        }
+    }
 
     // Delete selected
     fun deleteSelected() {
@@ -180,6 +262,10 @@ fun HomeScreen(
         val count = idsToDelete.size
         scope.launch {
             repository.deleteByIds(idsToDelete)
+            // Sync deletions to watch
+            watchSyncer.syncStatusChange(
+                deleted = entriesToDelete.map { StatusSyncEntry(it.createdAt, it.text) }
+            )
             selectionMode = false; selectedIds = emptySet()
             val result = snackbarHostState.showSnackbar(
                 "$count ${if (count == 1) "entrada borrada" else "entradas borradas"}",
@@ -193,10 +279,28 @@ fun HomeScreen(
 
     fun completeSelected() {
         val ids = selectedIds.toList()
+        val entriesToComplete = (pendingEntries + completedEntries).filter { it.id in ids }
         scope.launch {
             repository.markCompletedByIds(ids)
+            // Sync completions to watch
+            watchSyncer.syncStatusChange(
+                completed = entriesToComplete.map { StatusSyncEntry(it.createdAt, it.text) }
+            )
             selectionMode = false; selectedIds = emptySet()
             snackbarHostState.showSnackbar("${ids.size} completadas")
+        }
+    }
+
+    // Delete selected recordings
+    fun deleteSelectedRecordings() {
+        val idsToDelete = selectedRecIds.toList()
+        val count = idsToDelete.size
+        scope.launch {
+            repository.deleteRecordingsByIds(idsToDelete)
+            recSelectionMode = false; selectedRecIds = emptySet()
+            snackbarHostState.showSnackbar(
+                "$count ${if (count == 1) "grabación borrada" else "grabaciones borradas"}"
+            )
         }
     }
 
@@ -254,18 +358,63 @@ fun HomeScreen(
                         containerColor = MaterialTheme.colorScheme.primaryContainer
                     )
                 )
+            } else if (recSelectionMode) {
+                TopAppBar(
+                    title = { Text("${selectedRecIds.size} grabaciones") },
+                    navigationIcon = {
+                        IconButton(onClick = { recSelectionMode = false; selectedRecIds = emptySet() }) {
+                            Icon(Icons.Default.Close, contentDescription = "Cancelar")
+                        }
+                    },
+                    actions = {
+                        TextButton(onClick = {
+                            selectedRecIds = recordings.map { it.id }.toSet()
+                        }) { Text("Todas") }
+                        IconButton(onClick = { deleteSelectedRecordings() }, enabled = selectedRecIds.isNotEmpty()) {
+                            Icon(Icons.Default.Delete, contentDescription = "Borrar",
+                                tint = if (selectedRecIds.isNotEmpty()) MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                )
             } else {
                 TopAppBar(
                     title = {
                         Text("MyDiary", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     },
                     actions = {
-                        IconButton(onClick = onCalendarClick) {
-                            Icon(Icons.Default.CalendarMonth, contentDescription = "Calendario")
+                        // Add note
+                        IconButton(onClick = { showAddDialog = true }) {
+                            Icon(Icons.Default.Add, contentDescription = "Añadir nota")
                         }
+                        // Actions badge
                         IconButton(onClick = onSummaryClick) {
-                            Icon(Icons.Default.AutoAwesome, contentDescription = "Resumen",
-                                tint = MaterialTheme.colorScheme.primary)
+                            Box {
+                                Icon(Icons.Default.AutoAwesome, contentDescription = "Acciones",
+                                    tint = MaterialTheme.colorScheme.primary)
+                                if (pendingEntries.isNotEmpty()) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier
+                                            .size(16.dp)
+                                            .align(Alignment.TopEnd)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                            Text(
+                                                text = if (pendingEntries.size > 9) "9+" else "${pendingEntries.size}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onError
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                         IconButton(onClick = onSearchClick) {
                             Icon(Icons.Default.Search, contentDescription = "Buscar")
@@ -280,25 +429,45 @@ fun HomeScreen(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
-            if (!selectionMode) {
-                // Stacked FABs: + on top, mic on bottom
+            if (!selectionMode && !recSelectionMode) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // + button (add manual entry)
+                    // Record button (small, rounded square, top — secondary)
                     SmallFloatingActionButton(
-                        onClick = { showAddDialog = true },
-                        shape = CircleShape,
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        onClick = {
+                            if (isRecording) {
+                                RecordingState.stopRecording(context)
+                            } else {
+                                val hasPermission = ContextCompat.checkSelfPermission(
+                                    context, Manifest.permission.RECORD_AUDIO
+                                ) == PackageManager.PERMISSION_GRANTED
+                                if (!hasPermission) {
+                                    recordPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                } else {
+                                    if (!serviceRunning) ServiceController.start(context)
+                                    RecordingState.startRecording(context)
+                                }
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        containerColor = if (isRecording) recRed
+                                         else MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = if (isRecording) Color.White else recRed
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = "Añadir tarea", modifier = Modifier.size(20.dp))
+                        Icon(
+                            imageVector = if (isRecording) Icons.Default.Stop
+                                          else Icons.Default.FiberManualRecord,
+                            contentDescription = if (isRecording) "Parar grabación" else "Grabar",
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
 
-                    // Mic button (start/stop listening)
+                    // Mic toggle (large, circle, bottom — primary)
                     FloatingActionButton(
                         onClick = {
+                            if (isRecording) return@FloatingActionButton
                             val hasPermission = ContextCompat.checkSelfPermission(
                                 context, Manifest.permission.RECORD_AUDIO
                             ) == PackageManager.PERMISSION_GRANTED
@@ -309,16 +478,16 @@ fun HomeScreen(
                             if (serviceRunning) ServiceController.stop(context)
                             else ServiceController.start(context)
                         },
-                        modifier = Modifier.scale(fabScale),
                         shape = CircleShape,
-                        containerColor = fabColor,
-                        contentColor = if (serviceRunning) MaterialTheme.colorScheme.onPrimaryContainer
-                        else MaterialTheme.colorScheme.onPrimary
+                        containerColor = if (serviceRunning) teal
+                                         else MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = if (serviceRunning) Color.White
+                                       else MaterialTheme.colorScheme.onSurfaceVariant
                     ) {
                         Icon(
                             imageVector = if (serviceRunning) Icons.Default.Mic else Icons.Default.MicOff,
-                            contentDescription = if (serviceRunning) "Detener" else "Escuchar",
-                            modifier = Modifier.size(26.dp)
+                            contentDescription = if (serviceRunning) "Detener escucha" else "Escuchar",
+                            modifier = Modifier.size(28.dp)
                         )
                     }
                 }
@@ -326,6 +495,19 @@ fun HomeScreen(
         }
     ) { padding ->
         Column(modifier = Modifier.padding(padding)) {
+            // Recording indicator bar (visible while recording)
+            AnimatedVisibility(
+                visible = isRecording,
+                enter = expandVertically(),
+                exit = shrinkVertically()
+            ) {
+                RecordingIndicatorBar(
+                    elapsedSeconds = recElapsed,
+                    onStop = { RecordingState.stopRecording(context) },
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+            }
+
             // Stats bar
             if (pendingEntries.isNotEmpty() || completedToday > 0) {
                 StatsBar(
@@ -340,7 +522,7 @@ fun HomeScreen(
                 )
             }
 
-            if (pendingEntries.isEmpty() && completedEntries.isEmpty()) {
+            if (pendingEntries.isEmpty() && completedEntries.isEmpty() && recordings.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Default.Edit, contentDescription = null,
@@ -361,6 +543,107 @@ fun HomeScreen(
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    // ── Recordings section ──
+                    if (recordings.isNotEmpty()) {
+                        item(key = "header_recordings") {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.Mic, contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.tertiary)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Grabaciones", style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.tertiary,
+                                    fontWeight = FontWeight.SemiBold)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("${recordings.size}", style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.5f))
+                                Spacer(modifier = Modifier.weight(1f))
+                                // Reprocess locally-processed recordings
+                                val localCount = recordings.count { it.processedLocally || it.processingStatus == RecordingStatus.FAILED }
+                                if (localCount > 0) {
+                                    IconButton(
+                                        onClick = {
+                                            scope.launch(Dispatchers.IO) {
+                                                val toReprocess = recordings.filter {
+                                                    it.processedLocally || it.processingStatus == RecordingStatus.FAILED
+                                                }
+                                                val processor = RecordingProcessor(context)
+                                                for (rec in toReprocess) {
+                                                    processor.process(rec.id, repository)
+                                                }
+                                                withContext(Dispatchers.Main) {
+                                                    snackbarHostState.showSnackbar(
+                                                        "$localCount grabaciones reprocesadas"
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Refresh,
+                                            contentDescription = "Reprocesar con Gemini",
+                                            modifier = Modifier.size(18.dp),
+                                            tint = MaterialTheme.colorScheme.tertiary
+                                        )
+                                    }
+                                }
+                                IconButton(onClick = { showRecordings = !showRecordings },
+                                    modifier = Modifier.size(32.dp)) {
+                                    Icon(
+                                        if (showRecordings) Icons.Default.ExpandLess
+                                        else Icons.Default.ExpandMore,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+                                }
+                            }
+                        }
+                        if (showRecordings) {
+                            items(recordings.take(5), key = { "rec_${it.id}" }) { recording ->
+                                RecordingCard(
+                                    recording = recording,
+                                    isSelectionMode = recSelectionMode,
+                                    isSelected = recording.id in selectedRecIds,
+                                    onClick = {
+                                        if (recSelectionMode) {
+                                            selectedRecIds = if (recording.id in selectedRecIds)
+                                                selectedRecIds - recording.id else selectedRecIds + recording.id
+                                            if (selectedRecIds.isEmpty()) recSelectionMode = false
+                                        } else {
+                                            onRecordingClick(recording.id)
+                                        }
+                                    },
+                                    onLongClick = {
+                                        if (!recSelectionMode) {
+                                            recSelectionMode = true
+                                            selectedRecIds = setOf(recording.id)
+                                        }
+                                    }
+                                )
+                            }
+                            if (recordings.size > 5) {
+                                item(key = "rec_more") {
+                                    TextButton(
+                                        onClick = { /* TODO: recordings list screen */ },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text("Ver todas (${recordings.size})")
+                                    }
+                                }
+                            }
+                            item(key = "rec_divider") {
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(vertical = 4.dp),
+                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+                                )
+                            }
+                        }
+                    }
+
                     // Overdue
                     if (overdueEntries.isNotEmpty()) {
                         item(key = "header_overdue") {
@@ -368,7 +651,7 @@ fun HomeScreen(
                         }
                         items(overdueEntries, key = { "overdue_${it.id}" }) { entry ->
                             EntryCardItem(entry, selectionMode, selectedIds, onEntryClick,
-                                { scope.launch { repository.markCompleted(entry.id) } },
+                                { scope.launch { repository.markCompleted(entry.id); syncCompleted(entry) } },
                                 { id, sel -> selectedIds = if (sel) selectedIds + id else selectedIds - id; if (selectedIds.isEmpty()) selectionMode = false },
                                 { selectionMode = true; selectedIds = setOf(entry.id) })
                         }
@@ -381,7 +664,7 @@ fun HomeScreen(
                         }
                         items(todayEntries, key = { "today_${it.id}" }) { entry ->
                             EntryCardItem(entry, selectionMode, selectedIds, onEntryClick,
-                                { scope.launch { repository.markCompleted(entry.id) } },
+                                { scope.launch { repository.markCompleted(entry.id); syncCompleted(entry) } },
                                 { id, sel -> selectedIds = if (sel) selectedIds + id else selectedIds - id; if (selectedIds.isEmpty()) selectionMode = false },
                                 { selectionMode = true; selectedIds = setOf(entry.id) })
                         }
@@ -401,10 +684,27 @@ fun HomeScreen(
                             }
                             items(dateEntries, key = { "older_${it.id}" }) { entry ->
                                 EntryCardItem(entry, selectionMode, selectedIds, onEntryClick,
-                                    { scope.launch { repository.markCompleted(entry.id) } },
+                                    { scope.launch { repository.markCompleted(entry.id); syncCompleted(entry) } },
                                     { id, sel -> selectedIds = if (sel) selectedIds + id else selectedIds - id; if (selectedIds.isEmpty()) selectionMode = false },
                                     { selectionMode = true; selectedIds = setOf(entry.id) })
                             }
+                        }
+                    }
+
+                    // Possible duplicates
+                    if (duplicateEntries.isNotEmpty()) {
+                        item(key = "header_duplicates") {
+                            SectionHeader("Posibles duplicados", duplicateEntries.size,
+                                MaterialTheme.colorScheme.tertiary)
+                        }
+                        items(duplicateEntries, key = { "dup_${it.id}" }) { entry ->
+                            val originalEntry = allPendingEntries.find { it.id == entry.duplicateOfId }
+                            DuplicateCard(
+                                entry = entry,
+                                originalText = originalEntry?.displayText,
+                                onKeep = { scope.launch { repository.clearDuplicate(entry.id) } },
+                                onDelete = { scope.launch { repository.deleteById(entry.id); syncDeleted(entry) } }
+                            )
                         }
                     }
 
@@ -445,27 +745,6 @@ fun HomeScreen(
         }
     }
 
-    entryToDelete?.let { entry ->
-        val preview = if (entry.text.length > 50) entry.text.take(50) + "..." else entry.text
-        AlertDialog(
-            onDismissRequest = { entryToDelete = null },
-            title = { Text("Eliminar entrada") },
-            text = { Text("¿Eliminar \"$preview\"?") },
-            confirmButton = {
-                TextButton(onClick = {
-                    scope.launch { repository.deleteById(entry.id) }
-                    entryToDelete = null
-                }) {
-                    Text("Eliminar", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { entryToDelete = null }) {
-                    Text("Cancelar")
-                }
-            }
-        )
-    }
 }
 
 // ── Entry Card Item wrapper ──────────────────────────────────────────────────
@@ -478,7 +757,7 @@ private fun EntryCardItem(
     onEntryClick: (Long) -> Unit,
     onToggleComplete: () -> Unit,
     onSelectionChange: (Long, Boolean) -> Unit,
-    onEnterSelectionMode: () -> Unit
+    onEnterSelectionMode: () -> Unit,
 ) {
     EntryCard(
         entry = entry,
@@ -501,6 +780,49 @@ private fun SectionHeader(title: String, count: Int, color: androidx.compose.ui.
         Text(title, style = MaterialTheme.typography.labelLarge, color = color, fontWeight = FontWeight.SemiBold)
         Spacer(modifier = Modifier.width(8.dp))
         Text("$count", style = MaterialTheme.typography.labelMedium, color = color.copy(alpha = 0.6f))
+    }
+}
+
+// ── Duplicate Card ──────────────────────────────────────────────────────────
+
+@Composable
+private fun DuplicateCard(
+    entry: DiaryEntry,
+    originalText: String?,
+    onKeep: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text(
+                text = entry.displayText,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            if (originalText != null) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Similar a: $originalText",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onDelete) {
+                    Text("Eliminar", color = MaterialTheme.colorScheme.error)
+                }
+                TextButton(onClick = onKeep) {
+                    Text("No es duplicado")
+                }
+            }
+        }
     }
 }
 

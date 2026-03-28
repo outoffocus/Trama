@@ -25,7 +25,9 @@ data class DiaryEntry(
     val cleanText: String? = null,                 // AI-cleaned summary (e.g. "Llamar al dentista")
     val dueDate: Long? = null,                     // due date timestamp if mentioned
     val completedAt: Long? = null,                 // when it was marked completed
-    val priority: String = EntryPriority.NORMAL    // LOW, NORMAL, HIGH, URGENT
+    val priority: String = EntryPriority.NORMAL,   // LOW, NORMAL, HIGH, URGENT
+    val duplicateOfId: Long? = null,                // ID of original entry if this is a duplicate
+    val sourceRecordingId: Long? = null              // ID of the Recording this action was extracted from
 ) {
     /** Display text: cleanText > correctedText > text */
     val displayText: String get() = cleanText ?: correctedText ?: text

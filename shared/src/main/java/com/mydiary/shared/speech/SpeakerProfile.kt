@@ -42,7 +42,7 @@ data class SpeakerProfile(
          * @param profile enrolled speaker profile
          * @return similarity 0.0-1.0 and whether it's a match
          */
-        fun verify(rmsValues: List<Double>, profile: SpeakerProfile): VerificationResult {
+        fun verify(rmsValues: List<Double>, profile: SpeakerProfile, threshold: Float = VERIFICATION_THRESHOLD): VerificationResult {
             // Filter to speech frames only
             val speechFrames = rmsValues.filter { it > SPEECH_RMS_THRESHOLD }
 
@@ -64,7 +64,7 @@ data class SpeakerProfile(
             )
 
             val similarity = (rmsSim * 0.65 + rmsVarSim * 0.35).toFloat()
-            val isMatch = similarity >= VERIFICATION_THRESHOLD
+            val isMatch = similarity >= threshold
 
             return VerificationResult(similarity, isMatch)
         }

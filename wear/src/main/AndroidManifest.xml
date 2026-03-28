@@ -38,6 +38,12 @@
             android:foregroundServiceType="microphone"
             android:exported="false" />
 
+        <!-- Continuous recording foreground service -->
+        <service
+            android:name=".service.WatchRecordingService"
+            android:foregroundServiceType="microphone"
+            android:exported="false" />
+
         <!-- Receives settings, entries, and mic commands from phone -->
         <service
             android:name=".sync.PhoneToWatchReceiver"

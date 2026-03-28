@@ -30,6 +30,8 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Watch
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -78,7 +80,6 @@ import java.util.concurrent.TimeUnit
 @Composable
 fun EntryCard(
     entry: DiaryEntry,
-    categories: List<CategoryInfo>,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
     onToggleComplete: (() -> Unit)? = null,
@@ -212,14 +213,22 @@ fun EntryCard(
                         )
                     }
 
-                    // AI badge
+                    // Processing source badge (online vs offline)
                     if (entry.wasReviewedByLLM) {
                         Spacer(modifier = Modifier.width(4.dp))
                         Icon(
-                            Icons.Default.AutoAwesome,
-                            contentDescription = "IA",
+                            Icons.Default.Cloud,
+                            contentDescription = "Procesado online",
                             modifier = Modifier.size(11.dp),
                             tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                        )
+                    } else if (entry.sourceRecordingId != null || entry.llmConfidence == 0.0f) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            Icons.Default.CloudOff,
+                            contentDescription = "Procesado local",
+                            modifier = Modifier.size(11.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                         )
                     }
 
@@ -246,8 +255,6 @@ fun EntryCard(
                 Text(
                     text = entry.displayText,
                     style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
                     color = if (isCompleted)
                         MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                     else

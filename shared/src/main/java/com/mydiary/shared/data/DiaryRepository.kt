@@ -1,10 +1,16 @@
 package com.mydiary.shared.data
 
 import com.mydiary.shared.model.DiaryEntry
+import com.mydiary.shared.model.Recording
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 
-class DiaryRepository(private val dao: DiaryDao) {
+class DiaryRepository(
+    private val dao: DiaryDao,
+    private val recordingDao: RecordingDao? = null
+) {
+
+    // ── DiaryEntry ──
 
     fun getById(id: Long): Flow<DiaryEntry?> = dao.getById(id).distinctUntilChanged()
 
@@ -20,6 +26,8 @@ class DiaryRepository(private val dao: DiaryDao) {
         dao.byDateRange(startTime, endTime).distinctUntilChanged()
 
     suspend fun getUnsynced(): List<DiaryEntry> = dao.getUnsynced()
+
+    suspend fun getAllOnce(): List<DiaryEntry> = dao.getAllOnce()
 
     fun search(query: String): Flow<List<DiaryEntry>> = dao.search(query).distinctUntilChanged()
 
@@ -56,9 +64,70 @@ class DiaryRepository(private val dao: DiaryDao) {
 
     fun getLatest(): Flow<DiaryEntry?> = dao.getLatest().distinctUntilChanged()
 
+    fun getLatestPending(): Flow<DiaryEntry?> = dao.getLatestPending().distinctUntilChanged()
+
     fun countAll(): Flow<Int> = dao.countAll().distinctUntilChanged()
 
     fun countPending(): Flow<Int> = dao.countPending().distinctUntilChanged()
 
     fun countCompletedToday(startOfDay: Long): Flow<Int> = dao.countCompletedToday(startOfDay).distinctUntilChanged()
+
+    suspend fun markDuplicate(id: Long, originalId: Long) = dao.markDuplicate(id, originalId)
+
+    suspend fun clearDuplicate(id: Long) = dao.clearDuplicate(id)
+
+    fun getDuplicates(): Flow<List<DiaryEntry>> = dao.getDuplicates().distinctUntilChanged()
+
+    suspend fun getRecentPendingForDedup(): List<DiaryEntry> = dao.getRecentPendingForDedup()
+
+    suspend fun markCompletedByKey(createdAt: Long, text: String) = dao.markCompletedByKey(createdAt, text)
+
+    suspend fun deleteByKey(createdAt: Long, text: String) = dao.deleteByKey(createdAt, text)
+
+    fun getByRecordingId(recordingId: Long): Flow<List<DiaryEntry>> =
+        dao.getByRecordingId(recordingId).distinctUntilChanged()
+
+    // ── Recording ──
+
+    fun getAllRecordings(): Flow<List<Recording>> =
+        recordingDao?.getAll()?.distinctUntilChanged()
+            ?: kotlinx.coroutines.flow.flowOf(emptyList())
+
+    fun getRecordingById(id: Long): Flow<Recording?> =
+        recordingDao?.getById(id)?.distinctUntilChanged()
+            ?: kotlinx.coroutines.flow.flowOf(null)
+
+    suspend fun getRecordingByIdOnce(id: Long): Recording? =
+        recordingDao?.getByIdOnce(id)
+
+    suspend fun insertRecording(recording: Recording): Long =
+        recordingDao?.insert(recording) ?: -1
+
+    suspend fun getAllRecordingsOnce(): List<Recording> =
+        recordingDao?.getAllOnce() ?: emptyList()
+
+    suspend fun deleteRecording(id: Long) = recordingDao?.delete(id)
+
+    suspend fun deleteRecordingsByIds(ids: List<Long>) = recordingDao?.deleteByIds(ids)
+
+    suspend fun updateRecordingStatus(id: Long, status: String) =
+        recordingDao?.updateStatus(id, status)
+
+    suspend fun updateRecordingResult(
+        id: Long, title: String, summary: String, keyPoints: String?, status: String,
+        processedLocally: Boolean = false
+    ) = recordingDao?.updateProcessingResult(id, title, summary, keyPoints, status, processedLocally)
+
+    fun recordingCount(): Flow<Int> =
+        recordingDao?.count()?.distinctUntilChanged()
+            ?: kotlinx.coroutines.flow.flowOf(0)
+
+    suspend fun getUnsyncedRecordings(): List<Recording> =
+        recordingDao?.getUnsynced() ?: emptyList()
+
+    suspend fun markRecordingsSynced(ids: List<Long>) =
+        recordingDao?.markSynced(ids)
+
+    suspend fun existsRecordingByCreatedAt(createdAt: Long): Boolean =
+        recordingDao?.existsByCreatedAt(createdAt) ?: false
 }

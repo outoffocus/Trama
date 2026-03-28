@@ -4,6 +4,14 @@ import android.Manifest
 import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,7 +25,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -29,19 +37,14 @@ import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Message
 import androidx.compose.material.icons.filled.NotificationImportant
-import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.TaskAlt
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -52,16 +55,20 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -73,6 +80,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -80,6 +88,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.mydiary.app.summary.ActionExecutor
 import com.mydiary.app.summary.ActionType
 import com.mydiary.app.summary.CalendarHelper
@@ -94,6 +103,115 @@ import kotlinx.serialization.json.Json
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+
+// ── Urgency scoring ─────────────────────────────────────────────────────────
+
+/**
+ * Compute urgency score for sorting. Higher = more urgent.
+ * Combines: explicit priority, due date proximity, and age of entry.
+ */
+private fun computeUrgency(action: SuggestedAction): Float {
+    if (action.done) return -1f // done items always at bottom
+
+    val now = System.currentTimeMillis()
+    var score = 0f
+
+    // 1. Due date proximity (parsed from datetime)
+    val dueDateMillis = action.datetime?.let { parseDatetimeToMillis(it) }
+    if (dueDateMillis != null) {
+        val hoursUntilDue = (dueDateMillis - now).toFloat() / 3_600_000f
+        score += when {
+            hoursUntilDue < 0 -> 50f    // overdue
+            hoursUntilDue < 4 -> 40f    // within 4 hours
+            hoursUntilDue < 24 -> 30f   // today
+            hoursUntilDue < 48 -> 20f   // tomorrow
+            hoursUntilDue < 168 -> 10f  // this week
+            else -> 0f
+        }
+    }
+
+    // 2. Age of captured entry — older pending = more urgent
+    val capturedAt = action.capturedAt
+    if (capturedAt != null) {
+        val daysSinceCaptured = (now - capturedAt).toFloat() / 86_400_000f
+        score += when {
+            daysSinceCaptured > 7 -> 25f   // over a week old — escalate
+            daysSinceCaptured > 3 -> 15f   // stale
+            daysSinceCaptured > 1 -> 5f    // yesterday
+            else -> 0f
+        }
+    }
+
+    // 3. Action type inherent urgency
+    score += when (action.type) {
+        ActionType.CALENDAR_EVENT -> 8f
+        ActionType.CALL -> 6f
+        ActionType.REMINDER -> 5f
+        ActionType.MESSAGE -> 4f
+        ActionType.TODO -> 2f
+        ActionType.NOTE -> 0f
+    }
+
+    return score
+}
+
+private fun parseDatetimeToMillis(datetime: String): Long? {
+    return try {
+        SimpleDateFormat("yyyy-MM-dd'T'HH:mm", Locale.getDefault()).parse(datetime)?.time
+    } catch (_: Exception) {
+        try {
+            SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(datetime)?.time
+        } catch (_: Exception) { null }
+    }
+}
+
+// ── Section grouping ────────────────────────────────────────────────────────
+
+private enum class ActionSection(val label: String, val emoji: String) {
+    OVERDUE("Atrasadas", "🔴"),
+    TODAY("Para hoy", "🟡"),
+    THIS_WEEK("Esta semana", "📅"),
+    LATER("Pendientes", "📋"),
+    DONE("Completadas", "✅")
+}
+
+private fun sectionFor(action: SuggestedAction): ActionSection {
+    if (action.done) return ActionSection.DONE
+
+    val now = System.currentTimeMillis()
+    val today = Calendar.getInstance().apply {
+        set(Calendar.HOUR_OF_DAY, 23); set(Calendar.MINUTE, 59)
+        set(Calendar.SECOND, 59)
+    }.timeInMillis
+    val endOfWeek = Calendar.getInstance().apply {
+        add(Calendar.DAY_OF_YEAR, 7)
+        set(Calendar.HOUR_OF_DAY, 23); set(Calendar.MINUTE, 59)
+    }.timeInMillis
+
+    // Check due date from datetime
+    val dueDateMillis = action.datetime?.let { parseDatetimeToMillis(it) }
+    if (dueDateMillis != null) {
+        return when {
+            dueDateMillis < now -> ActionSection.OVERDUE
+            dueDateMillis <= today -> ActionSection.TODAY
+            dueDateMillis <= endOfWeek -> ActionSection.THIS_WEEK
+            else -> ActionSection.LATER
+        }
+    }
+
+    // Check age — captured more than 3 days ago with no date → treat as overdue-ish
+    val capturedAt = action.capturedAt
+    if (capturedAt != null) {
+        val daysSince = (now - capturedAt) / 86_400_000
+        if (daysSince > 3) return ActionSection.OVERDUE
+        if (daysSince > 1) return ActionSection.TODAY
+    }
+
+    // Default: today (keep it visible and urgent)
+    return ActionSection.TODAY
+}
+
+// ── Main Screen ─────────────────────────────────────────────────────────────
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -123,9 +241,91 @@ fun SummaryScreen(onBack: () -> Unit) {
         }
     }
 
-    // Load saved summary
+    // Load saved summary and enrich with capture timestamps if missing
     LaunchedEffect(Unit) {
-        summary = loadSummary(context)
+        val loaded = loadSummary(context)
+        if (loaded != null) {
+            val needsEnrich = loaded.actions.any { it.capturedAt == null }
+            if (needsEnrich) {
+                val allEntries = repository.getPending().first() +
+                    repository.getCompleted().first()
+                val entryMap = allEntries.associateBy { it.id }
+                val enriched = loaded.copy(
+                    actions = loaded.actions.map { action ->
+                        if (action.capturedAt != null) return@map action
+                        if (action.entryIds.isNotEmpty()) {
+                            val ts = action.entryIds.firstNotNullOfOrNull { entryMap[it]?.createdAt }
+                            action.copy(capturedAt = ts)
+                        } else {
+                            val matched = allEntries.filter { entry ->
+                                val aw = action.title.lowercase().split("\\s+".toRegex()).filter { it.length > 2 }.toSet()
+                                val ew = entry.displayText.lowercase().split("\\s+".toRegex()).filter { it.length > 2 }.toSet()
+                                aw.isNotEmpty() && ew.isNotEmpty() &&
+                                    aw.intersect(ew).size.toFloat() / aw.size >= 0.4f
+                            }.minByOrNull { it.createdAt }
+                            if (matched != null) action.copy(capturedAt = matched.createdAt, entryIds = listOf(matched.id))
+                            else action
+                        }
+                    }
+                )
+                saveSummary(context, enriched)
+                summary = enriched
+            } else {
+                summary = loaded
+            }
+        }
+    }
+
+    // ── Action handlers ─────────────────────────────────────────────────────
+
+    fun updateAction(index: Int, transform: (SuggestedAction) -> SuggestedAction) {
+        summary = summary?.let { s ->
+            val newActions = s.actions.toMutableList()
+            newActions[index] = transform(newActions[index])
+            s.copy(actions = newActions).also { saveSummary(context, it) }
+        }
+    }
+
+    fun markDone(index: Int, done: Boolean) {
+        val action = summary?.actions?.getOrNull(index) ?: return
+        updateAction(index) { it.copy(done = done) }
+        if (action.entryIds.isNotEmpty()) {
+            scope.launch {
+                action.entryIds.forEach { id ->
+                    if (done) repository.markCompleted(id) else repository.markPending(id)
+                }
+            }
+        }
+    }
+
+    fun openCalendarDialog(index: Int, action: SuggestedAction) {
+        if (CalendarHelper.hasWriteCalendarPermission(context)) {
+            editingAction = IndexedAction(index, action)
+        } else {
+            pendingAction = IndexedAction(index, action)
+            calendarPermissionLauncher.launch(arrayOf(
+                Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR
+            ))
+        }
+    }
+
+    fun executeAction(index: Int, action: SuggestedAction) {
+        if (action.type == ActionType.CALENDAR_EVENT || action.type == ActionType.REMINDER) {
+            openCalendarDialog(index, action)
+        } else {
+            // Only open the relevant app (dialer, messaging, etc.)
+            // User marks done manually via swipe or ✅ button
+            ActionExecutor.execute(context, action)
+        }
+    }
+
+    fun postponeAction(index: Int) {
+        val action = summary?.actions?.getOrNull(index) ?: return
+        val tomorrow = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 1) }
+        val tomorrowStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(tomorrow.time)
+        val existingTime = action.datetime?.substringAfter("T", "09:00") ?: "09:00"
+        updateAction(index) { it.copy(datetime = "${tomorrowStr}T${existingTime}") }
+        android.widget.Toast.makeText(context, "Pospuesto a mañana", android.widget.Toast.LENGTH_SHORT).show()
     }
 
     // Calendar edit dialog
@@ -154,15 +354,12 @@ fun SummaryScreen(onBack: () -> Unit) {
                 }
                 if (eventId != null) {
                     android.widget.Toast.makeText(context,
-                        if (isReminder) "Recordatorio creado" else "Evento añadido", android.widget.Toast.LENGTH_SHORT).show()
-                    // Mark as done
-                    summary = summary?.let { s ->
-                        val newActions = s.actions.toMutableList()
-                        newActions[ia.index] = newActions[ia.index].copy(done = true)
-                        s.copy(actions = newActions).also { saveSummary(context, it) }
-                    }
+                        if (isReminder) "Recordatorio creado" else "Evento añadido",
+                        android.widget.Toast.LENGTH_SHORT).show()
+                    markDone(ia.index, true)
                 } else {
-                    android.widget.Toast.makeText(context, "Error, abriendo calendario...", android.widget.Toast.LENGTH_SHORT).show()
+                    android.widget.Toast.makeText(context, "Error, abriendo calendario...",
+                        android.widget.Toast.LENGTH_SHORT).show()
                     ActionExecutor.execute(context, updatedAction)
                 }
                 editingAction = null
@@ -170,34 +367,7 @@ fun SummaryScreen(onBack: () -> Unit) {
         )
     }
 
-    fun executeAction(index: Int, action: SuggestedAction) {
-        if (action.type == ActionType.CALENDAR_EVENT || action.type == ActionType.REMINDER) {
-            if (CalendarHelper.hasWriteCalendarPermission(context)) {
-                editingAction = IndexedAction(index, action)
-            } else {
-                pendingAction = IndexedAction(index, action)
-                calendarPermissionLauncher.launch(arrayOf(
-                    Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR
-                ))
-            }
-        } else {
-            ActionExecutor.execute(context, action)
-            // Mark as done
-            summary = summary?.let { s ->
-                val newActions = s.actions.toMutableList()
-                newActions[index] = newActions[index].copy(done = true)
-                s.copy(actions = newActions).also { saveSummary(context, it) }
-            }
-        }
-    }
-
-    fun toggleActionDone(index: Int) {
-        summary = summary?.let { s ->
-            val newActions = s.actions.toMutableList()
-            newActions[index] = newActions[index].copy(done = !newActions[index].done)
-            s.copy(actions = newActions).also { saveSummary(context, it) }
-        }
-    }
+    // ── UI ───────────────────────────────────────────────────────────────────
 
     Scaffold(
         topBar = {
@@ -207,7 +377,7 @@ fun SummaryScreen(onBack: () -> Unit) {
                         Icon(Icons.Default.AutoAwesome, contentDescription = null,
                             modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Acciones sugeridas")
+                        Text("Acciones")
                     }
                 },
                 navigationIcon = {
@@ -267,7 +437,7 @@ fun SummaryScreen(onBack: () -> Unit) {
                             modifier = Modifier.size(56.dp),
                             tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
                         Spacer(modifier = Modifier.height(16.dp))
-                        Text("Sin resumen", style = MaterialTheme.typography.titleMedium)
+                        Text("Sin acciones", style = MaterialTheme.typography.titleMedium)
                         Spacer(modifier = Modifier.height(8.dp))
                         Text("Analiza tus notas pendientes y genera acciones concretas.",
                             style = MaterialTheme.typography.bodyMedium,
@@ -291,33 +461,66 @@ fun SummaryScreen(onBack: () -> Unit) {
                     }
                 }
             } else {
-                // Header
+                // Sort by urgency and group into sections
+                val sortedActions = s.actions
+                    .mapIndexed { idx, action -> idx to action }
+                    .sortedByDescending { computeUrgency(it.second) }
+
+                val grouped = sortedActions.groupBy { sectionFor(it.second) }
+                val sectionOrder = listOf(
+                    ActionSection.OVERDUE, ActionSection.TODAY,
+                    ActionSection.THIS_WEEK, ActionSection.LATER, ActionSection.DONE
+                )
+
+                // Header stats
+                val pendingCount = s.actions.count { !it.done }
+                val doneCount = s.actions.count { it.done }
+
                 Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
                     Text(
                         text = formatDate(s.date),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
-                    val doneCount = s.actions.count { it.done }
                     Text(
-                        text = "${s.actions.size} acciones, $doneCount completadas",
+                        text = "$pendingCount pendientes · $doneCount completadas",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
 
-                // Action list
                 LazyColumn(
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    itemsIndexed(s.actions) { index, action ->
-                        ActionCard(
-                            action = action,
-                            onExecute = { executeAction(index, action) },
-                            onToggleDone = { toggleActionDone(index) }
-                        )
+                    for (section in sectionOrder) {
+                        val items = grouped[section] ?: continue
+                        // Don't show empty sections
+                        if (items.isEmpty()) continue
+
+                        // Section header
+                        item(key = "header_${section.name}") {
+                            SectionHeader(
+                                section = section,
+                                count = items.size
+                            )
+                        }
+
+                        // Action cards
+                        items(
+                            items = items,
+                            key = { "action_${it.first}" }
+                        ) { (originalIndex, action) ->
+                            SwipeableActionCard(
+                                action = action,
+                                onExecute = { executeAction(originalIndex, action) },
+                                onToggleDone = { markDone(originalIndex, !action.done) },
+                                onPostpone = { postponeAction(originalIndex) },
+                                onAddToCalendar = { openCalendarDialog(originalIndex, action) }
+                            )
+                        }
                     }
+
                     item { Spacer(modifier = Modifier.height(16.dp)) }
                 }
             }
@@ -325,98 +528,296 @@ fun SummaryScreen(onBack: () -> Unit) {
     }
 }
 
-// ── Action Card ─────────────────────────────────────────────────────────────
+// ── Section Header ──────────────────────────────────────────────────────────
 
 @Composable
-private fun ActionCard(
+private fun SectionHeader(section: ActionSection, count: Int) {
+    val color = when (section) {
+        ActionSection.OVERDUE -> MaterialTheme.colorScheme.error
+        ActionSection.TODAY -> MaterialTheme.colorScheme.primary
+        ActionSection.THIS_WEEK -> MaterialTheme.colorScheme.tertiary
+        ActionSection.LATER -> MaterialTheme.colorScheme.onSurfaceVariant
+        ActionSection.DONE -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp, bottom = 4.dp, start = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "${section.emoji} ${section.label}",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = color
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Surface(
+            shape = CircleShape,
+            color = color.copy(alpha = 0.1f),
+            modifier = Modifier.size(22.dp)
+        ) {
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                Text(
+                    text = "$count",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = color
+                )
+            }
+        }
+    }
+}
+
+// ── Swipeable Action Card ───────────────────────────────────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SwipeableActionCard(
     action: SuggestedAction,
     onExecute: () -> Unit,
-    onToggleDone: () -> Unit
+    onToggleDone: () -> Unit,
+    onPostpone: () -> Unit,
+    onAddToCalendar: () -> Unit
+) {
+    if (action.done) {
+        // Done items: simple card, no swipe
+        ActionCardContent(
+            action = action,
+            onExecute = {},
+            onToggleDone = onToggleDone,
+            onAddToCalendar = {},
+            showQuickActions = false
+        )
+        return
+    }
+
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            when (value) {
+                SwipeToDismissBoxValue.EndToStart -> {
+                    onPostpone()
+                    false // reset position
+                }
+                SwipeToDismissBoxValue.StartToEnd -> {
+                    onToggleDone()
+                    false // reset position
+                }
+                else -> false
+            }
+        },
+        positionalThreshold = { it * 0.35f }
+    )
+
+    SwipeToDismissBox(
+        state = dismissState,
+        backgroundContent = {
+            val direction = dismissState.dismissDirection
+
+            // Swipe right → Done (green)
+            // Swipe left → Postpone (amber)
+            val (bgColor, icon, label, alignment) = when (direction) {
+                SwipeToDismissBoxValue.StartToEnd -> SwipeInfo(
+                    Color(0xFF2E7D32), Icons.Default.CheckCircle, "Hecho", Alignment.CenterStart
+                )
+                SwipeToDismissBoxValue.EndToStart -> SwipeInfo(
+                    Color(0xFFE65100), Icons.Default.Schedule, "Mañana", Alignment.CenterEnd
+                )
+                else -> SwipeInfo(Color.Transparent, Icons.Default.CheckCircle, "", Alignment.CenterStart)
+            }
+
+            val animatedColor by animateColorAsState(
+                targetValue = bgColor,
+                animationSpec = tween(150),
+                label = "swipeBg"
+            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(animatedColor)
+                    .padding(horizontal = 20.dp),
+                contentAlignment = alignment
+            ) {
+                if (direction != SwipeToDismissBoxValue.Settled) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (direction == SwipeToDismissBoxValue.EndToStart) {
+                            Text(label, color = Color.White, style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold)
+                        }
+                        Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(22.dp))
+                        if (direction == SwipeToDismissBoxValue.StartToEnd) {
+                            Text(label, color = Color.White, style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+        },
+        enableDismissFromStartToEnd = true,
+        enableDismissFromEndToStart = true
+    ) {
+        ActionCardContent(
+            action = action,
+            onExecute = onExecute,
+            onToggleDone = onToggleDone,
+            onAddToCalendar = onAddToCalendar,
+            showQuickActions = true
+        )
+    }
+}
+
+private data class SwipeInfo(
+    val color: Color,
+    val icon: ImageVector,
+    val label: String,
+    val alignment: Alignment
+)
+
+// ── Action Card Content ─────────────────────────────────────────────────────
+
+@Composable
+private fun ActionCardContent(
+    action: SuggestedAction,
+    onExecute: () -> Unit,
+    onToggleDone: () -> Unit,
+    onAddToCalendar: () -> Unit,
+    showQuickActions: Boolean
 ) {
     val icon = actionIcon(action.type)
     val accentColor = actionColor(action.type)
     val label = actionLabel(action.type)
+    val isDone = action.done
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        onClick = { if (!action.done) onExecute() },
+        onClick = { if (!isDone) onExecute() },
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (action.done)
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-            else
-                MaterialTheme.colorScheme.surface
+            containerColor = if (isDone)
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+            else MaterialTheme.colorScheme.surface
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = if (action.done) 0.dp else 1.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = if (isDone) 0.dp else 1.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 14.dp, top = 12.dp, bottom = 12.dp, end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Icon
-            Surface(
-                shape = CircleShape,
-                color = if (action.done) accentColor.copy(alpha = 0.06f) else accentColor.copy(alpha = 0.12f),
-                modifier = Modifier.size(40.dp)
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 14.dp, top = 12.dp, bottom = if (showQuickActions) 4.dp else 12.dp, end = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                    Icon(
-                        imageVector = if (action.done) Icons.Default.CheckCircle else icon,
-                        contentDescription = null,
-                        tint = if (action.done) MaterialTheme.colorScheme.tertiary else accentColor,
-                        modifier = Modifier.size(20.dp)
-                    )
+                // Icon
+                Surface(
+                    shape = CircleShape,
+                    color = if (isDone) accentColor.copy(alpha = 0.06f) else accentColor.copy(alpha = 0.12f),
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                        Icon(
+                            imageVector = if (isDone) Icons.Default.CheckCircle else icon,
+                            contentDescription = null,
+                            tint = if (isDone) MaterialTheme.colorScheme.tertiary else accentColor,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
-            }
 
-            Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(12.dp))
 
-            // Content
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = action.title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    color = if (action.done) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                    else MaterialTheme.colorScheme.onSurface,
-                    textDecoration = if (action.done) TextDecoration.LineThrough else TextDecoration.None
-                )
-                if (action.description.isNotBlank()) {
+                // Content
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = action.description,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (action.done) 0.4f else 0.7f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        text = action.title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = if (isDone) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        else MaterialTheme.colorScheme.onSurface,
+                        textDecoration = if (isDone) TextDecoration.LineThrough else TextDecoration.None
                     )
+                    if (action.description.isNotBlank()) {
+                        Text(
+                            text = action.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (isDone) 0.4f else 0.7f)
+                        )
+                    }
+                    // Metadata row
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        action.datetime?.let {
+                            Text(it.replace("T", " "), style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+                        }
+                        action.contact?.let {
+                            Text(it, style = MaterialTheme.typography.labelSmall, color = accentColor.copy(alpha = 0.7f))
+                        }
+                        action.capturedAt?.let { millis ->
+                            if (action.datetime != null || action.contact != null) {
+                                Text("·", style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f))
+                            }
+                            Text(
+                                text = formatRelativeTime(millis),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+                                letterSpacing = 0.3.sp
+                            )
+                        }
+                    }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    action.datetime?.let {
-                        Text(it.replace("T", " "), style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
-                    }
-                    action.contact?.let {
-                        Text(it, style = MaterialTheme.typography.labelSmall, color = accentColor.copy(alpha = 0.7f))
-                    }
+
+                // Type badge
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = accentColor.copy(alpha = if (isDone) 0.05f else 0.08f)
+                ) {
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = accentColor.copy(alpha = if (isDone) 0.4f else 0.8f),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
                 }
             }
 
-            // Action type label + checkbox
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Surface(shape = RoundedCornerShape(6.dp), color = accentColor.copy(alpha = if (action.done) 0.05f else 0.08f)) {
-                    Text(label, style = MaterialTheme.typography.labelSmall, color = accentColor.copy(alpha = if (action.done) 0.4f else 0.8f),
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
-                }
-                Checkbox(
-                    checked = action.done,
-                    onCheckedChange = { onToggleDone() },
-                    colors = CheckboxDefaults.colors(
-                        checkedColor = MaterialTheme.colorScheme.tertiary,
-                        uncheckedColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+            // Swipe hint + calendar shortcut
+            if (showQuickActions && !isDone) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 62.dp, end = 8.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "← mañana · hecho →",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.22f),
+                        letterSpacing = 0.5.sp,
+                        modifier = Modifier.weight(1f)
                     )
-                )
+
+                    // Calendar shortcut (only for non-calendar actions)
+                    if (action.type != ActionType.CALENDAR_EVENT && action.type != ActionType.REMINDER) {
+                        IconButton(
+                            onClick = onAddToCalendar,
+                            modifier = Modifier.size(32.dp),
+                            colors = IconButtonDefaults.iconButtonColors(
+                                contentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                            )
+                        ) {
+                            Icon(Icons.Default.CalendarMonth, contentDescription = "Añadir al calendario",
+                                modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
             }
         }
     }
@@ -519,15 +920,12 @@ private fun CalendarEventDialog(
         title = { Text(dialogTitle) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                // Title
                 OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Título") },
                     modifier = Modifier.fillMaxWidth(), singleLine = true, shape = RoundedCornerShape(12.dp))
 
-                // Description
                 OutlinedTextField(value = description, onValueChange = { description = it }, label = { Text("Descripción") },
                     modifier = Modifier.fillMaxWidth(), maxLines = 2, shape = RoundedCornerShape(12.dp))
 
-                // Calendar selector
                 if (calendars.size > 1) {
                     ExposedDropdownMenuBox(
                         expanded = calendarDropdownExpanded,
@@ -569,7 +967,6 @@ private fun CalendarEventDialog(
                     }
                 }
 
-                // Date & Time - clickable fields that open pickers
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = formatDateShort(date),
@@ -625,7 +1022,7 @@ private fun CalendarEventDialog(
     )
 }
 
-/** Format "2026-03-25" → "Mar 25, 2026" for display */
+/** Format "2026-03-25" → "25 mar 2026" for display */
 private fun formatDateShort(dateStr: String): String {
     return try {
         val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
@@ -644,7 +1041,7 @@ private fun actionIcon(type: ActionType): ImageVector = when (type) {
     ActionType.TODO -> Icons.Default.TaskAlt
     ActionType.MESSAGE -> Icons.Default.Message
     ActionType.CALL -> Icons.Default.Call
-    ActionType.NOTE -> Icons.Default.Notes
+    ActionType.NOTE -> Icons.Default.TaskAlt // Notes are now actionable tasks
 }
 
 @Composable
@@ -654,7 +1051,7 @@ private fun actionColor(type: ActionType): Color = when (type) {
     ActionType.TODO -> MaterialTheme.colorScheme.primary
     ActionType.MESSAGE -> MaterialTheme.colorScheme.secondary
     ActionType.CALL -> MaterialTheme.colorScheme.tertiary
-    ActionType.NOTE -> MaterialTheme.colorScheme.onSurfaceVariant
+    ActionType.NOTE -> MaterialTheme.colorScheme.primary
 }
 
 private fun actionLabel(type: ActionType): String = when (type) {
@@ -663,7 +1060,34 @@ private fun actionLabel(type: ActionType): String = when (type) {
     ActionType.TODO -> "Tarea"
     ActionType.MESSAGE -> "Mensaje"
     ActionType.CALL -> "Llamar"
-    ActionType.NOTE -> "Nota"
+    ActionType.NOTE -> "Tarea" // Notes display as tasks now
+}
+
+/**
+ * Formats a timestamp as a subtle relative/absolute string.
+ * Today → "14:32", yesterday → "ayer 14:32", older → "23 mar 14:32"
+ */
+private fun formatRelativeTime(millis: Long): String {
+    val now = Calendar.getInstance()
+    val then = Calendar.getInstance().apply { timeInMillis = millis }
+    val time = SimpleDateFormat("H:mm", Locale("es")).format(millis)
+
+    val nowDay = now.get(Calendar.DAY_OF_YEAR) + now.get(Calendar.YEAR) * 365
+    val thenDay = then.get(Calendar.DAY_OF_YEAR) + then.get(Calendar.YEAR) * 365
+    val diff = nowDay - thenDay
+
+    return when {
+        diff == 0 -> time
+        diff == 1 -> "ayer $time"
+        diff < 7 -> {
+            val day = SimpleDateFormat("EEE", Locale("es")).format(millis)
+            "$day $time"
+        }
+        else -> {
+            val date = SimpleDateFormat("d MMM", Locale("es")).format(millis)
+            "$date $time"
+        }
+    }
 }
 
 private fun formatDate(dateStr: String): String {

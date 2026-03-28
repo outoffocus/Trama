@@ -63,7 +63,7 @@ class MainActivity : ComponentActivity() {
     private fun syncSettingsToWatch() {
         CoroutineScope(Dispatchers.IO).launch {
             val settings = SettingsDataStore(applicationContext)
-            val kwList = settings.keywords.first()
+            val kwList = settings.customKeywords.first()
             SettingsSyncer(applicationContext).syncSettings(kwList)
         }
     }

@@ -4,7 +4,24 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class SyncPayload(
-    val entries: List<SyncEntry>
+    val entries: List<SyncEntry> = emptyList(),
+    val recordings: List<SyncRecording> = emptyList()
+)
+
+/**
+ * Sync status changes (completed/deleted) from phone to watch.
+ * Matches entries by createdAt + text since IDs differ across devices.
+ */
+@Serializable
+data class StatusSyncPayload(
+    val completed: List<StatusSyncEntry> = emptyList(),
+    val deleted: List<StatusSyncEntry> = emptyList()
+)
+
+@Serializable
+data class StatusSyncEntry(
+    val createdAt: Long,
+    val text: String
 )
 
 @Serializable
@@ -54,6 +71,31 @@ data class SyncEntry(
             cleanText = entry.cleanText,
             dueDate = entry.dueDate,
             priority = entry.priority
+        )
+    }
+}
+
+@Serializable
+data class SyncRecording(
+    val transcription: String,
+    val durationSeconds: Int,
+    val source: String,
+    val createdAt: Long
+) {
+    fun toRecording(): Recording = Recording(
+        transcription = transcription,
+        durationSeconds = durationSeconds,
+        source = Source.valueOf(source),
+        createdAt = createdAt,
+        isSynced = true
+    )
+
+    companion object {
+        fun fromRecording(recording: Recording): SyncRecording = SyncRecording(
+            transcription = recording.transcription,
+            durationSeconds = recording.durationSeconds,
+            source = recording.source.name,
+            createdAt = recording.createdAt
         )
     }
 }

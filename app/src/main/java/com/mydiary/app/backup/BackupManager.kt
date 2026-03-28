@@ -24,9 +24,10 @@ object BackupManager {
 
     @Serializable
     data class Backup(
-        val version: Int = 1,
+        val version: Int = 2,
         val exportedAt: Long = System.currentTimeMillis(),
-        val entries: List<BackupEntry>
+        val entries: List<BackupEntry>,
+        val recordings: List<BackupRecording> = emptyList()
     )
 
     @Serializable
@@ -50,23 +51,40 @@ object BackupManager {
         val isManual: Boolean = false
     )
 
+    @Serializable
+    data class BackupRecording(
+        val title: String? = null,
+        val transcription: String,
+        val summary: String? = null,
+        val keyPoints: String? = null,
+        val durationSeconds: Int,
+        val source: String,
+        val createdAt: Long,
+        val processingStatus: String = "PENDING",
+        val processedLocally: Boolean = false
+    )
+
     /**
-     * Export all entries to JSON and write to the given URI.
+     * Export all entries + recordings to JSON and write to the given URI.
      * @return number of entries exported
      */
     suspend fun exportToUri(context: Context, uri: Uri, repository: DiaryRepository): Int {
         return withContext(Dispatchers.IO) {
             val entries = repository.getAll().first()
             val backupEntries = entries.map { it.toBackupEntry() }
-            val backup = Backup(entries = backupEntries)
+
+            val recordings = try { repository.getAllRecordingsOnce() } catch (_: Exception) { emptyList() }
+            val backupRecordings = recordings.map { it.toBackupRecording() }
+
+            val backup = Backup(entries = backupEntries, recordings = backupRecordings)
             val jsonStr = json.encodeToString(backup)
 
             context.contentResolver.openOutputStream(uri)?.use { stream ->
                 stream.write(jsonStr.toByteArray(Charsets.UTF_8))
             } ?: throw Exception("Cannot open output stream")
 
-            Log.i(TAG, "Exported ${entries.size} entries to $uri")
-            entries.size
+            Log.i(TAG, "Exported ${entries.size} entries + ${recordings.size} recordings to $uri")
+            entries.size + recordings.size
         }
     }
 
@@ -96,7 +114,16 @@ object BackupManager {
                 imported++
             }
 
-            Log.i(TAG, "Imported $imported entries, skipped $skipped duplicates")
+            // Import recordings
+            var importedRec = 0
+            for (rec in backup.recordings) {
+                try {
+                    repository.insertRecording(rec.toRecording())
+                    importedRec++
+                } catch (_: Exception) { /* skip duplicates */ }
+            }
+
+            Log.i(TAG, "Imported $imported entries (skipped $skipped), $importedRec recordings")
             Pair(imported, skipped)
         }
     }
@@ -128,6 +155,31 @@ object BackupManager {
         completedAt = completedAt,
         priority = priority,
         isManual = isManual
+    )
+
+    private fun com.mydiary.shared.model.Recording.toBackupRecording() = BackupRecording(
+        title = title,
+        transcription = transcription,
+        summary = summary,
+        keyPoints = keyPoints,
+        durationSeconds = durationSeconds,
+        source = source.name,
+        createdAt = createdAt,
+        processingStatus = processingStatus,
+        processedLocally = processedLocally
+    )
+
+    private fun BackupRecording.toRecording() = com.mydiary.shared.model.Recording(
+        title = title,
+        transcription = transcription,
+        summary = summary,
+        keyPoints = keyPoints,
+        durationSeconds = durationSeconds,
+        source = try { com.mydiary.shared.model.Source.valueOf(source) }
+                 catch (_: Exception) { com.mydiary.shared.model.Source.PHONE },
+        createdAt = createdAt,
+        processingStatus = processingStatus,
+        processedLocally = processedLocally
     )
 
     private fun BackupEntry.toDiaryEntry() = DiaryEntry(

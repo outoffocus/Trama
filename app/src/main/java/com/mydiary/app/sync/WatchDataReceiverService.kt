@@ -9,11 +9,15 @@ import com.google.android.gms.wearable.WearableListenerService
 import com.mydiary.app.service.ServiceController
 import com.mydiary.app.ui.DatabaseProvider
 import com.mydiary.shared.data.DiaryRepository
+import com.mydiary.shared.model.Recording
+import com.mydiary.shared.model.RecordingStatus
 import com.mydiary.shared.model.SyncPayload
+import com.mydiary.app.summary.RecordingProcessor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 
 /**
@@ -27,6 +31,7 @@ class WatchDataReceiverService : WearableListenerService() {
         private const val TAG = "WatchDataReceiver"
         private const val SYNC_PATH = "/mydiary/sync"
         private const val MIC_PATH = "/mydiary/mic"
+        private const val SYNC_REQUEST_PATH = "/mydiary/request-full-sync"
         private const val CMD_PAUSE = "PAUSE"
         private const val CMD_RESUME = "RESUME"
     }
@@ -49,24 +54,32 @@ class WatchDataReceiverService : WearableListenerService() {
     }
 
     override fun onMessageReceived(messageEvent: MessageEvent) {
-        if (messageEvent.path != MIC_PATH) return
+        when (messageEvent.path) {
+            MIC_PATH -> {
+                val command = String(messageEvent.data)
+                Log.i(TAG, "Mic command from watch: $command")
 
-        val command = String(messageEvent.data)
-        Log.i(TAG, "Mic command from watch: $command")
-
-        when (command) {
-            CMD_PAUSE -> {
-                // Watch is listening → stop phone service
-                if (ServiceController.isRunning.value) {
-                    ServiceController.stopByWatch(applicationContext)
-                    Log.i(TAG, "Phone service paused (watch is active)")
+                when (command) {
+                    CMD_PAUSE -> {
+                        if (ServiceController.isRunning.value) {
+                            ServiceController.stopByWatch(applicationContext)
+                            Log.i(TAG, "Phone service paused (watch is active)")
+                        }
+                    }
+                    CMD_RESUME -> {
+                        if (ServiceController.shouldBeRunning(applicationContext)) {
+                            ServiceController.start(applicationContext)
+                            Log.i(TAG, "Phone service resumed (watch released)")
+                        }
+                    }
                 }
             }
-            CMD_RESUME -> {
-                // Watch stopped → resume phone service if user had it enabled
-                if (ServiceController.shouldBeRunning(applicationContext)) {
-                    ServiceController.start(applicationContext)
-                    Log.i(TAG, "Phone service resumed (watch released)")
+            SYNC_REQUEST_PATH -> {
+                Log.i(TAG, "Full sync requested by watch")
+                scope.launch {
+                    val repository = DatabaseProvider.getRepository(applicationContext)
+                    val syncer = PhoneToWatchSyncer(applicationContext, repository)
+                    syncer.syncAllToWatch()
                 }
             }
         }
@@ -76,15 +89,39 @@ class WatchDataReceiverService : WearableListenerService() {
         scope.launch {
             try {
                 val payload = Json.decodeFromString<SyncPayload>(json)
-                var inserted = 0
+
+                // Sync diary entries
+                var insertedEntries = 0
                 for (syncEntry in payload.entries) {
                     val entry = syncEntry.toDiaryEntry()
                     if (!repository.existsByCreatedAtAndText(entry.createdAt, entry.text)) {
                         repository.insert(entry)
-                        inserted++
+                        insertedEntries++
                     }
                 }
-                Log.i(TAG, "Received ${payload.entries.size} entries from watch, inserted $inserted new")
+
+                // Sync recordings and process them with Gemini
+                var insertedRecordings = 0
+                for (syncRecording in payload.recordings) {
+                    if (!repository.existsRecordingByCreatedAt(syncRecording.createdAt)) {
+                        val recording = syncRecording.toRecording()
+                        val recordingId = repository.insertRecording(recording)
+                        insertedRecordings++
+                        Log.i(TAG, "Received recording from watch (id=$recordingId), processing...")
+
+                        // Process with Gemini (or local fallback)
+                        try {
+                            val processor = RecordingProcessor(applicationContext)
+                            processor.process(recordingId, repository)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to process recording $recordingId", e)
+                            repository.updateRecordingStatus(recordingId, RecordingStatus.FAILED)
+                        }
+                    }
+                }
+
+                Log.i(TAG, "Received from watch: ${payload.entries.size} entries (inserted $insertedEntries), " +
+                        "${payload.recordings.size} recordings (inserted $insertedRecordings)")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to process sync data", e)
             }

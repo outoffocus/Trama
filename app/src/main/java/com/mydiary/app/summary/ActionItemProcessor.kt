@@ -25,12 +25,6 @@ import java.util.Locale
  */
 class ActionItemProcessor(private val context: Context) {
 
-    companion object {
-        private const val TAG = "ActionItemProcessor"
-        private val json = Json { ignoreUnknownKeys = true }
-        private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-    }
-
     /**
      * Process a saved entry: extract action metadata via Gemini and update DB.
      * Should be called from a coroutine on Dispatchers.IO.
@@ -45,7 +39,7 @@ class ActionItemProcessor(private val context: Context) {
                 processWithRules(text)
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Gemini processing failed, using rules", e)
+            Log.e(TAG, "Gemini FAILED: ${e.javaClass.simpleName}: ${e.message}", e)
             processWithRules(text)
         }
 
@@ -58,6 +52,166 @@ class ActionItemProcessor(private val context: Context) {
             confidence = result.confidence
         )
         Log.i(TAG, "Processed entry $entryId: '${result.cleanText}' [${result.actionType}]")
+
+        // Check for duplicates against existing pending entries
+        try {
+            checkForDuplicates(entryId, result.cleanText, repository)
+        } catch (e: Exception) {
+            Log.w(TAG, "Duplicate check failed", e)
+        }
+    }
+
+    /**
+     * Compare new entry against existing pending entries using Gemini.
+     * If a semantic duplicate is found, mark the new entry with duplicateOfId.
+     */
+    private suspend fun checkForDuplicates(entryId: Long, cleanText: String, repository: DiaryRepository) {
+        val existing = repository.getRecentPendingForDedup()
+            .filter { it.id != entryId } // exclude self
+
+        if (existing.isEmpty()) return
+
+        val apiKey = getApiKey()
+        if (apiKey.isNullOrBlank()) {
+            // Rule-based fallback: simple text similarity
+            checkDuplicatesWithRules(entryId, cleanText, existing, repository)
+            return
+        }
+
+        // Build list of existing entries for comparison
+        val entriesList = existing.take(20).joinToString("\n") { entry ->
+            "${entry.id}: ${entry.displayText}"
+        }
+
+        val prompt = """Compara esta nueva tarea con las existentes y dime si es un DUPLICADO semántico.
+Responde SOLO con JSON: {"duplicateOfId": ID_NUMBER o null}
+
+Nueva tarea: "$cleanText"
+
+Tareas existentes:
+$entriesList
+
+Reglas:
+- DUPLICADO = misma acción con las mismas personas/objetos, aunque con palabras distintas
+  Ejemplo: "Llamar al dentista" y "Telefonear al dentista" → duplicado
+  Ejemplo: "Comprar leche" y "Comprar pan" → NO duplicado (objetos diferentes)
+  Ejemplo: "Ir al médico el martes" y "Ir al médico" → duplicado (misma acción, fecha extra no cambia)
+- Si no hay duplicado, responde {"duplicateOfId": null}"""
+
+        try {
+            val model = GenerativeModel(
+                modelName = "gemini-2.5-flash",
+                apiKey = apiKey,
+                generationConfig = generationConfig { temperature = 0.1f }
+            )
+            val response = model.generateContent(prompt)
+            val responseText = response.text?.trim() ?: run {
+                Log.w(TAG, "Gemini dedup: empty response, falling back to rules")
+                checkDuplicatesWithRules(entryId, cleanText, existing, repository)
+                return
+            }
+
+            Log.d(TAG, "Gemini dedup response: $responseText")
+
+            val jsonStr = responseText
+                .removePrefix("```json").removePrefix("```")
+                .removeSuffix("```").trim()
+
+            @Serializable
+            data class DedupResult(val duplicateOfId: Long? = null)
+
+            val result = json.decodeFromString<DedupResult>(jsonStr)
+            if (result.duplicateOfId != null) {
+                val validId = existing.any { it.id == result.duplicateOfId }
+                if (validId) {
+                    repository.markDuplicate(entryId, result.duplicateOfId)
+                    val original = existing.first { it.id == result.duplicateOfId }
+                    Log.i(TAG, "Gemini duplicate: '$cleanText' ≈ '${original.displayText}' (id=${result.duplicateOfId})")
+                } else {
+                    Log.w(TAG, "Gemini returned invalid ID ${result.duplicateOfId}, trying rules")
+                    checkDuplicatesWithRules(entryId, cleanText, existing, repository)
+                }
+            } else {
+                Log.d(TAG, "Gemini says no duplicate for '$cleanText'")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Gemini dedup failed, trying rules", e)
+            checkDuplicatesWithRules(entryId, cleanText, existing, repository)
+        }
+    }
+
+    companion object {
+        private const val TAG = "ActionItemProcessor"
+        private val json = Json { ignoreUnknownKeys = true }
+        private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+
+        /** Spanish stopwords — excluded from similarity comparison */
+        private val STOPWORDS = setOf(
+            "a", "al", "con", "de", "del", "el", "en", "es", "la", "las", "lo", "los",
+            "mi", "me", "no", "o", "para", "por", "que", "se", "su", "un", "una", "y"
+        )
+
+        /** Synonym groups — words in the same group are treated as equal */
+        private val SYNONYMS = listOf(
+            setOf("llamar", "hablar", "telefonear", "contactar"),
+            setOf("comprar", "adquirir", "conseguir", "pillar"),
+            setOf("enviar", "mandar", "escribir"),
+            setOf("ir", "acudir", "pasarse"),
+            setOf("revisar", "mirar", "comprobar", "verificar", "chequear"),
+            setOf("recordar", "acordarse", "acordarme"),
+            setOf("decir", "decirle", "comentar", "comentarle", "avisar")
+        )
+
+        /** Normalize a word: map synonyms to a canonical form */
+        private fun normalize(word: String): String {
+            for (group in SYNONYMS) {
+                if (word in group) return group.first()
+            }
+            return word
+        }
+
+        /** Strip accents: á→a, é→e, í→i, ó→o, ú→u, ñ stays */
+        private fun stripAccents(word: String): String {
+            return word
+                .replace('á', 'a').replace('é', 'e').replace('í', 'i')
+                .replace('ó', 'o').replace('ú', 'u').replace('ü', 'u')
+        }
+
+        /** Extract meaningful words: lowercase, strip accents, remove stopwords, normalize synonyms */
+        private fun meaningfulWords(text: String): Set<String> {
+            return text.lowercase()
+                .split("\\s+".toRegex())
+                .map { stripAccents(it) }
+                .filter { it.length > 1 && it !in STOPWORDS }
+                .map { normalize(it) }
+                .toSet()
+        }
+    }
+
+    /**
+     * Rule-based duplicate detection: stopword filtering + synonym normalization.
+     */
+    private suspend fun checkDuplicatesWithRules(
+        entryId: Long, cleanText: String,
+        existing: List<com.mydiary.shared.model.DiaryEntry>,
+        repository: DiaryRepository
+    ) {
+        val newWords = meaningfulWords(cleanText)
+        if (newWords.size < 2) return
+
+        for (entry in existing) {
+            val existingWords = meaningfulWords(entry.displayText)
+            if (existingWords.size < 2) continue
+
+            val overlap = newWords.intersect(existingWords).size.toFloat()
+            val similarity = overlap / minOf(newWords.size, existingWords.size)
+
+            if (similarity >= 0.65f) {
+                repository.markDuplicate(entryId, entry.id)
+                Log.i(TAG, "Rule-based duplicate: '$cleanText' ≈ '${entry.displayText}' (sim=${"%.2f".format(similarity)})")
+                return
+            }
+        }
     }
 
     private suspend fun processWithGemini(text: String, apiKey: String): ProcessingResult {
@@ -94,7 +248,7 @@ Nota de voz: "$text"
 """
 
         val model = GenerativeModel(
-            modelName = "gemini-2.0-flash",
+            modelName = "gemini-2.5-flash",
             apiKey = apiKey,
             generationConfig = generationConfig {
                 temperature = 0.1f
@@ -102,12 +256,13 @@ Nota de voz: "$text"
             }
         )
 
+        Log.d(TAG, "Calling Gemini (gemini-2.5-flash) with key=${apiKey.take(8)}...${apiKey.takeLast(4)}")
         val response = model.generateContent(prompt)
         val responseText = response.text
             ?.replace("```json", "")?.replace("```", "")?.trim()
-            ?: throw Exception("Empty response")
+            ?: throw Exception("Empty Gemini response (candidates=${response.candidates.size})")
 
-        Log.d(TAG, "Gemini response: $responseText")
+        Log.d(TAG, "Gemini OK: $responseText")
 
         val parsed = json.decodeFromString<GeminiProcessingResponse>(responseText)
 

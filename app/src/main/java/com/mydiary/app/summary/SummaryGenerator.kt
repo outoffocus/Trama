@@ -12,7 +12,7 @@ import java.util.Locale
 
 /**
  * Generates daily summaries using Google Gemini (cloud).
- * Uses gemini-2.0-flash (free tier, fast, cheap).
+ * Uses gemini-2.5-flash (free tier, fast, cheap).
  * Falls back to rule-based summary if API key is missing or call fails.
  *
  * API key: get one free at https://aistudio.google.com/apikey
@@ -66,7 +66,7 @@ class SummaryGenerator(private val context: Context) {
         val prompt = buildPrompt(entries, dateStr)
 
         val model = GenerativeModel(
-            modelName = "gemini-2.0-flash",
+            modelName = "gemini-2.5-flash",
             apiKey = apiKey,
             generationConfig = generationConfig {
                 temperature = 0.3f
@@ -78,7 +78,7 @@ class SummaryGenerator(private val context: Context) {
         val responseText = response.text ?: throw Exception("Empty response from Gemini")
 
         Log.i(TAG, "Gemini response: ${responseText.take(200)}...")
-        return parseGeminiResponse(responseText, dateStr, entries.size)
+        return parseGeminiResponse(responseText, dateStr, entries.size, entries)
     }
 
     private fun buildPrompt(entries: List<DiaryEntry>, dateStr: String): String {
@@ -158,7 +158,10 @@ $entriesText"""
         return CalendarHelper.formatEventsForPrompt(todayEvents, tomorrowEvents, tomorrowStr)
     }
 
-    private fun parseGeminiResponse(response: String, dateStr: String, entryCount: Int): DailySummary {
+    private fun parseGeminiResponse(
+        response: String, dateStr: String, entryCount: Int,
+        entries: List<DiaryEntry>
+    ): DailySummary {
         // Extract JSON from response (might have markdown code blocks)
         val jsonStr = response
             .replace("```json", "").replace("```", "")
@@ -166,11 +169,20 @@ $entriesText"""
 
         return try {
             val parsed = json.decodeFromString<GeminiResponse>(jsonStr)
+            val actions = parsed.actions.map { geminiAction ->
+                val action = geminiAction.toSuggestedAction()
+                // Match action to source entries by text similarity
+                val matched = matchActionToEntries(action.title, entries)
+                val earliestCaptured = matched.firstOrNull()?.let { id ->
+                    entries.firstOrNull { it.id == id }?.createdAt
+                }
+                action.copy(entryIds = matched, capturedAt = earliestCaptured)
+            }
             DailySummary(
                 date = dateStr,
                 narrative = parsed.narrative,
                 groups = parsed.groups?.map { it.toEntryGroup() } ?: emptyList(),
-                actions = parsed.actions.map { it.toSuggestedAction() },
+                actions = actions,
                 entryCount = entryCount
             )
         } catch (e: Exception) {
@@ -183,6 +195,26 @@ $entriesText"""
                 entryCount = entryCount
             )
         }
+    }
+
+    /**
+     * Match a suggested action title to source diary entries by word overlap.
+     * Returns list of matching entry IDs (best match first).
+     */
+    private fun matchActionToEntries(actionTitle: String, entries: List<DiaryEntry>): List<Long> {
+        val actionWords = actionTitle.lowercase().split("\\s+".toRegex()).filter { it.length > 2 }.toSet()
+        if (actionWords.isEmpty()) return emptyList()
+
+        return entries
+            .map { entry ->
+                val entryWords = entry.displayText.lowercase().split("\\s+".toRegex()).filter { it.length > 2 }.toSet()
+                val overlap = actionWords.intersect(entryWords).size.toFloat() / actionWords.size
+                entry.id to overlap
+            }
+            .filter { it.second >= 0.4f } // At least 40% word overlap
+            .sortedByDescending { it.second }
+            .take(3) // Max 3 matched entries per action
+            .map { it.first }
     }
 
     /**
@@ -219,77 +251,73 @@ $entriesText"""
         }
 
         val actions = mutableListOf<SuggestedAction>()
-        var hasCalendarEvent = false
 
         for (entry in entries) {
             val text = entry.text.lowercase()
+            val displayText = entry.displayText.take(80)
+            val ts = entry.createdAt
+            val ids = listOf(entry.id)
 
-            // Detect calendar events
-            if (text.contains("cita") || text.contains("médico") || text.contains("reunión") ||
+            // Each entry generates ONE action — most specific match wins
+            when {
+                // Calendar events: explicit appointments with time
+                text.contains("cita") || text.contains("reunión") ||
                 (text.contains("a las ") && (text.contains("mañana") || text.contains("lunes") ||
                     text.contains("martes") || text.contains("miércoles") || text.contains("jueves") ||
-                    text.contains("viernes")))) {
-                val datetime = extractDateTimeHint(text, dateStr)
-                actions.add(
-                    SuggestedAction(
-                        type = ActionType.CALENDAR_EVENT,
-                        title = entry.text.take(80),
-                        description = "Capturado a las ${timeFormat.format(Date(entry.createdAt))}",
-                        datetime = datetime
-                    )
-                )
-                hasCalendarEvent = true
-            }
+                    text.contains("viernes"))) -> {
+                    actions.add(SuggestedAction(
+                        type = ActionType.CALENDAR_EVENT, title = displayText,
+                        datetime = extractDateTimeHint(text, dateStr),
+                        entryIds = ids, capturedAt = ts
+                    ))
+                }
 
-            // Detect calls
-            if (text.contains("llamar") || text.contains("llama a") || text.contains("call")) {
-                val contact = extractAfterWord(entry.text, "llama a", "llamar a", "llamar", "call", "a")
-                actions.add(
-                    SuggestedAction(
-                        type = ActionType.CALL,
-                        title = "Llamar a $contact",
-                        contact = contact
-                    )
-                )
-            }
+                // Calls
+                text.contains("llamar") || text.contains("llama a") || text.contains("call") -> {
+                    val contact = extractAfterWord(entry.text, "llama a", "llamar a", "llamar", "call", "a")
+                    actions.add(SuggestedAction(
+                        type = ActionType.CALL, title = "Llamar a $contact",
+                        contact = contact, entryIds = ids, capturedAt = ts
+                    ))
+                }
 
-            // Detect reminders
-            if ((text.contains("mañana") || text.contains("tomorrow") ||
-                    text.contains("recordar") || text.contains("no olvidar")) && !hasCalendarEvent) {
-                actions.add(
-                    SuggestedAction(
-                        type = ActionType.REMINDER,
-                        title = entry.text.take(80),
-                        description = "Mencionado como pendiente"
-                    )
-                )
-            }
+                // Messages
+                text.contains("escríbele") || text.contains("dile a") ||
+                text.contains("mándale") || text.contains("envíale") -> {
+                    val contact = extractAfterWord(entry.text, "escríbele a", "dile a", "mándale a", "envíale a")
+                    actions.add(SuggestedAction(
+                        type = ActionType.MESSAGE, title = "Mensaje a $contact",
+                        description = displayText, contact = contact,
+                        entryIds = ids, capturedAt = ts
+                    ))
+                }
 
-            // Detect tasks
-            if (text.contains("hay que") || text.contains("tengo que") ||
+                // Reminders (date-related without specific action type)
+                text.contains("mañana") || text.contains("tomorrow") ||
+                text.contains("recordar") || text.contains("no olvidar") -> {
+                    actions.add(SuggestedAction(
+                        type = ActionType.REMINDER, title = displayText,
+                        entryIds = ids, capturedAt = ts
+                    ))
+                }
+
+                // Tasks
+                text.contains("hay que") || text.contains("tengo que") ||
                 text.contains("necesito") || text.contains("pendiente") ||
-                text.contains("debería") || text.contains("falta")) {
-                actions.add(
-                    SuggestedAction(
-                        type = ActionType.TODO,
-                        title = entry.text.take(80),
-                        description = "Capturado a las ${timeFormat.format(Date(entry.createdAt))}"
-                    )
-                )
-            }
+                text.contains("debería") || text.contains("falta") -> {
+                    actions.add(SuggestedAction(
+                        type = ActionType.TODO, title = displayText,
+                        entryIds = ids, capturedAt = ts
+                    ))
+                }
 
-            // Detect messages
-            if (text.contains("escríbele") || text.contains("dile a") ||
-                text.contains("mándale") || text.contains("envíale")) {
-                val contact = extractAfterWord(entry.text, "escríbele a", "dile a", "mándale a", "envíale a")
-                actions.add(
-                    SuggestedAction(
-                        type = ActionType.MESSAGE,
-                        title = "Mensaje a $contact",
-                        description = entry.text.take(80),
-                        contact = contact
-                    )
-                )
+                // Fallback: generic note
+                else -> {
+                    actions.add(SuggestedAction(
+                        type = ActionType.TODO, title = displayText,
+                        entryIds = ids, capturedAt = ts
+                    ))
+                }
             }
         }
 

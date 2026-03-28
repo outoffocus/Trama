@@ -66,16 +66,6 @@ class SettingsDataStore(private val context: Context) {
         }
     }
 
-    /**
-     * Flat keyword list for sync to watch (custom keywords only).
-     */
-    val keywords: Flow<List<String>> = context.dataStore.data.map { prefs ->
-        val customStr = prefs[CUSTOM_KEYWORDS] ?: ""
-        customStr.split(",").filter { it.isNotBlank() }
-            .map { it.trim().lowercase() }
-            .sortedByDescending { it.length }
-    }
-
     val summaryEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[SUMMARY_ENABLED] ?: true
     }
@@ -91,16 +81,6 @@ class SettingsDataStore(private val context: Context) {
     val backupHour: Flow<Int> = context.dataStore.data.map { prefs ->
         prefs[BACKUP_HOUR] ?: DEFAULT_BACKUP_HOUR
     }
-
-    val keywordMappings: Flow<Map<String, String>> = context.dataStore.data.map { prefs ->
-        parseMappings(prefs[KEYWORD_MAPPINGS] ?: DEFAULT_MAPPINGS)
-    }
-
-    val geminiEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[GEMINI_ENABLED] ?: false
-    }
-
-    val keywords: Flow<List<String>> = keywordMappings.map { it.keys.toList() }
 
     suspend fun setRecordingDuration(seconds: Int) {
         context.dataStore.edit { it[RECORDING_DURATION] = seconds }
