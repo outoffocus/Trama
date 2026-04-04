@@ -32,6 +32,10 @@ dependencies {
 
     // Coroutines
     implementation(libs.coroutines.core)
+    implementation(libs.coroutines.play.services)
+
+    // Wearable (for MicCoordinator)
+    implementation(libs.play.services.wearable)
 
     // Serialization (for Data Layer sync payloads)
     implementation(libs.serialization.json)

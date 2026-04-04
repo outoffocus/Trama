@@ -87,6 +87,11 @@ class DiaryRepository(
     fun getByRecordingId(recordingId: Long): Flow<List<DiaryEntry>> =
         dao.getByRecordingId(recordingId).distinctUntilChanged()
 
+    suspend fun getByRecordingIdOnce(recordingId: Long): List<DiaryEntry> =
+        dao.getByRecordingIdOnce(recordingId)
+
+    suspend fun deleteByRecordingId(recordingId: Long) = dao.deleteByRecordingId(recordingId)
+
     // ── Recording ──
 
     fun getAllRecordings(): Flow<List<Recording>> =
@@ -115,8 +120,8 @@ class DiaryRepository(
 
     suspend fun updateRecordingResult(
         id: Long, title: String, summary: String, keyPoints: String?, status: String,
-        processedLocally: Boolean = false
-    ) = recordingDao?.updateProcessingResult(id, title, summary, keyPoints, status, processedLocally)
+        processedLocally: Boolean = false, processedBy: String? = null
+    ) = recordingDao?.updateProcessingResult(id, title, summary, keyPoints, status, processedLocally, processedBy)
 
     fun recordingCount(): Flow<Int> =
         recordingDao?.count()?.distinctUntilChanged()

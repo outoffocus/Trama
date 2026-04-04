@@ -16,6 +16,7 @@ data class Recording(
     val createdAt: Long = System.currentTimeMillis(),
     val processingStatus: String = RecordingStatus.PENDING,
     val processedLocally: Boolean = false,
+    val processedBy: String? = null, // "CLOUD", "NANO", "LOCAL"
     val isSynced: Boolean = false
 )
 

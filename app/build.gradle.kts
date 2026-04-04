@@ -56,6 +56,10 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
@@ -84,8 +88,12 @@ dependencies {
     // Wearable Data Layer (for watch sync)
     implementation(libs.play.services.wearable)
 
-    // Google Generative AI (Gemini for daily summary)
+    // Google Generative AI (Gemini cloud for daily summary)
     implementation(libs.generativeai)
+
+    // On-device LLM: MediaPipe (.task files) + LiteRT-LM (.litertlm files)
+    implementation(libs.mediapipe.tasks.genai)
+    implementation(libs.litertlm.android)
 
     // WorkManager (scheduled summary)
     implementation(libs.work.runtime.ktx)
@@ -99,6 +107,9 @@ dependencies {
 
     // Testing
     testImplementation(libs.junit)
+    testImplementation(libs.mockk)
+    testImplementation(libs.coroutines.test)
+    testImplementation(libs.serialization.json)
     androidTestImplementation(libs.androidx.test.ext)
     androidTestImplementation(libs.espresso.core)
 }

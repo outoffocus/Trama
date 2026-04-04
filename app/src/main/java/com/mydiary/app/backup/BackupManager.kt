@@ -61,7 +61,8 @@ object BackupManager {
         val source: String,
         val createdAt: Long,
         val processingStatus: String = "PENDING",
-        val processedLocally: Boolean = false
+        val processedLocally: Boolean = false,
+        val processedBy: String? = null
     )
 
     /**
@@ -166,7 +167,8 @@ object BackupManager {
         source = source.name,
         createdAt = createdAt,
         processingStatus = processingStatus,
-        processedLocally = processedLocally
+        processedLocally = processedLocally,
+        processedBy = processedBy
     )
 
     private fun BackupRecording.toRecording() = com.mydiary.shared.model.Recording(
@@ -179,7 +181,8 @@ object BackupManager {
                  catch (_: Exception) { com.mydiary.shared.model.Source.PHONE },
         createdAt = createdAt,
         processingStatus = processingStatus,
-        processedLocally = processedLocally
+        processedLocally = processedLocally,
+        processedBy = processedBy
     )
 
     private fun BackupEntry.toDiaryEntry() = DiaryEntry(

@@ -15,9 +15,9 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
+import com.mydiary.app.NotificationConfig
 import com.mydiary.app.R
-import com.mydiary.app.summary.RecordingProcessor
-import com.mydiary.app.ui.DatabaseProvider
+import com.mydiary.shared.data.DatabaseProvider
 import com.mydiary.app.MainActivity
 import com.mydiary.shared.model.Recording
 import com.mydiary.shared.model.Source
@@ -37,8 +37,8 @@ class RecordingService : LifecycleService() {
 
     companion object {
         private const val TAG = "RecordingService"
-        private const val CHANNEL_ID = "mydiary_recording"
-        private const val NOTIFICATION_ID = 2
+        private const val CHANNEL_ID = NotificationConfig.CHANNEL_RECORDING
+        private const val NOTIFICATION_ID = NotificationConfig.ID_RECORDING
         const val ACTION_START = "com.mydiary.RECORD_START"
         const val ACTION_STOP = "com.mydiary.RECORD_STOP"
     }
@@ -125,7 +125,8 @@ class RecordingService : LifecycleService() {
         val elapsed = ((System.currentTimeMillis() - startTimeMs) / 1000).toInt()
 
         if (textToSave.isNotBlank()) {
-            lifecycleScope.launch(Dispatchers.IO) {
+            // Save synchronously before stopping — must complete before service dies
+            kotlinx.coroutines.runBlocking(Dispatchers.IO) {
                 val repository = DatabaseProvider.getRepository(applicationContext)
                 val recordingId = repository.insertRecording(
                     Recording(
@@ -138,8 +139,8 @@ class RecordingService : LifecycleService() {
                 RecordingState.notifySaved(recordingId)
                 Log.i(TAG, "Recording saved (id=$recordingId, ${elapsed}s)")
 
-                // Process with Gemini in background
-                RecordingProcessor(applicationContext).process(recordingId, repository)
+                // Enqueue processing via WorkManager — survives service destruction
+                com.mydiary.app.summary.RecordingProcessorWorker.enqueue(applicationContext, recordingId)
             }
         }
 

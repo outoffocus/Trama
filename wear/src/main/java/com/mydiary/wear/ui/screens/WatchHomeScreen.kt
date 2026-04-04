@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.runtime.Composable
@@ -45,9 +46,16 @@ fun WatchHomeScreen(
 ) {
     val context = LocalContext.current
     val serviceRunning by WatchServiceController.isRunning.collectAsState()
+    val phoneActive by WatchServiceController.isPhoneActive.collectAsState()
 
     val isRecording by RecordingController.isRecording.collectAsState()
     val elapsedSeconds by RecordingController.elapsedSeconds.collectAsState()
+
+    val teal = Color(0xFF00897B)
+    val recRed = Color(0xFFD32F2F)
+    val phoneBlue = Color(0xFF1E88E5)
+    val surface = Color(0xFF2C2C2C)
+    val mutedIcon = Color(0xFF888888)
 
     ScalingLazyColumn(
         modifier = Modifier.fillMaxSize()
@@ -81,13 +89,8 @@ fun WatchHomeScreen(
             }
         }
 
-        // ── Record + Mic: two buttons side by side ──
+        // ── 3 buttons: Keyword | Record | Transfer ──
         item {
-            val teal = Color(0xFF00897B)
-            val recRed = Color(0xFFD32F2F)
-            val surface = Color(0xFF2C2C2C)
-            val mutedIcon = Color(0xFF888888)
-
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -95,17 +98,17 @@ fun WatchHomeScreen(
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Mic toggle (circle, primary — left)
+                // 1. Keyword toggle (left)
                 Button(
                     onClick = {
-                        if (isRecording) return@Button
+                        if (phoneActive) return@Button
                         if (serviceRunning) {
                             WatchServiceController.stopByUser(context)
                         } else {
                             WatchServiceController.start(context)
                         }
                     },
-                    modifier = Modifier.size(52.dp),
+                    modifier = Modifier.size(46.dp),
                     colors = ButtonDefaults.buttonColors(
                         backgroundColor = if (serviceRunning) teal else surface
                     )
@@ -113,24 +116,24 @@ fun WatchHomeScreen(
                     Icon(
                         imageVector = if (serviceRunning) Icons.Default.Mic else Icons.Default.MicOff,
                         contentDescription = if (serviceRunning) "Detener escucha" else "Escuchar",
-                        modifier = Modifier.size(24.dp),
+                        modifier = Modifier.size(22.dp),
                         tint = if (serviceRunning) Color.White else mutedIcon
                     )
                 }
 
-                Spacer(modifier = Modifier.width(14.dp))
+                Spacer(modifier = Modifier.width(8.dp))
 
-                // Record button (smaller, secondary — right)
+                // 2. Record toggle (center)
                 Button(
                     onClick = {
+                        if (phoneActive) return@Button
                         if (isRecording) {
                             RecordingController.stopRecording(context)
                         } else {
-                            if (!serviceRunning) WatchServiceController.start(context)
-                            RecordingController.startRecording(context)
+                            WatchServiceController.startRecording(context)
                         }
                     },
-                    modifier = Modifier.size(44.dp),
+                    modifier = Modifier.size(42.dp),
                     colors = ButtonDefaults.buttonColors(
                         backgroundColor = if (isRecording) recRed else surface
                     )
@@ -139,8 +142,34 @@ fun WatchHomeScreen(
                         imageVector = if (isRecording) Icons.Default.Stop
                                       else Icons.Default.FiberManualRecord,
                         contentDescription = if (isRecording) "Parar grabación" else "Grabar",
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(18.dp),
                         tint = if (isRecording) Color.White else recRed
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // 3. Transfer (right)
+                Button(
+                    onClick = {
+                        if (phoneActive) {
+                            // Take back from phone — start keyword locally
+                            WatchServiceController.start(context)
+                        } else if (serviceRunning || isRecording) {
+                            // Transfer active mode to phone
+                            WatchServiceController.transferToPhone(context)
+                        }
+                    },
+                    modifier = Modifier.size(42.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        backgroundColor = if (phoneActive) phoneBlue else surface
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PhoneAndroid,
+                        contentDescription = if (phoneActive) "Traer de vuelta" else "Transferir al móvil",
+                        modifier = Modifier.size(20.dp),
+                        tint = if (phoneActive) Color.White else mutedIcon
                     )
                 }
             }
@@ -148,18 +177,18 @@ fun WatchHomeScreen(
 
         // Status label
         item {
-            val teal = Color(0xFF00897B)
-            val recRed = Color(0xFFD32F2F)
             Text(
                 text = when {
                     isRecording -> "Grabando..."
                     serviceRunning -> "Escuchando..."
+                    phoneActive -> "Móvil activo"
                     else -> "Inactivo"
                 },
                 style = MaterialTheme.typography.caption2,
                 color = when {
                     isRecording -> recRed
                     serviceRunning -> teal
+                    phoneActive -> phoneBlue
                     else -> Color.Gray
                 },
                 textAlign = TextAlign.Center,

@@ -10,8 +10,9 @@ import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.mydiary.app.MainActivity
+import com.mydiary.app.NotificationConfig
 import com.mydiary.app.R
-import com.mydiary.app.ui.DatabaseProvider
+import com.mydiary.shared.data.DatabaseProvider
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -31,8 +32,8 @@ class DailySummaryWorker(
 
     companion object {
         private const val TAG = "DailySummaryWorker"
-        const val CHANNEL_ID = "mydiary_daily_summary"
-        private const val NOTIFICATION_ID = 2000
+        const val CHANNEL_ID = NotificationConfig.CHANNEL_DAILY_SUMMARY
+        private const val NOTIFICATION_ID = NotificationConfig.ID_DAILY_SUMMARY
         private const val PREFS = "daily_summary"
         private const val KEY_LATEST = "latest_summary"
     }

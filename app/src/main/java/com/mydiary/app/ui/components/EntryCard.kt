@@ -214,7 +214,13 @@ fun EntryCard(
                     }
 
                     // Processing source badge (online vs offline)
-                    if (entry.wasReviewedByLLM) {
+                    // Cloud sets confidence=0.9f, Local sets 0.8f
+                    val isCloudProcessed = entry.wasReviewedByLLM &&
+                        (entry.llmConfidence ?: 0f) >= 0.85f
+                    val isLocalProcessed = (entry.wasReviewedByLLM && !isCloudProcessed) ||
+                        (!entry.wasReviewedByLLM && (entry.sourceRecordingId != null || entry.llmConfidence == 0.0f))
+
+                    if (isCloudProcessed) {
                         Spacer(modifier = Modifier.width(4.dp))
                         Icon(
                             Icons.Default.Cloud,
@@ -222,7 +228,7 @@ fun EntryCard(
                             modifier = Modifier.size(11.dp),
                             tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
                         )
-                    } else if (entry.sourceRecordingId != null || entry.llmConfidence == 0.0f) {
+                    } else if (isLocalProcessed) {
                         Spacer(modifier = Modifier.width(4.dp))
                         Icon(
                             Icons.Default.CloudOff,

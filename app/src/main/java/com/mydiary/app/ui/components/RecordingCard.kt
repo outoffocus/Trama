@@ -171,16 +171,19 @@ fun RecordingCard(
                         color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.7f)
                     )
                 } else if (recording.processingStatus == RecordingStatus.COMPLETED) {
+                    val isCloud = recording.processedBy == "CLOUD"
                     Icon(
-                        imageVector = if (recording.processedLocally) Icons.Default.CloudOff
-                                      else Icons.Default.Cloud,
-                        contentDescription = if (recording.processedLocally) "Procesado local"
-                                             else "Procesado online",
+                        imageVector = if (isCloud) Icons.Default.Cloud else Icons.Default.CloudOff,
+                        contentDescription = when (recording.processedBy) {
+                            "CLOUD" -> "Gemini"
+                            "LOCAL" -> "Local"
+                            else -> "Local"
+                        },
                         modifier = Modifier.size(12.dp),
-                        tint = if (recording.processedLocally)
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                        else
+                        tint = if (isCloud)
                             MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                        else
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                     )
                 }
             }

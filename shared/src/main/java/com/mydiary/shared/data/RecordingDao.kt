@@ -35,11 +35,13 @@ interface RecordingDao {
 
     @Query("""UPDATE recordings
               SET title = :title, summary = :summary, keyPoints = :keyPoints,
-                  processingStatus = :status, processedLocally = :processedLocally
+                  processingStatus = :status, processedLocally = :processedLocally,
+                  processedBy = :processedBy
               WHERE id = :id""")
     suspend fun updateProcessingResult(
         id: Long, title: String, summary: String,
-        keyPoints: String?, status: String, processedLocally: Boolean = false
+        keyPoints: String?, status: String,
+        processedLocally: Boolean = false, processedBy: String? = null
     )
 
     @Query("SELECT COUNT(*) FROM recordings")

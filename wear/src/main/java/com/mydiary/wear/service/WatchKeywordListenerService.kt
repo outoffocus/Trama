@@ -19,6 +19,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
+import com.mydiary.wear.NotificationConfig
 import com.mydiary.wear.R
 import com.mydiary.wear.ui.WatchMainActivity
 import com.mydiary.shared.data.DiaryRepository
@@ -29,10 +30,10 @@ import com.mydiary.shared.speech.IntentDetector
 import com.mydiary.shared.speech.IntentPattern
 import com.mydiary.shared.speech.SpeakerProfile
 import com.mydiary.wear.speech.WatchSpeakerEnrollment
-import com.mydiary.wear.sync.MicCoordinator
+import com.mydiary.shared.sync.MicCoordinator
 import com.mydiary.wear.sync.PhoneToWatchReceiver
 import com.mydiary.wear.sync.WatchToPhoneSyncer
-import com.mydiary.wear.ui.DatabaseProvider
+import com.mydiary.shared.data.DatabaseProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -51,8 +52,8 @@ class WatchKeywordListenerService : LifecycleService() {
 
     companion object {
         private const val TAG = "WatchListenerService"
-        private const val CHANNEL_ID = "mydiary_watch_listener"
-        private const val NOTIFICATION_ID = 1
+        private const val CHANNEL_ID = NotificationConfig.CHANNEL_WATCH_LISTENER
+        private const val NOTIFICATION_ID = NotificationConfig.ID_WATCH_LISTENER
         private const val LOW_BATTERY_THRESHOLD = 20
 
         // Restart delays — progressive backoff
@@ -150,11 +151,13 @@ class WatchKeywordListenerService : LifecycleService() {
         recognizer?.destroy()
         recognizer = null
 
-        // Final sync before dying
+        // Final sync before dying (best-effort, may be cancelled)
         lifecycleScope.launch(Dispatchers.IO) {
             try { syncer?.syncUnsentEntries() } catch (_: Exception) {}
-            MicCoordinator.sendResume(applicationContext)
         }
+        // Note: MicCoordinator.sendResume is handled by WatchServiceController.stopByUser()
+        // not here, because onDestroy also fires when phone pauses us (and we shouldn't
+        // send RESUME back in that case).
 
         WatchServiceController.notifyStopped()
         super.onDestroy()
@@ -374,6 +377,8 @@ class WatchKeywordListenerService : LifecycleService() {
             Log.w(TAG, "Battery low, stopping")
             updateNotificationIfChanged("Bateria baja")
             listening = false
+            // Resume phone mic before dying — use controller scope (not lifecycleScope)
+            WatchServiceController.sendResumeToPhone(applicationContext)
             stopSelf()
             return
         }

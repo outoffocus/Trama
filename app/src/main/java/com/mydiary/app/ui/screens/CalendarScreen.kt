@@ -55,7 +55,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.mydiary.app.ui.DatabaseProvider
+import com.mydiary.shared.data.DatabaseProvider
 import com.mydiary.shared.model.DiaryEntry
 import com.mydiary.shared.model.EntryActionType
 import com.mydiary.shared.model.EntryStatus

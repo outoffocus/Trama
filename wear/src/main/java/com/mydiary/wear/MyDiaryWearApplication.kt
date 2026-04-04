@@ -1,7 +1,7 @@
 package com.mydiary.wear
 
 import android.app.Application
-import com.mydiary.wear.ui.DatabaseProvider
+import com.mydiary.shared.data.DatabaseProvider
 
 class MyDiaryWearApplication : Application() {
     override fun onCreate() {

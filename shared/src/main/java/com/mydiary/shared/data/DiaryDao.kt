@@ -139,4 +139,12 @@ interface DiaryDao {
     /** Get action items extracted from a specific recording */
     @Query("SELECT * FROM diary_entries WHERE sourceRecordingId = :recordingId ORDER BY createdAt ASC")
     fun getByRecordingId(recordingId: Long): Flow<List<DiaryEntry>>
+
+    /** Get action items extracted from a specific recording (one-shot, for dedup) */
+    @Query("SELECT * FROM diary_entries WHERE sourceRecordingId = :recordingId ORDER BY createdAt ASC")
+    suspend fun getByRecordingIdOnce(recordingId: Long): List<DiaryEntry>
+
+    /** Delete all action items linked to a recording (for reprocessing) */
+    @Query("DELETE FROM diary_entries WHERE sourceRecordingId = :recordingId")
+    suspend fun deleteByRecordingId(recordingId: Long)
 }

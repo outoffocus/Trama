@@ -95,7 +95,7 @@ import com.mydiary.app.summary.CalendarHelper
 import com.mydiary.app.summary.DailySummary
 import com.mydiary.app.summary.SuggestedAction
 import com.mydiary.app.summary.SummaryGenerator
-import com.mydiary.app.ui.DatabaseProvider
+import com.mydiary.shared.data.DatabaseProvider
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
@@ -747,30 +747,18 @@ private fun ActionCardContent(
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (isDone) 0.4f else 0.7f)
                         )
                     }
-                    // Metadata row
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        action.datetime?.let {
-                            Text(it.replace("T", " "), style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
-                        }
-                        action.contact?.let {
-                            Text(it, style = MaterialTheme.typography.labelSmall, color = accentColor.copy(alpha = 0.7f))
-                        }
-                        action.capturedAt?.let { millis ->
-                            if (action.datetime != null || action.contact != null) {
-                                Text("·", style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f))
-                            }
-                            Text(
-                                text = formatRelativeTime(millis),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
-                                letterSpacing = 0.3.sp
-                            )
-                        }
+                    // Metadata line
+                    val metaParts = mutableListOf<String>()
+                    action.datetime?.let { metaParts.add(formatActionDatetime(it)) }
+                    action.contact?.let { metaParts.add(it) }
+                    if (metaParts.isNotEmpty()) {
+                        Text(
+                            text = metaParts.joinToString(" · "),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (isDone) 0.4f else 0.6f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
 
@@ -1067,6 +1055,45 @@ private fun actionLabel(type: ActionType): String = when (type) {
  * Formats a timestamp as a subtle relative/absolute string.
  * Today → "14:32", yesterday → "ayer 14:32", older → "23 mar 14:32"
  */
+/**
+ * Format an ISO datetime string (e.g. "2026-03-30T16:00:00") into readable Spanish text.
+ * Examples: "Hoy 16:00", "Mañana 09:00", "Lun 5 abr", "5 abr 16:00"
+ */
+private fun formatActionDatetime(datetime: String): String {
+    return try {
+        // Parse — support both "yyyy-MM-dd'T'HH:mm:ss" and "yyyy-MM-dd'T'HH:mm" and "yyyy-MM-dd"
+        val hasTime = datetime.contains("T")
+        val parsed = when {
+            datetime.length >= 19 -> SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).parse(datetime)
+            hasTime -> SimpleDateFormat("yyyy-MM-dd'T'HH:mm", Locale.getDefault()).parse(datetime)
+            else -> SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(datetime)
+        } ?: return datetime
+
+        val cal = Calendar.getInstance().apply { time = parsed }
+        val now = Calendar.getInstance()
+        val today = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+        }
+        val tomorrow = (today.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 1) }
+        val nextWeek = (today.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 7) }
+
+        val timePart = if (hasTime) SimpleDateFormat("HH:mm", Locale.getDefault()).format(parsed) else null
+        val calDay = Calendar.getInstance().apply { time = parsed; set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) }
+
+        val datePart = when {
+            calDay.timeInMillis == today.timeInMillis -> "Hoy"
+            calDay.timeInMillis == tomorrow.timeInMillis -> "Mañana"
+            calDay.before(nextWeek) -> SimpleDateFormat("EEE", Locale("es")).format(parsed).replaceFirstChar { it.uppercase() }
+            cal.get(Calendar.YEAR) == now.get(Calendar.YEAR) -> SimpleDateFormat("d MMM", Locale("es")).format(parsed)
+            else -> SimpleDateFormat("d MMM yyyy", Locale("es")).format(parsed)
+        }
+
+        if (timePart != null) "$datePart $timePart" else datePart
+    } catch (_: Exception) {
+        datetime.replace("T", " ").take(16)
+    }
+}
+
 private fun formatRelativeTime(millis: Long): String {
     val now = Calendar.getInstance()
     val then = Calendar.getInstance().apply { timeInMillis = millis }

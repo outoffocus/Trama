@@ -38,6 +38,7 @@ object EntryStatus {
     const val PENDING = "PENDING"
     const val COMPLETED = "COMPLETED"
     const val DISCARDED = "DISCARDED"
+    const val SUGGESTED = "SUGGESTED" // Extracted from recording, awaiting user confirmation
 }
 
 /** Action type detected by AI */

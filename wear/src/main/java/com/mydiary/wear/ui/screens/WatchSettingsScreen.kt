@@ -26,7 +26,7 @@ import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.ToggleChip
 import com.google.android.gms.wearable.Wearable
 import com.mydiary.wear.speech.WatchSpeakerEnrollment
-import com.mydiary.wear.ui.DatabaseProvider
+import com.mydiary.shared.data.DatabaseProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await

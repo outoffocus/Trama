@@ -1,3 +1,6 @@
+// TODO: Extract repository access into a ViewModel. Currently DatabaseProvider.getRepository(context)
+//  is called directly inside the composable via remember {}. A ViewModel would provide proper
+//  lifecycle-aware state management and enable testability. Requires dependency injection setup (Hilt).
 package com.mydiary.app.ui.screens
 
 import android.content.Context
@@ -76,8 +79,10 @@ import com.mydiary.app.backup.BackupManager
 import com.mydiary.app.backup.BackupScheduler
 import com.mydiary.app.speech.IntentPattern
 import com.mydiary.app.speech.SpeakerEnrollment
+import com.mydiary.app.summary.GemmaClient
+import com.mydiary.app.summary.GemmaModelManager
 import com.mydiary.app.summary.SummaryScheduler
-import com.mydiary.app.ui.DatabaseProvider
+import com.mydiary.shared.data.DatabaseProvider
 import com.mydiary.app.ui.SettingsDataStore
 import com.mydiary.app.ui.theme.CategoryColors
 import kotlinx.coroutines.launch
@@ -110,6 +115,15 @@ fun SettingsScreen(onBack: () -> Unit) {
     // Backup
     val backupEnabled by settings.backupEnabled.collectAsState(initial = true)
     val backupHour by settings.backupHour.collectAsState(initial = SettingsDataStore.DEFAULT_BACKUP_HOUR)
+
+    // Gemma model
+    val gemmaManager = remember { GemmaModelManager(context) }
+    val gemmaState by gemmaManager.state.collectAsState()
+    val gemmaPrefs = remember { GemmaModelManager.getPrefs(context) }
+    var modelUrl by remember { mutableStateOf(GemmaModelManager.getModelUrl(context)) }
+    var hfToken by remember { mutableStateOf(GemmaModelManager.getHfToken(context)) }
+    val modelFilename = remember(modelUrl) { GemmaModelManager.filenameFromUrl(modelUrl) }
+    var showModelConfig by remember { mutableStateOf(false) }
 
     // Sections expanded state
     var patternsExpanded by remember { mutableStateOf(false) }
@@ -293,6 +307,208 @@ fun SettingsScreen(onBack: () -> Unit) {
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
                     )
+                }
+            }
+
+            SectionDivider()
+
+            // ═══════════════════════════════════════════════════════════════
+            // MODELO LOCAL
+            // ═══════════════════════════════════════════════════════════════
+            SectionHeader("Modelo local")
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                ),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    // ── Status + action button ──
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                modelFilename.removeSuffix(".task"),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                when (gemmaState) {
+                                    is GemmaModelManager.DownloadState.Downloaded -> {
+                                        val sizeMB = gemmaManager.getModelSizeMB()
+                                        "Descargado · $sizeMB MB"
+                                    }
+                                    is GemmaModelManager.DownloadState.Downloading ->
+                                        "Descargando ${(gemmaState as GemmaModelManager.DownloadState.Downloading).progress}%..."
+                                    is GemmaModelManager.DownloadState.Failed ->
+                                        (gemmaState as GemmaModelManager.DownloadState.Failed).message
+                                    else -> "No descargado"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = when (gemmaState) {
+                                    is GemmaModelManager.DownloadState.Downloaded -> MaterialTheme.colorScheme.primary
+                                    is GemmaModelManager.DownloadState.Failed -> MaterialTheme.colorScheme.error
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                }
+                            )
+                        }
+
+                        when (gemmaState) {
+                            is GemmaModelManager.DownloadState.NotDownloaded -> {
+                                FilledTonalButton(onClick = { gemmaManager.startDownload() }) {
+                                    Icon(Icons.Default.CloudDownload, null, Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Descargar")
+                                }
+                            }
+                            is GemmaModelManager.DownloadState.Downloading -> {
+                                OutlinedButton(onClick = { gemmaManager.cancelDownload() }) {
+                                    Icon(Icons.Default.Close, null, Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Cancelar")
+                                }
+                            }
+                            is GemmaModelManager.DownloadState.Downloaded -> {
+                                var showDeleteDialog by remember { mutableStateOf(false) }
+                                OutlinedButton(onClick = { showDeleteDialog = true }) {
+                                    Icon(Icons.Default.Delete, null, Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Eliminar")
+                                }
+                                if (showDeleteDialog) {
+                                    AlertDialog(
+                                        onDismissRequest = { showDeleteDialog = false },
+                                        title = { Text("Eliminar modelo") },
+                                        text = { Text("Se liberará espacio pero no podrás procesar grabaciones sin conexión.") },
+                                        confirmButton = {
+                                            TextButton(onClick = {
+                                                gemmaManager.deleteModel()
+                                                showDeleteDialog = false
+                                            }) { Text("Eliminar", color = MaterialTheme.colorScheme.error) }
+                                        },
+                                        dismissButton = {
+                                            TextButton(onClick = { showDeleteDialog = false }) { Text("Cancelar") }
+                                        }
+                                    )
+                                }
+                            }
+                            is GemmaModelManager.DownloadState.Failed -> {
+                                FilledTonalButton(onClick = { gemmaManager.startDownload() }) {
+                                    Text("Reintentar")
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Progress bar ──
+                    if (gemmaState is GemmaModelManager.DownloadState.Downloading) {
+                        Spacer(Modifier.height(8.dp))
+                        androidx.compose.material3.LinearProgressIndicator(
+                            progress = { (gemmaState as GemmaModelManager.DownloadState.Downloading).progress / 100f },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(4.dp)),
+                        )
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Permite procesar grabaciones sin conexión a internet",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    // ── Enable/disable local model ──
+                    if (gemmaState is GemmaModelManager.DownloadState.Downloaded) {
+                        Spacer(Modifier.height(8.dp))
+                        var localModelEnabled by remember {
+                            mutableStateOf(GemmaClient.isLocalModelEnabled(context))
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Usar modelo local",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    if (localModelEnabled) "Procesará sin conexión"
+                                    else "Solo se usará la nube",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = localModelEnabled,
+                                onCheckedChange = {
+                                    localModelEnabled = it
+                                    GemmaClient.setLocalModelEnabled(context, it)
+                                }
+                            )
+                        }
+                    }
+
+                    // ── Config toggle ──
+                    Spacer(Modifier.height(4.dp))
+                    TextButton(
+                        onClick = { showModelConfig = !showModelConfig },
+                        modifier = Modifier.align(Alignment.End)
+                    ) {
+                        Icon(
+                            if (showModelConfig) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            null, Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("Configurar modelo")
+                    }
+
+                    // ── Expandable config fields ──
+                    AnimatedVisibility(visible = showModelConfig) {
+                        Column {
+                            Spacer(Modifier.height(4.dp))
+
+                            OutlinedTextField(
+                                value = modelUrl,
+                                onValueChange = {
+                                    modelUrl = it
+                                    GemmaModelManager.setModelUrl(context, it)
+                                },
+                                label = { Text("URL del modelo (.task)") },
+                                supportingText = {
+                                    Text("Archivo: $modelFilename")
+                                },
+                                singleLine = false,
+                                maxLines = 3,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+
+                            Spacer(Modifier.height(8.dp))
+
+                            OutlinedTextField(
+                                value = hfToken,
+                                onValueChange = {
+                                    hfToken = it
+                                    GemmaModelManager.setHfToken(context, it)
+                                },
+                                label = { Text("Token HuggingFace (opcional)") },
+                                supportingText = { Text("Necesario para modelos con acceso restringido") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                        }
+                    }
                 }
             }
 

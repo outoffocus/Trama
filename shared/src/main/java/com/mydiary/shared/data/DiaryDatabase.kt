@@ -8,7 +8,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.mydiary.shared.model.DiaryEntry
 import com.mydiary.shared.model.Recording
 
-@Database(entities = [DiaryEntry::class, Recording::class], version = 6)
+@Database(entities = [DiaryEntry::class, Recording::class], version = 7)
 @TypeConverters(Converters::class)
 abstract class DiaryDatabase : RoomDatabase() {
     abstract fun diaryDao(): DiaryDao
@@ -63,6 +63,11 @@ abstract class DiaryDatabase : RoomDatabase() {
         val MIGRATION_5_6 = object : Migration(5, 6) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE recordings ADD COLUMN processedLocally INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE recordings ADD COLUMN processedBy TEXT DEFAULT NULL")
             }
         }
     }

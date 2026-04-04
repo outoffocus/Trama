@@ -9,8 +9,9 @@ import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.WearableListenerService
 import com.mydiary.shared.model.StatusSyncPayload
 import com.mydiary.shared.model.SyncPayload
+import com.mydiary.shared.sync.MicCoordinator
 import com.mydiary.wear.service.WatchServiceController
-import com.mydiary.wear.ui.DatabaseProvider
+import com.mydiary.shared.data.DatabaseProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -31,8 +32,10 @@ class PhoneToWatchReceiver : WearableListenerService() {
         private const val ENTRIES_PATH = "/mydiary/phone-entries"
         private const val STATUS_SYNC_PATH = "/mydiary/status-sync"
         private const val MIC_PATH = "/mydiary/mic"
-        private const val CMD_PAUSE = "PAUSE"
-        private const val CMD_RESUME = "RESUME"
+        private const val CMD_PAUSE = MicCoordinator.CMD_PAUSE
+        private const val CMD_RESUME = MicCoordinator.CMD_RESUME
+        private const val CMD_START_KEYWORD = MicCoordinator.CMD_START_KEYWORD
+        private const val CMD_START_RECORDING = MicCoordinator.CMD_START_RECORDING
 
         const val PREFS = "watch_sync_prefs"
         private const val KEY_PHONE_ACTIVE = "phone_active"
@@ -152,18 +155,26 @@ class PhoneToWatchReceiver : WearableListenerService() {
         val command = String(messageEvent.data)
         Log.i(TAG, "Mic command received: $command")
 
-        val prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-
         when (command) {
             CMD_PAUSE -> {
-                prefs.edit().putBoolean(KEY_PHONE_ACTIVE, true).apply()
-                WatchServiceController.stop(applicationContext)
-                Log.i(TAG, "Watch service stopped (phone is active)")
+                WatchServiceController.notifyPhoneActive(applicationContext)
+                WatchServiceController.stopByPhone(applicationContext)
+                Log.i(TAG, "Watch stopped (phone is active)")
             }
             CMD_RESUME -> {
-                prefs.edit().putBoolean(KEY_PHONE_ACTIVE, false).apply()
+                WatchServiceController.notifyPhoneInactive(applicationContext)
                 WatchServiceController.resumeIfAllowed(applicationContext)
                 Log.i(TAG, "Watch auto-resume attempted (phone released)")
+            }
+            CMD_START_KEYWORD -> {
+                WatchServiceController.notifyPhoneInactive(applicationContext)
+                WatchServiceController.start(applicationContext)
+                Log.i(TAG, "Watch started keyword listening (phone transferred)")
+            }
+            CMD_START_RECORDING -> {
+                WatchServiceController.notifyPhoneInactive(applicationContext)
+                WatchServiceController.startRecording(applicationContext)
+                Log.i(TAG, "Watch started recording (phone transferred)")
             }
         }
     }

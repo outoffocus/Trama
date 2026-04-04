@@ -3,6 +3,7 @@ package com.mydiary.app.speech
 import android.content.Context
 import android.util.Log
 import com.google.ai.client.generativeai.GenerativeModel
+import com.mydiary.app.GeminiConfig
 import com.google.ai.client.generativeai.type.generationConfig
 import com.mydiary.shared.speech.EntryValidatorHeuristics
 import kotlinx.serialization.Serializable
@@ -81,35 +82,47 @@ class EntryValidator(private val context: Context) {
      * LLM validation using Gemini (Flash API or Nano on-device).
      */
     private suspend fun llmValidate(text: String): ValidationResult {
+        val prompt = buildValidationPrompt(text)
+
+        // Try Gemini Cloud first
         val apiKey = getApiKey()
-        if (apiKey.isNullOrBlank()) {
-            // No API key → accept ambiguous entries
-            return ValidationResult(
-                isValid = true,
-                correctedText = null,
-                confidence = 0.5f,
-                reason = "Sin clave API, aceptado por defecto"
-            )
+        if (!apiKey.isNullOrBlank()) {
+            try {
+                return callCloudGemini(prompt, apiKey)
+            } catch (e: Exception) {
+                Log.w(TAG, "Cloud failed, trying local model", e)
+            }
         }
 
-        val prompt = """Analiza esta transcripción de voz y responde SOLO con JSON:
-{
-  "es_nota_personal": true/false,
-  "correccion": "texto corregido o null",
-  "confianza": 0.0-1.0
-}
+        // Try local on-device model
+        try {
+            val localResult = callLocalModel(prompt)
+            if (localResult != null) return localResult
+        } catch (e: Exception) {
+            Log.w(TAG, "Local model failed", e)
+        }
 
-Reglas:
-- es_nota_personal=true si parece una intención, tarea, recordatorio o nota dicha por alguien para sí mismo o para un "nosotros" (grupo al que pertenece)
-- es_nota_personal=false si parece radio, TV, conversación ajena, publicidad o fragmento sin sentido
-- En "correccion": corrige errores de transcripción, puntuación y gramática. Si el texto está bien, pon null
-- Sé permisivo: en caso de duda, marca como true
+        // No LLM available — accept ambiguous entries
+        return ValidationResult(
+            isValid = true,
+            correctedText = null,
+            confidence = 0.5f,
+            reason = "Sin LLM disponible, aceptado por defecto"
+        )
+    }
 
-Transcripción: "$text"
-"""
+    private fun buildValidationPrompt(text: String): String = """Analiza esta transcripción de voz y responde SOLO con JSON:
+{"es_nota_personal":true,"correccion":null,"confianza":0.9}
 
+es_nota_personal=true si parece nota/tarea/recordatorio personal. false si es radio/TV/ruido.
+correccion: texto corregido o null si está bien.
+Sé permisivo: en duda, true.
+
+Transcripción: "$text""""
+
+    private suspend fun callCloudGemini(prompt: String, apiKey: String): ValidationResult {
         val model = GenerativeModel(
-            modelName = "gemini-2.5-flash",
+            modelName = GeminiConfig.MODEL_NAME,
             apiKey = apiKey,
             generationConfig = generationConfig {
                 temperature = 0.1f
@@ -118,12 +131,42 @@ Transcripción: "$text"
         )
 
         val response = model.generateContent(prompt)
-        val responseText = response.text
-            ?.replace("```json", "")?.replace("```", "")?.trim()
+        val responseText = response.text?.trim()
             ?: throw Exception("Empty LLM response")
 
-        Log.d(TAG, "LLM validation response: $responseText")
+        Log.d(TAG, "Cloud LLM validation response: $responseText")
+        return parseValidationResponse(com.mydiary.app.summary.JsonRepair.extractJson(responseText))
+    }
 
+    private suspend fun callLocalModel(prompt: String): ValidationResult? {
+        if (!com.mydiary.app.summary.GemmaClient.isModelAvailable(context)) return null
+
+        val responseText = com.mydiary.app.summary.GemmaClient.generate(
+            context, prompt, maxTokens = 128
+        ) ?: return null
+
+        Log.d(TAG, "Local model validation response: $responseText")
+
+        // Try parsing as JSON (same format as Cloud)
+        try {
+            val cleaned = com.mydiary.app.summary.JsonRepair.extractJson(responseText)
+            return parseValidationResponse(cleaned)
+        } catch (_: Exception) {
+            // Fallback: interpret as simple yes/no
+            val lower = responseText.trim().lowercase()
+            val isValid = lower.contains("true") || lower.startsWith("si") ||
+                lower.startsWith("sí") || lower.contains("\"es_nota_personal\":true") ||
+                lower.contains("es_nota_personal\": true")
+            return ValidationResult(
+                isValid = isValid,
+                correctedText = null,
+                confidence = 0.7f,
+                reason = if (isValid) "Validado por IA local" else "Rechazado por IA local"
+            )
+        }
+    }
+
+    private fun parseValidationResponse(responseText: String): ValidationResult {
         return try {
             val parsed = json.decodeFromString<LLMValidationResponse>(responseText)
             ValidationResult(

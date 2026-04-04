@@ -27,7 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.mydiary.app.ui.DatabaseProvider
+import com.mydiary.shared.data.DatabaseProvider
 import com.mydiary.app.ui.SettingsDataStore
 import com.mydiary.app.ui.components.EntryCard
 import kotlinx.coroutines.flow.flowOf

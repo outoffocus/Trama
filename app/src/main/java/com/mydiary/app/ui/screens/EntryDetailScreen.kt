@@ -40,7 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.mydiary.app.speech.PersonalDictionary
-import com.mydiary.app.ui.DatabaseProvider
+import com.mydiary.shared.data.DatabaseProvider
 import com.mydiary.shared.model.Source
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat

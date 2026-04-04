@@ -6,8 +6,10 @@ import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.WearableListenerService
+import com.mydiary.app.service.RecordingState
 import com.mydiary.app.service.ServiceController
-import com.mydiary.app.ui.DatabaseProvider
+import com.mydiary.shared.sync.MicCoordinator
+import com.mydiary.shared.data.DatabaseProvider
 import com.mydiary.shared.data.DiaryRepository
 import com.mydiary.shared.model.Recording
 import com.mydiary.shared.model.RecordingStatus
@@ -17,7 +19,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 
 /**
@@ -32,8 +33,10 @@ class WatchDataReceiverService : WearableListenerService() {
         private const val SYNC_PATH = "/mydiary/sync"
         private const val MIC_PATH = "/mydiary/mic"
         private const val SYNC_REQUEST_PATH = "/mydiary/request-full-sync"
-        private const val CMD_PAUSE = "PAUSE"
-        private const val CMD_RESUME = "RESUME"
+        private const val CMD_PAUSE = MicCoordinator.CMD_PAUSE
+        private const val CMD_RESUME = MicCoordinator.CMD_RESUME
+        private const val CMD_START_KEYWORD = MicCoordinator.CMD_START_KEYWORD
+        private const val CMD_START_RECORDING = MicCoordinator.CMD_START_RECORDING
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -61,16 +64,26 @@ class WatchDataReceiverService : WearableListenerService() {
 
                 when (command) {
                     CMD_PAUSE -> {
-                        if (ServiceController.isRunning.value) {
-                            ServiceController.stopByWatch(applicationContext)
-                            Log.i(TAG, "Phone service paused (watch is active)")
-                        }
+                        ServiceController.notifyWatchActive()
+                        ServiceController.stopByWatch(applicationContext)
+                        Log.i(TAG, "Phone stopped (watch is active)")
                     }
                     CMD_RESUME -> {
+                        ServiceController.notifyWatchInactive()
                         if (ServiceController.shouldBeRunning(applicationContext)) {
                             ServiceController.start(applicationContext)
                             Log.i(TAG, "Phone service resumed (watch released)")
                         }
+                    }
+                    CMD_START_KEYWORD -> {
+                        ServiceController.notifyWatchInactive()
+                        ServiceController.start(applicationContext)
+                        Log.i(TAG, "Phone started keyword listening (watch transferred)")
+                    }
+                    CMD_START_RECORDING -> {
+                        ServiceController.notifyWatchInactive()
+                        ServiceController.startRecording(applicationContext)
+                        Log.i(TAG, "Phone started recording (watch transferred)")
                     }
                 }
             }

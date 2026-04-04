@@ -10,6 +10,7 @@ import com.mydiary.app.ui.screens.CalendarScreen
 import com.mydiary.app.ui.screens.EntryDetailScreen
 import com.mydiary.app.ui.screens.HomeScreen
 import com.mydiary.app.ui.screens.RecordingDetailScreen
+import com.mydiary.app.ui.screens.RecordingsListScreen
 import com.mydiary.app.ui.screens.SearchScreen
 import com.mydiary.app.ui.screens.SettingsScreen
 import com.mydiary.app.ui.screens.SummaryScreen
@@ -21,6 +22,7 @@ object Routes {
     const val SEARCH = "search"
     const val SUMMARY = "summary"
     const val CALENDAR = "calendar"
+    const val RECORDINGS_LIST = "recordings"
     const val RECORDING_DETAIL = "recording/{recordingId}"
 
     fun detail(entryId: Long) = "detail/$entryId"
@@ -41,6 +43,9 @@ fun NavGraph() {
                 onCalendarClick = { navController.navigate(Routes.CALENDAR) },
                 onRecordingClick = { recordingId ->
                     navController.navigate(Routes.recordingDetail(recordingId))
+                },
+                onRecordingsListClick = {
+                    navController.navigate(Routes.RECORDINGS_LIST)
                 }
             )
         }
@@ -64,6 +69,15 @@ fun NavGraph() {
             SearchScreen(
                 onEntryClick = { entryId -> navController.navigate(Routes.detail(entryId)) },
                 onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Routes.RECORDINGS_LIST) {
+            RecordingsListScreen(
+                onBack = { navController.popBackStack() },
+                onRecordingClick = { recordingId ->
+                    navController.navigate(Routes.recordingDetail(recordingId))
+                }
             )
         }
 

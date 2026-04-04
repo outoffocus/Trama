@@ -3,12 +3,13 @@ package com.mydiary.app.summary
 import android.content.Context
 import android.util.Log
 import com.google.ai.client.generativeai.GenerativeModel
+import com.mydiary.app.GeminiConfig
 import com.google.ai.client.generativeai.type.generationConfig
 import com.mydiary.shared.data.DiaryRepository
 import com.mydiary.shared.model.DiaryEntry
+import com.mydiary.shared.model.EntryStatus
 import com.mydiary.shared.model.RecordingStatus
 import com.mydiary.shared.model.Source
-import com.mydiary.app.service.RecordingState
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.text.SimpleDateFormat
@@ -17,8 +18,12 @@ import java.util.Locale
 
 /**
  * Processes a recording transcription:
- * 1. Tries Gemini for best results (title, summary, key points, action items)
- * 2. Falls back to local heuristic processing if Gemini is unavailable
+ * 1. Tries Gemini Cloud
+ * 2. Falls back to local on-device model
+ * 3. If no LLM available, stays PENDING for later retry
+ *
+ * Both Cloud and local use the same JSON prompt and produce
+ * the same output (title, summary, keyPoints, actionItems).
  */
 class RecordingProcessor(private val context: Context) {
 
@@ -26,7 +31,7 @@ class RecordingProcessor(private val context: Context) {
         private const val TAG = "RecordingProcessor"
     }
 
-    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+    private val json = Json { ignoreUnknownKeys = true; isLenient = true; coerceInputValues = true }
 
     suspend fun process(recordingId: Long, repository: DiaryRepository) {
         val recording = repository.getRecordingByIdOnce(recordingId)
@@ -43,35 +48,181 @@ class RecordingProcessor(private val context: Context) {
 
         repository.updateRecordingStatus(recordingId, RecordingStatus.PROCESSING)
 
+        // 1. Try Gemini Cloud
         val apiKey = getApiKey()
-
-        // Try Gemini first
         if (!apiKey.isNullOrBlank()) {
-            val geminiOk = tryGemini(recordingId, recording.transcription, recording.source, apiKey, repository)
-            if (geminiOk) return
+            val ok = tryCloud(recordingId, recording.transcription, recording.source, apiKey, repository)
+            if (ok) return
         }
 
-        // Fallback: local processing
-        Log.i(TAG, "Using local processing for recording $recordingId")
-        processLocally(recordingId, recording.transcription, recording.source, repository)
-        RecordingState.notifyError("Procesado local (sin Gemini). Resultado básico.")
+        // 2. If already processed AND has existing actions, keep them.
+        //    Actions persist until the user completes or deletes them.
+        //    But if there are no actions yet (e.g. previous local attempt failed JSON),
+        //    the local model must try again.
+        val existingActions = repository.getByRecordingIdOnce(recordingId)
+        if (recording.processingStatus == RecordingStatus.COMPLETED && existingActions.isNotEmpty()) {
+            Log.i(TAG, "Recording $recordingId already has ${existingActions.size} actions, keeping them")
+            repository.updateRecordingStatus(recordingId, RecordingStatus.COMPLETED)
+            return
+        }
+
+        // 3. Try local on-device model (same prompt & format as Cloud)
+        val modelFile = GemmaClient.getModelFile(context)
+        if (modelFile.exists()) {
+            val ok = tryLocalModel(recordingId, recording.transcription, recording.source, repository)
+            if (ok) return
+        }
+
+        // 4. No LLM available — stay PENDING for later retry
+        Log.w(TAG, "No LLM available for recording $recordingId, leaving as PENDING (apiKey blank=${apiKey.isNullOrBlank()}, model exists=${modelFile.exists()})")
+        repository.updateRecordingStatus(recordingId, RecordingStatus.PENDING)
     }
 
-    // ── Gemini ──
+    // ── Cloud ──
 
-    private suspend fun tryGemini(
+    private suspend fun tryCloud(
         recordingId: Long,
         transcription: String,
         source: Source,
         apiKey: String,
         repository: DiaryRepository
     ): Boolean {
+        val prompt = buildPrompt(transcription)
+
+        val model = GenerativeModel(
+            modelName = GeminiConfig.MODEL_NAME,
+            apiKey = apiKey,
+            generationConfig = generationConfig {
+                temperature = 0.2f
+                maxOutputTokens = 4096
+            }
+        )
+
+        return try {
+            val response = model.generateContent(prompt)
+            val responseText = response.text?.trim() ?: throw Exception("Empty Cloud response")
+            Log.d(TAG, "Cloud response: ${responseText.take(200)}")
+
+            val result = parseResponse(responseText)
+            // Delete previous actions only when we have new ones to replace them
+            repository.deleteByRecordingId(recordingId)
+            saveResult(recordingId, result, source, "CLOUD", 0.9f, repository)
+
+            Log.i(TAG, "Recording $recordingId processed via Cloud: '${result.title}', ${result.actionItems.size} actions")
+            checkActionsForDuplicates(recordingId, repository)
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "Cloud failed for recording $recordingId: ${e.javaClass.simpleName}", e)
+            false
+        }
+    }
+
+    // ── Local on-device model ──
+
+    private suspend fun tryLocalModel(
+        recordingId: Long,
+        transcription: String,
+        source: Source,
+        repository: DiaryRepository
+    ): Boolean {
+        return try {
+            // Attempt 1: full prompt with JSON prefix forcing
+            val prompt = buildPrompt(transcription)
+            val responseText = GemmaClient.generate(context, prompt, maxTokens = 2048, responsePrefix = "{")
+                ?: throw Exception("Empty local model response")
+            Log.d(TAG, "Local model response: ${responseText.take(300)}")
+
+            val result = try {
+                parseResponse(responseText)
+            } catch (e: Exception) {
+                Log.w(TAG, "Local model JSON attempt 1 failed: ${e.message}")
+                // Attempt 2: simpler prompt, less likely to confuse the model
+                retryWithSimplePrompt(transcription)
+            }
+
+            repository.deleteByRecordingId(recordingId)
+            saveResult(recordingId, result, source, "LOCAL", 0.8f, repository)
+
+            Log.i(TAG, "Recording $recordingId processed via local model: '${result.title}', ${result.actionItems.size} actions")
+            if (result.actionItems.isNotEmpty()) {
+                checkActionsForDuplicates(recordingId, repository)
+            }
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "Local model failed for recording $recordingId: ${e.javaClass.simpleName}", e)
+            false
+        }
+    }
+
+    /**
+     * Retry with a much simpler prompt when the full prompt fails.
+     * Splits into two calls: one for title+summary, one for action extraction.
+     */
+    private suspend fun retryWithSimplePrompt(transcription: String): RecordingAnalysis {
+        Log.i(TAG, "Retrying with simplified prompts")
+
+        val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+            .format(Calendar.getInstance().time)
+
+        // Call 1: title + summary (plain text, no JSON needed)
+        val titlePrompt = "Pon un titulo breve (maximo 8 palabras) a esta nota. Responde SOLO con el titulo:\n\n$transcription"
+        val title = GemmaClient.generate(context, titlePrompt, maxTokens = 32)
+            ?.trim()?.removeSurrounding("\"")?.take(80)
+            ?: "Nota de voz"
+
+        val summaryPrompt = "Resume esta nota en 2-3 frases. Responde SOLO con el resumen:\n\n$transcription"
+        val summary = GemmaClient.generate(context, summaryPrompt, maxTokens = 256)
+            ?.trim() ?: transcription.take(200)
+
+        // Call 2: extract actions as simple JSON array
+        val actionsPrompt = """Lista las tareas o cosas por hacer de este texto como JSON.
+Responde SOLO con un array JSON, ejemplo: [{"text":"Comprar leche","type":"BUY"}]
+Si no hay tareas, responde: []
+Tipos validos: CALL, BUY, SEND, EVENT, REVIEW, TALK_TO, GENERIC
+Hoy es $today.
+
+Texto: "$transcription""""
+
+        val actionsResponse = GemmaClient.generate(context, actionsPrompt, maxTokens = 512, responsePrefix = "[")
+        val actionItems = parseSimpleActions(actionsResponse)
+
+        Log.d(TAG, "Simple prompt: title='$title', actions=${actionItems.size}")
+        return RecordingAnalysis(
+            title = title,
+            summary = summary,
+            keyPoints = emptyList(),
+            actionItems = actionItems
+        )
+    }
+
+    /** Parse a simple JSON array of actions: [{"text":"...", "type":"..."}] */
+    private fun parseSimpleActions(response: String?): List<ActionItem> {
+        if (response.isNullOrBlank()) return emptyList()
+        return try {
+            val cleaned = JsonRepair.extractAndRepair(response)
+            val items = json.decodeFromString<List<SimpleAction>>(cleaned)
+            items.map { ActionItem(text = it.text, actionType = it.type ?: "GENERIC") }
+        } catch (e: Exception) {
+            Log.w(TAG, "Simple actions parse failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    @Serializable
+    private data class SimpleAction(
+        val text: String,
+        val type: String? = "GENERIC"
+    )
+
+    // ── Shared ──
+
+    private fun buildPrompt(transcription: String): String {
         val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
             .format(Calendar.getInstance().time)
         val tomorrow = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
             .format(Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 1) }.time)
 
-        val prompt = """Analiza esta transcripción de una grabación de voz y responde SOLO con JSON válido:
+        return """Analiza esta transcripción de una grabación de voz y responde SOLO con JSON válido:
 {
   "title": "Título breve y descriptivo (max 8 palabras)",
   "summary": "Resumen de 2-3 párrafos del contenido principal",
@@ -93,304 +244,158 @@ Reglas:
 - actionItems: TODAS las tareas, compromisos, cosas por hacer mencionadas. Si no hay, lista vacía
   - text: acción limpia y concisa
   - actionType: CALL=llamar, BUY=comprar, SEND=enviar, EVENT=cita/reunión, REVIEW=revisar, TALK_TO=hablar con, GENERIC=otro
-  - dueDate: si mencionan fecha, convertir a YYYY-MM-DD. Hoy=$today, mañana=$tomorrow. Si no hay, null
+  - dueDate: SOLO si mencionan una fecha EXPLÍCITA (hoy, mañana, lunes, 5 de abril, etc.), convertir a YYYY-MM-DD. Hoy=$today, mañana=$tomorrow. Si NO mencionan ninguna fecha concreta, SIEMPRE null. "Recordar" o "no olvidar" NO implican fecha
   - priority: URGENT si urgente/ya/ahora. HIGH si importante. LOW si cuando pueda. NORMAL en el resto
 
 Transcripción:
 \"\"\"
 $transcription
 \"\"\""""
-
-        return try {
-            val model = GenerativeModel(
-                modelName = "gemini-2.5-flash",
-                apiKey = apiKey,
-                generationConfig = generationConfig {
-                    temperature = 0.2f
-                    maxOutputTokens = 4096
-                }
-            )
-
-            val response = model.generateContent(prompt)
-            val responseText = response.text?.trim() ?: throw Exception("Empty Gemini response")
-
-            Log.d(TAG, "Gemini response: ${responseText.take(200)}")
-
-            val jsonStr = responseText
-                .removePrefix("```json").removePrefix("```")
-                .removeSuffix("```").trim()
-
-            val result = json.decodeFromString<RecordingAnalysis>(jsonStr)
-
-            repository.updateRecordingResult(
-                id = recordingId,
-                title = result.title,
-                summary = result.summary,
-                keyPoints = result.keyPoints.joinToString("\n"),
-                status = RecordingStatus.COMPLETED
-            )
-
-            val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-            for (action in result.actionItems) {
-                val dueDate = action.dueDate?.let {
-                    try { dateFormat.parse(it)?.time } catch (_: Exception) { null }
-                }
-                repository.insert(
-                    DiaryEntry(
-                        text = action.text,
-                        keyword = "grabación",
-                        category = "Grabación",
-                        confidence = 0.9f,
-                        source = source,
-                        duration = 0,
-                        cleanText = action.text,
-                        actionType = validateActionType(action.actionType),
-                        priority = validatePriority(action.priority),
-                        dueDate = dueDate,
-                        wasReviewedByLLM = true,
-                        llmConfidence = 0.9f,
-                        sourceRecordingId = recordingId
-                    )
-                )
-                Log.d(TAG, "Action created: ${action.text} (${action.actionType})")
-            }
-
-            Log.i(TAG, "Recording $recordingId processed via Gemini: '${result.title}', ${result.actionItems.size} actions")
-            true
-        } catch (e: Exception) {
-            Log.w(TAG, "Gemini failed for recording $recordingId, falling back to local: ${e.message}")
-            false
-        }
     }
 
-    // ── Local fallback ──
 
-    private suspend fun processLocally(
+    private fun parseResponse(responseText: String): RecordingAnalysis {
+        val jsonStr = JsonRepair.extractAndRepair(responseText)
+        return json.decodeFromString<RecordingAnalysis>(jsonStr)
+    }
+
+    private suspend fun saveResult(
         recordingId: Long,
-        transcription: String,
+        result: RecordingAnalysis,
         source: Source,
+        processedBy: String,
+        confidence: Float,
         repository: DiaryRepository
     ) {
-        try {
-            val sentences = transcription
-                .replace("...", ".")
-                .split(Regex("[.!?]+"))
-                .map { it.trim() }
-                .filter { it.length > 3 }
-
-            // Title: first meaningful words
-            val title = generateLocalTitle(sentences, transcription)
-
-            // Summary: first 3 sentences or full text if short
-            val summary = if (sentences.size <= 3) {
-                transcription
-            } else {
-                sentences.take(3).joinToString(". ") + "."
-            }
-
-            // Key points: longest/most meaningful sentences
-            val keyPoints = sentences
-                .filter { it.length > 15 }
-                .sortedByDescending { it.length }
-                .take(5)
-                .joinToString("\n")
-
-            repository.updateRecordingResult(
-                id = recordingId,
-                title = title,
-                summary = summary,
-                keyPoints = keyPoints.ifBlank { null },
-                status = RecordingStatus.COMPLETED,
-                processedLocally = true
-            )
-
-            // Extract action items via keyword matching
-            val actions = extractLocalActions(sentences, transcription)
-            for (action in actions) {
-                repository.insert(
-                    DiaryEntry(
-                        text = action.text,
-                        keyword = "grabación",
-                        category = "Grabación",
-                        confidence = 0.6f,
-                        source = source,
-                        duration = 0,
-                        cleanText = action.text,
-                        actionType = action.actionType,
-                        priority = action.priority,
-                        dueDate = parseDateHeuristic(action.dateHint),
-                        wasReviewedByLLM = false,
-                        llmConfidence = 0.0f,
-                        sourceRecordingId = recordingId
-                    )
-                )
-                Log.d(TAG, "Local action: ${action.text} (${action.actionType})")
-            }
-
-            Log.i(TAG, "Recording $recordingId processed locally: '$title', ${actions.size} actions")
-        } catch (e: Exception) {
-            Log.e(TAG, "Local processing also failed for $recordingId", e)
-            repository.updateRecordingStatus(recordingId, RecordingStatus.FAILED)
-            RecordingState.notifyError("Error procesando grabación: ${e.message?.take(100)}")
-        }
-    }
-
-    private fun generateLocalTitle(sentences: List<String>, full: String): String {
-        // Take first sentence, cap at 8 words
-        val first = sentences.firstOrNull() ?: full.take(50)
-        val words = first.split(" ").take(8)
-        return words.joinToString(" ").let {
-            if (it.length > 50) it.take(47) + "..." else it
-        }
-    }
-
-    private data class LocalAction(
-        val text: String,
-        val actionType: String,
-        val priority: String,
-        val dateHint: String?
-    )
-
-    private fun extractLocalActions(sentences: List<String>, full: String): List<LocalAction> {
-        val actions = mutableListOf<LocalAction>()
-        val lowerFull = full.lowercase()
-
-        // Action patterns (Spanish)
-        val patterns = listOf(
-            // CALL
-            ActionPattern(
-                Regex("(?:tengo que|hay que|debo|necesito|debería|falta)\\s+(?:llamar|telefonear)\\s+(?:a\\s+)?(.{3,40})", RegexOption.IGNORE_CASE),
-                "CALL"
-            ),
-            ActionPattern(
-                Regex("(?:llamar|telefonear)\\s+(?:a\\s+)?(.{3,40})", RegexOption.IGNORE_CASE),
-                "CALL"
-            ),
-            // BUY
-            ActionPattern(
-                Regex("(?:tengo que|hay que|debo|necesito|falta)\\s+(?:comprar|pillar|coger)\\s+(.{3,40})", RegexOption.IGNORE_CASE),
-                "BUY"
-            ),
-            ActionPattern(
-                Regex("(?:comprar|pillar)\\s+(.{3,40})", RegexOption.IGNORE_CASE),
-                "BUY"
-            ),
-            // SEND
-            ActionPattern(
-                Regex("(?:tengo que|hay que|debo|necesito)\\s+(?:enviar|mandar|escribir)\\s+(.{3,40})", RegexOption.IGNORE_CASE),
-                "SEND"
-            ),
-            ActionPattern(
-                Regex("(?:enviar|mandar)\\s+(.{3,40})", RegexOption.IGNORE_CASE),
-                "SEND"
-            ),
-            // TALK_TO
-            ActionPattern(
-                Regex("(?:tengo que|hay que|debo|necesito)\\s+(?:hablar|quedar|reunir)\\s+(?:con\\s+)?(.{3,40})", RegexOption.IGNORE_CASE),
-                "TALK_TO"
-            ),
-            // EVENT
-            ActionPattern(
-                Regex("(?:tengo|hay)\\s+(?:una\\s+)?(?:reunión|cita|evento|quedada)\\s+(.{3,40})", RegexOption.IGNORE_CASE),
-                "EVENT"
-            ),
-            // REVIEW
-            ActionPattern(
-                Regex("(?:tengo que|hay que|debo|necesito)\\s+(?:revisar|mirar|repasar|comprobar)\\s+(.{3,40})", RegexOption.IGNORE_CASE),
-                "REVIEW"
-            ),
-            // GENERIC: "tengo que/hay que/debo/necesito" + verb
-            ActionPattern(
-                Regex("(?:tengo que|hay que|debo|necesito|debería|no olvidar|recordar|acuérdate de|acordarme de)\\s+(.{5,60})", RegexOption.IGNORE_CASE),
-                "GENERIC"
-            ),
+        repository.updateRecordingResult(
+            id = recordingId,
+            title = result.title,
+            summary = result.summary,
+            keyPoints = result.keyPoints.joinToString("\n"),
+            status = RecordingStatus.COMPLETED,
+            processedBy = processedBy
         )
 
-        val seen = mutableSetOf<String>()
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        for (action in result.actionItems) {
+            val dueDate = action.dueDate?.let {
+                try { dateFormat.parse(it)?.time } catch (_: Exception) { null }
+            }
+            repository.insert(
+                DiaryEntry(
+                    text = action.text,
+                    keyword = "grabación",
+                    category = "Grabación",
+                    confidence = confidence,
+                    source = source,
+                    duration = 0,
+                    cleanText = action.text,
+                    actionType = validateActionType(action.actionType),
+                    priority = validatePriority(action.priority),
+                    dueDate = dueDate,
+                    wasReviewedByLLM = true,
+                    llmConfidence = confidence,
+                    sourceRecordingId = recordingId,
+                    status = EntryStatus.SUGGESTED
+                )
+            )
+        }
+    }
 
-        for (pattern in patterns) {
-            for (match in pattern.regex.findAll(full)) {
-                val actionText = match.value.trim()
-                    .replaceFirst(Regex("^(?:tengo que|hay que|debo|necesito|debería|no olvidar|recordar|acuérdate de|acordarme de)\\s+", RegexOption.IGNORE_CASE), "")
-                    .replaceFirst(Regex("[.,;:]+$"), "")
-                    .trim()
-                    .replaceFirstChar { it.uppercase() }
+    // ── Duplicate detection (LLM-based when possible) ──
 
-                if (actionText.length < 4) continue
-                val key = actionText.lowercase()
-                if (key in seen) continue
-                seen.add(key)
+    private suspend fun checkActionsForDuplicates(recordingId: Long, repository: DiaryRepository) {
+        try {
+            val existing = repository.getRecentPendingForDedup()
+            if (existing.isEmpty()) return
 
-                val priority = when {
-                    lowerFull.contains("urgente") || lowerFull.contains("ya mismo") || lowerFull.contains("ahora mismo") -> "URGENT"
-                    lowerFull.contains("importante") -> "HIGH"
-                    else -> "NORMAL"
+            val actions = repository.getByRecordingIdOnce(recordingId)
+            if (actions.isEmpty()) return
+
+            // Build existing entries summary for LLM
+            val entriesList = existing.take(20).joinToString("\n") { "${it.id}: ${it.displayText}" }
+
+            for (action in actions) {
+                val actionText = action.displayText
+
+                // Try LLM dedup (Cloud or Gemma)
+                val duplicateId = tryLlmDedup(actionText, entriesList, existing)
+                if (duplicateId != null) {
+                    repository.markDuplicate(action.id, duplicateId)
+                    Log.i(TAG, "Duplicate: '$actionText' ≈ '${existing.first { it.id == duplicateId }.displayText}'")
                 }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Duplicate check failed for recording $recordingId", e)
+        }
+    }
 
-                val dateHint = extractDateHint(full, match.range)
+    private suspend fun tryLlmDedup(
+        actionText: String,
+        entriesList: String,
+        existing: List<DiaryEntry>
+    ): Long? {
+        val prompt = """Compara esta nueva tarea con las existentes y dime si es un DUPLICADO.
+Responde SOLO con JSON: {"duplicateOfId": ID_NUMBER o null}
 
-                actions.add(LocalAction(actionText, pattern.type, priority, dateHint))
+Nueva tarea: "$actionText"
+
+Tareas existentes:
+$entriesList
+
+Reglas:
+- DUPLICADO = la MISMA tarea concreta: mismo verbo + mismo objeto/persona específica
+- "Llamar a Juan" y "Telefonear a Juan" → SÍ duplicado (misma persona)
+- "Comprar ajos" y "Comprar un coche" → NO duplicado (objetos distintos)
+- "Llamar al dentista" y "Llamar a mi hermana" → NO duplicado (personas distintas)
+- Compartir solo el verbo (comprar, llamar, enviar) NO es suficiente para ser duplicado
+- En caso de duda, responde null"""
+
+        // Try Cloud
+        val apiKey = getApiKey()
+        if (!apiKey.isNullOrBlank()) {
+            try {
+                val model = GenerativeModel(
+                    modelName = GeminiConfig.MODEL_NAME,
+                    apiKey = apiKey,
+                    generationConfig = generationConfig { temperature = 0.1f }
+                )
+                val response = model.generateContent(prompt)
+                val result = parseDedupResponse(response.text, existing)
+                if (result != null) return result
+            } catch (e: Exception) {
+                Log.d(TAG, "Cloud dedup failed: ${e.message}")
             }
         }
 
-        return actions.take(10) // cap at 10
-    }
-
-    private data class ActionPattern(val regex: Regex, val type: String)
-
-    private fun extractDateHint(text: String, matchRange: IntRange): String? {
-        // Look at text around the match for date keywords
-        val start = (matchRange.first - 30).coerceAtLeast(0)
-        val end = (matchRange.last + 50).coerceAtMost(text.length)
-        val context = text.substring(start, end).lowercase()
-
-        return when {
-            context.contains("hoy") -> "hoy"
-            context.contains("mañana") -> "mañana"
-            context.contains("pasado mañana") -> "pasado_mañana"
-            context.contains("lunes") -> "lunes"
-            context.contains("martes") -> "martes"
-            context.contains("miércoles") || context.contains("miercoles") -> "miércoles"
-            context.contains("jueves") -> "jueves"
-            context.contains("viernes") -> "viernes"
-            context.contains("sábado") || context.contains("sabado") -> "sábado"
-            context.contains("domingo") -> "domingo"
-            else -> null
+        // Try local model
+        if (GemmaClient.isModelAvailable(context)) {
+            try {
+                val response = GemmaClient.generate(context, prompt, maxTokens = 64)
+                val result = parseDedupResponse(response, existing)
+                if (result != null) return result
+            } catch (e: Exception) {
+                Log.d(TAG, "Local model dedup failed: ${e.message}")
+            }
         }
+
+        return null
     }
 
-    private fun parseDateHeuristic(hint: String?): Long? {
-        if (hint == null) return null
-        val cal = Calendar.getInstance()
-        when (hint) {
-            "hoy" -> { /* already today */ }
-            "mañana" -> cal.add(Calendar.DAY_OF_YEAR, 1)
-            "pasado_mañana" -> cal.add(Calendar.DAY_OF_YEAR, 2)
-            "lunes" -> advanceToWeekday(cal, Calendar.MONDAY)
-            "martes" -> advanceToWeekday(cal, Calendar.TUESDAY)
-            "miércoles" -> advanceToWeekday(cal, Calendar.WEDNESDAY)
-            "jueves" -> advanceToWeekday(cal, Calendar.THURSDAY)
-            "viernes" -> advanceToWeekday(cal, Calendar.FRIDAY)
-            "sábado" -> advanceToWeekday(cal, Calendar.SATURDAY)
-            "domingo" -> advanceToWeekday(cal, Calendar.SUNDAY)
-            else -> return null
-        }
-        return cal.timeInMillis
+    private fun parseDedupResponse(responseText: String?, existing: List<DiaryEntry>): Long? {
+        if (responseText.isNullOrBlank()) return null
+        val jsonStr = JsonRepair.extractAndRepair(responseText)
+        return try {
+            val result = json.decodeFromString<DedupResult>(jsonStr)
+            if (result.duplicateOfId != null && existing.any { it.id == result.duplicateOfId }) {
+                result.duplicateOfId
+            } else null
+        } catch (_: Exception) { null }
     }
 
-    private fun advanceToWeekday(cal: Calendar, target: Int) {
-        val current = cal.get(Calendar.DAY_OF_WEEK)
-        var daysAhead = target - current
-        if (daysAhead <= 0) daysAhead += 7
-        cal.add(Calendar.DAY_OF_YEAR, daysAhead)
-    }
-
-    // ── Shared helpers ──
-
-    private fun getApiKey(): String? {
-        return context.getSharedPreferences("daily_summary", Context.MODE_PRIVATE)
+    private fun getApiKey(): String? =
+        context.getSharedPreferences("daily_summary", Context.MODE_PRIVATE)
             .getString("gemini_api_key", null)
-    }
 
     private fun validateActionType(type: String): String = when (type.uppercase()) {
         "CALL", "BUY", "SEND", "EVENT", "REVIEW", "TALK_TO", "GENERIC" -> type.uppercase()
@@ -417,4 +422,7 @@ $transcription
         val priority: String = "NORMAL",
         val dueDate: String? = null
     )
+
+    @Serializable
+    private data class DedupResult(val duplicateOfId: Long? = null)
 }

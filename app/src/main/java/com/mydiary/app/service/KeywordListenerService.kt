@@ -24,6 +24,7 @@ import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.mydiary.app.MainActivity
+import com.mydiary.app.NotificationConfig
 import com.mydiary.app.R
 import com.mydiary.app.speech.EntryValidator
 import com.mydiary.app.speech.IntentDetector
@@ -32,10 +33,10 @@ import com.mydiary.app.speech.PersonalDictionary
 import com.mydiary.app.speech.SpeakerEnrollment
 import com.mydiary.app.speech.VoiceActivityDetector
 import com.mydiary.app.summary.ActionItemProcessor
-import com.mydiary.app.sync.MicCoordinator
+import com.mydiary.shared.sync.MicCoordinator
 import com.mydiary.app.sync.PhoneToWatchSyncer
 import com.mydiary.app.sync.SettingsSyncer
-import com.mydiary.app.ui.DatabaseProvider
+import com.mydiary.shared.data.DatabaseProvider
 import com.mydiary.app.ui.SettingsDataStore
 import com.mydiary.shared.model.DiaryEntry
 import com.mydiary.shared.model.Source
@@ -44,7 +45,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 
 /**
  * Continuous speech listening service using Android SpeechRecognizer.
@@ -68,9 +68,9 @@ class KeywordListenerService : LifecycleService() {
 
     companion object {
         private const val TAG = "KeywordListenerService"
-        private const val CHANNEL_ID = "mydiary_listener"
-        private const val NOTIFICATION_ID = 1
-        private const val NEW_ENTRY_CHANNEL_ID = "mydiary_new_entry"
+        private const val CHANNEL_ID = NotificationConfig.CHANNEL_LISTENER
+        private const val NOTIFICATION_ID = NotificationConfig.ID_LISTENER
+        private const val NEW_ENTRY_CHANNEL_ID = NotificationConfig.CHANNEL_NEW_ENTRY
 
         private const val RESTART_DELAY_FAST_MS = 200L
         private const val RESTART_DELAY_NORMAL_MS = 500L
@@ -192,7 +192,9 @@ class KeywordListenerService : LifecycleService() {
         recognizer?.destroy()
         recognizer = null
 
-        lifecycleScope.launch(Dispatchers.IO) { MicCoordinator.sendResume(applicationContext) }
+        // Note: MicCoordinator.sendResume is handled by ServiceController.stop()
+        // not here, because onDestroy also fires when watch pauses us (and we shouldn't
+        // send RESUME back in that case).
 
         ServiceController.notifyStopped()
         super.onDestroy()
@@ -210,7 +212,7 @@ class KeywordListenerService : LifecycleService() {
     }
 
     private fun loadSettings() {
-        runBlocking {
+        lifecycleScope.launch(Dispatchers.IO) {
             val patterns = settings.intentPatterns.first()
             intentDetector.setPatterns(patterns)
 
@@ -458,17 +460,19 @@ class KeywordListenerService : LifecycleService() {
         Log.i(TAG, "Intent '$intentId' [${result.label}] found in: '${text.take(60)}'")
         vibrate(longArrayOf(0, 100, 50, 100))
 
-        // Validate and correct via heuristics + LLM (async)
+        // Correct text via LLM but don't reject — the pattern trigger already confirms intent.
+        // Validation (heuristics + LLM) was rejecting short but valid entries like "comprar ajos"
+        // because MIN_WORDS=3, even though the user clearly triggered a capture pattern.
         lifecycleScope.launch(Dispatchers.IO) {
-            val validation = entryValidator.validate(result.capturedText)
-
-            if (!validation.isValid) {
-                Log.i(TAG, "Entry rejected by validator: ${validation.reason}")
-                return@launch
+            val validation = try {
+                entryValidator.validate(result.capturedText)
+            } catch (e: Exception) {
+                Log.w(TAG, "Validation failed, proceeding without correction", e)
+                null
             }
 
             val correctedText = dictionary.correct(
-                validation.correctedText ?: result.capturedText
+                validation?.correctedText ?: result.capturedText
             )
 
             saveEntry(
@@ -476,9 +480,9 @@ class KeywordListenerService : LifecycleService() {
                 label = result.label,
                 text = correctedText,
                 originalText = result.capturedText,
-                correctedByLLM = validation.correctedText,
-                llmConfidence = validation.confidence,
-                wasReviewed = validation.correctedText != null || validation.reason.contains("IA"),
+                correctedByLLM = validation?.correctedText,
+                llmConfidence = validation?.confidence ?: 0.9f,
+                wasReviewed = validation?.correctedText != null || validation?.reason?.contains("IA") == true,
                 confidence = 0.9f
             )
         }

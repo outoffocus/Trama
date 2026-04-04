@@ -5,7 +5,7 @@ import android.net.Uri
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import com.mydiary.app.ui.DatabaseProvider
+import com.mydiary.shared.data.DatabaseProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -156,7 +156,8 @@ class AutoBackupWorker(
                         source = rec.source.name,
                         createdAt = rec.createdAt,
                         processingStatus = rec.processingStatus,
-                        processedLocally = rec.processedLocally
+                        processedLocally = rec.processedLocally,
+                        processedBy = rec.processedBy
                     )
                 }
 

@@ -16,10 +16,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.LightbulbCircle
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
@@ -38,8 +42,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -49,8 +55,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mydiary.app.summary.RecordingProcessor
-import com.mydiary.app.ui.DatabaseProvider
+import com.mydiary.shared.data.DatabaseProvider
 import com.mydiary.shared.model.DiaryEntry
+import com.mydiary.shared.model.EntryStatus
 import com.mydiary.shared.model.Recording
 import com.mydiary.shared.model.RecordingStatus
 import com.mydiary.shared.model.Source
@@ -75,6 +82,18 @@ fun RecordingDetailScreen(
     val recording by repository.getRecordingById(recordingId).collectAsState(initial = null)
     val actions by repository.getByRecordingId(recordingId).collectAsState(initial = emptyList())
 
+    // Resolve duplicate original entry texts
+    val duplicateOriginals = remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
+    LaunchedEffect(actions) {
+        val dupIds = actions.mapNotNull { it.duplicateOfId }.distinct()
+        if (dupIds.isNotEmpty()) {
+            val pending = repository.getRecentPendingForDedup()
+            duplicateOriginals.value = pending
+                .filter { it.id in dupIds }
+                .associate { it.id to it.displayText }
+        }
+    }
+
     val dateFormat = SimpleDateFormat("dd MMM yyyy · HH:mm", Locale("es"))
     val json = remember { Json { ignoreUnknownKeys = true } }
 
@@ -90,17 +109,21 @@ fun RecordingDetailScreen(
                 actions = {
                     val rec = recording
                     if (rec != null) {
-                        // Retry processing if failed or processed locally
-                        if (rec.processingStatus == RecordingStatus.FAILED || rec.processedLocally) {
+                        // Retry processing if failed, processed locally, or stuck in pending
+                        if (rec.processingStatus == RecordingStatus.FAILED ||
+                            rec.processingStatus == RecordingStatus.PENDING) {
                             IconButton(onClick = {
                                 scope.launch(Dispatchers.IO) {
                                     RecordingProcessor(context).process(recordingId, repository)
                                 }
                             }) {
                                 Icon(Icons.Default.Refresh,
-                                    contentDescription = "Reprocesar con Gemini",
-                                    tint = if (rec.processedLocally) MaterialTheme.colorScheme.tertiary
-                                           else MaterialTheme.colorScheme.error)
+                                    contentDescription = "Procesar",
+                                    tint = when (rec.processingStatus) {
+                                        RecordingStatus.FAILED -> MaterialTheme.colorScheme.error
+                                        RecordingStatus.PENDING -> MaterialTheme.colorScheme.primary
+                                        else -> MaterialTheme.colorScheme.tertiary
+                                    })
                             }
                         }
                         // Delete
@@ -177,9 +200,12 @@ fun RecordingDetailScreen(
 
             // ── Action Items ──
             if (actions.isNotEmpty()) {
+                val suggested = actions.filter { it.status == EntryStatus.SUGGESTED }
+                val accepted = actions.filter { it.status != EntryStatus.SUGGESTED }
+
                 item(key = "actions_header") {
                     Row(
-                        modifier = Modifier.padding(top = 4.dp),
+                        modifier = Modifier.padding(top = 4.dp).fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(Icons.Default.TaskAlt, contentDescription = null,
@@ -189,18 +215,42 @@ fun RecordingDetailScreen(
                         Text(
                             "Acciones extraídas",
                             style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f)
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            "${actions.size}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        if (suggested.isNotEmpty()) {
+                            TextButton(onClick = {
+                                scope.launch(Dispatchers.IO) {
+                                    suggested.forEach { repository.markPending(it.id) }
+                                }
+                            }) {
+                                Text("Añadir todas", style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                    }
+                }
+
+                if (suggested.isNotEmpty()) {
+                    items(suggested, key = { "action_${it.id}" }) { action ->
+                        ActionItemCard(
+                            entry = action,
+                            isSuggested = true,
+                            duplicateOfText = action.duplicateOfId?.let { duplicateOriginals.value[it] },
+                            onClick = { onActionClick(action.id) },
+                            onAccept = { scope.launch(Dispatchers.IO) { repository.markPending(action.id) } },
+                            onDismiss = { scope.launch(Dispatchers.IO) { repository.markDiscarded(action.id) } }
                         )
                     }
                 }
-                items(actions, key = { "action_${it.id}" }) { action ->
-                    ActionItemCard(action, onClick = { onActionClick(action.id) })
+                if (accepted.isNotEmpty()) {
+                    items(accepted, key = { "action_${it.id}" }) { action ->
+                        ActionItemCard(
+                            entry = action,
+                            isSuggested = false,
+                            duplicateOfText = action.duplicateOfId?.let { duplicateOriginals.value[it] },
+                            onClick = { onActionClick(action.id) }
+                        )
+                    }
                 }
             }
 
@@ -256,8 +306,8 @@ private fun RecordingHeader(recording: Recording, dateFormat: SimpleDateFormat) 
 private fun StatusBadge(recording: Recording) {
     val status = recording.processingStatus
     val (icon, label, color) = when {
-        status == RecordingStatus.COMPLETED && recording.processedLocally ->
-            Triple(Icons.Default.CheckCircle, "Procesado localmente", MaterialTheme.colorScheme.tertiary)
+        status == RecordingStatus.COMPLETED && recording.processedBy == "LOCAL" ->
+            Triple(Icons.Default.CheckCircle, "Procesado con modelo local", MaterialTheme.colorScheme.tertiary)
         status == RecordingStatus.COMPLETED ->
             Triple(Icons.Default.CheckCircle, "Procesado con Gemini", MaterialTheme.colorScheme.primary)
         status == RecordingStatus.PROCESSING ->
@@ -305,12 +355,24 @@ private fun SectionCard(title: String, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun ActionItemCard(entry: DiaryEntry, onClick: () -> Unit) {
+private fun ActionItemCard(
+    entry: DiaryEntry,
+    isSuggested: Boolean,
+    duplicateOfText: String? = null,
+    onClick: () -> Unit,
+    onAccept: (() -> Unit)? = null,
+    onDismiss: (() -> Unit)? = null
+) {
+    val isDuplicate = duplicateOfText != null
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+            containerColor = when {
+                isDuplicate -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f)
+                isSuggested -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+                else -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+            }
         ),
         onClick = onClick
     ) {
@@ -326,9 +388,9 @@ private fun ActionItemCard(entry: DiaryEntry, onClick: () -> Unit) {
                 else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
             }
             Icon(
-                Icons.Default.TaskAlt,
+                if (isSuggested) Icons.Default.LightbulbCircle else Icons.Default.TaskAlt,
                 contentDescription = null,
-                tint = priorityColor,
+                tint = if (isSuggested) MaterialTheme.colorScheme.secondary else priorityColor,
                 modifier = Modifier.size(18.dp)
             )
             Spacer(modifier = Modifier.width(10.dp))
@@ -339,6 +401,28 @@ private fun ActionItemCard(entry: DiaryEntry, onClick: () -> Unit) {
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
+                // Duplicate indicator
+                if (isDuplicate) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(top = 3.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.ContentCopy,
+                            contentDescription = null,
+                            modifier = Modifier.size(12.dp),
+                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Ya existe: $duplicateOfText",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.padding(top = 2.dp)
@@ -360,6 +444,26 @@ private fun ActionItemCard(entry: DiaryEntry, onClick: () -> Unit) {
                             )
                         }
                     }
+                }
+            }
+            if (isSuggested && onAccept != null && onDismiss != null) {
+                // Accept / Dismiss buttons
+                IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Descartar",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(2.dp))
+                IconButton(onClick = onAccept, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        Icons.Default.Add,
+                        contentDescription = "Añadir a tareas",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
             }
         }

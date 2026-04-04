@@ -22,7 +22,7 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.mydiary.shared.data.DiaryRepository
 import com.mydiary.shared.model.DiaryEntry
-import com.mydiary.wear.ui.DatabaseProvider
+import com.mydiary.shared.data.DatabaseProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat

@@ -17,7 +17,10 @@ serializationJson = "1.6.3"
 horologist = "0.6.20"
 workRuntime = "2.10.0"
 generativeai = "0.9.0"
+mediapipeGenai = "0.10.22"
+litertlm = "0.9.0"
 junit = "4.13.2"
+mockk = "1.13.13"
 androidxTestExt = "1.2.1"
 espresso = "3.6.1"
 
@@ -45,6 +48,8 @@ room-testing = { group = "androidx.room", name = "room-testing", version.ref = "
 # Play Services
 play-services-wearable = { group = "com.google.android.gms", name = "play-services-wearable", version.ref = "playServicesWearable" }
 generativeai = { group = "com.google.ai.client.generativeai", name = "generativeai", version.ref = "generativeai" }
+mediapipe-tasks-genai = { group = "com.google.mediapipe", name = "tasks-genai", version.ref = "mediapipeGenai" }
+litertlm-android = { group = "com.google.ai.edge.litertlm", name = "litertlm-android", version.ref = "litertlm" }
 
 # WorkManager
 work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "workRuntime" }
@@ -53,6 +58,7 @@ work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version
 coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
 coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-play-services", version.ref = "coroutines" }
+coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
 serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serializationJson" }
 
 # AndroidX
@@ -66,6 +72,7 @@ datastore-preferences = { group = "androidx.datastore", name = "datastore-prefer
 
 # Testing
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+mockk = { group = "io.mockk", name = "mockk", version.ref = "mockk" }
 androidx-test-ext = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestExt" }
 espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espresso" }
 

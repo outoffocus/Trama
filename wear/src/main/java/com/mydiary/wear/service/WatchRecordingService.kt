@@ -17,9 +17,10 @@ import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.mydiary.shared.model.Recording
 import com.mydiary.shared.model.Source
+import com.mydiary.wear.NotificationConfig
 import com.mydiary.wear.R
 import com.mydiary.wear.sync.WatchToPhoneSyncer
-import com.mydiary.wear.ui.DatabaseProvider
+import com.mydiary.shared.data.DatabaseProvider
 import com.mydiary.wear.ui.WatchMainActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -35,8 +36,8 @@ class WatchRecordingService : LifecycleService() {
 
     companion object {
         private const val TAG = "WatchRecordingService"
-        private const val CHANNEL_ID = "mydiary_watch_recording"
-        private const val NOTIFICATION_ID = 3
+        private const val CHANNEL_ID = NotificationConfig.CHANNEL_WATCH_RECORDING
+        private const val NOTIFICATION_ID = NotificationConfig.ID_WATCH_RECORDING
         const val ACTION_START = "com.mydiary.watch.RECORD_START"
         const val ACTION_STOP = "com.mydiary.watch.RECORD_STOP"
     }

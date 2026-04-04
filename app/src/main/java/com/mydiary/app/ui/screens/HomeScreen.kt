@@ -1,3 +1,6 @@
+// TODO: Extract repository access into a ViewModel. Currently DatabaseProvider.getRepository(context)
+//  is called directly inside the composable via remember {}. A ViewModel would provide proper
+//  lifecycle-aware state management and enable testability. Requires dependency injection setup (Hilt).
 package com.mydiary.app.ui.screens
 
 import android.Manifest
@@ -40,6 +43,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -84,10 +88,8 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.mydiary.app.service.RecordingState
 import com.mydiary.app.service.ServiceController
-import com.mydiary.app.summary.RecordingProcessor
-import com.mydiary.shared.model.RecordingStatus
 import com.mydiary.app.sync.PhoneToWatchSyncer
-import com.mydiary.app.ui.DatabaseProvider
+import com.mydiary.shared.data.DatabaseProvider
 import com.mydiary.app.ui.components.EntryCard
 import com.mydiary.app.ui.components.RecordingCard
 import com.mydiary.app.ui.components.RecordingIndicatorBar
@@ -128,7 +130,8 @@ fun HomeScreen(
     onSearchClick: () -> Unit,
     onSummaryClick: () -> Unit = {},
     onCalendarClick: () -> Unit = {},
-    onRecordingClick: (Long) -> Unit = {}
+    onRecordingClick: (Long) -> Unit = {},
+    onRecordingsListClick: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val repository = remember { DatabaseProvider.getRepository(context) }
@@ -142,6 +145,7 @@ fun HomeScreen(
         }
     }
     val serviceRunning by ServiceController.isRunning.collectAsState()
+    val watchActive by ServiceController.isWatchActive.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
     // Recording state
@@ -185,9 +189,6 @@ fun HomeScreen(
     // Show/hide completed
     var showCompleted by remember { mutableStateOf(false) }
 
-    // Show/hide recordings section
-    var showRecordings by remember { mutableStateOf(true) }
-
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -219,16 +220,15 @@ fun HomeScreen(
     }
     val completedToday = completedEntries.count { (it.completedAt ?: 0) >= startOfDay }
 
-    // Group pending
-    val now = System.currentTimeMillis()
-    val todayEntries = pendingEntries.filter { it.createdAt >= startOfDay }
+    // Group pending — overdue means due date is from a PREVIOUS day, not today
     val overdueEntries = pendingEntries.filter { entry ->
         val due = entry.dueDate
-        due != null && due < now
+        due != null && due < startOfDay
     }
+    val overdueIds = overdueEntries.map { it.id }.toSet()
+    val todayEntries = pendingEntries.filter { it.createdAt >= startOfDay && it.id !in overdueIds }
     val olderEntries = pendingEntries.filter { entry ->
-        val due = entry.dueDate
-        entry.createdAt < startOfDay && (due == null || due >= now)
+        entry.createdAt < startOfDay && entry.id !in overdueIds
     }
 
     val dateFormat = SimpleDateFormat("dd MMM", Locale("es"))
@@ -430,13 +430,43 @@ fun HomeScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             if (!selectionMode && !recSelectionMode) {
+                val watchBlue = Color(0xFF1E88E5)
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // Record button (small, rounded square, top — secondary)
+                    // 1. Keyword toggle (top)
                     SmallFloatingActionButton(
                         onClick = {
+                            if (watchActive) return@SmallFloatingActionButton
+                            val hasPermission = ContextCompat.checkSelfPermission(
+                                context, Manifest.permission.RECORD_AUDIO
+                            ) == PackageManager.PERMISSION_GRANTED
+                            if (!hasPermission) {
+                                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                return@SmallFloatingActionButton
+                            }
+                            if (serviceRunning) ServiceController.stop(context)
+                            else ServiceController.start(context)
+                        },
+                        shape = CircleShape,
+                        containerColor = if (serviceRunning) teal
+                                         else MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = if (serviceRunning) Color.White
+                                       else MaterialTheme.colorScheme.onSurfaceVariant
+                    ) {
+                        Icon(
+                            imageVector = if (serviceRunning) Icons.Default.Mic
+                                          else Icons.Default.MicOff,
+                            contentDescription = if (serviceRunning) "Detener escucha" else "Escuchar",
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    // 2. Record toggle (middle)
+                    SmallFloatingActionButton(
+                        onClick = {
+                            if (watchActive) return@SmallFloatingActionButton
                             if (isRecording) {
                                 RecordingState.stopRecording(context)
                             } else {
@@ -446,8 +476,7 @@ fun HomeScreen(
                                 if (!hasPermission) {
                                     recordPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                                 } else {
-                                    if (!serviceRunning) ServiceController.start(context)
-                                    RecordingState.startRecording(context)
+                                    ServiceController.startRecording(context)
                                 }
                             }
                         },
@@ -464,29 +493,33 @@ fun HomeScreen(
                         )
                     }
 
-                    // Mic toggle (large, circle, bottom — primary)
+                    // 3. Transfer (bottom, primary)
                     FloatingActionButton(
                         onClick = {
-                            if (isRecording) return@FloatingActionButton
-                            val hasPermission = ContextCompat.checkSelfPermission(
-                                context, Manifest.permission.RECORD_AUDIO
-                            ) == PackageManager.PERMISSION_GRANTED
-                            if (!hasPermission) {
-                                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                return@FloatingActionButton
+                            if (watchActive) {
+                                // Take back from watch — start keyword locally
+                                val hasPermission = ContextCompat.checkSelfPermission(
+                                    context, Manifest.permission.RECORD_AUDIO
+                                ) == PackageManager.PERMISSION_GRANTED
+                                if (!hasPermission) {
+                                    permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                    return@FloatingActionButton
+                                }
+                                ServiceController.start(context)
+                            } else if (serviceRunning || isRecording) {
+                                // Transfer active mode to watch
+                                ServiceController.transferToWatch(context)
                             }
-                            if (serviceRunning) ServiceController.stop(context)
-                            else ServiceController.start(context)
                         },
                         shape = CircleShape,
-                        containerColor = if (serviceRunning) teal
+                        containerColor = if (watchActive) watchBlue
                                          else MaterialTheme.colorScheme.surfaceVariant,
-                        contentColor = if (serviceRunning) Color.White
+                        contentColor = if (watchActive) Color.White
                                        else MaterialTheme.colorScheme.onSurfaceVariant
                     ) {
                         Icon(
-                            imageVector = if (serviceRunning) Icons.Default.Mic else Icons.Default.MicOff,
-                            contentDescription = if (serviceRunning) "Detener escucha" else "Escuchar",
+                            imageVector = Icons.Default.Watch,
+                            contentDescription = if (watchActive) "Traer de vuelta" else "Transferir al reloj",
                             modifier = Modifier.size(28.dp)
                         )
                     }
@@ -543,104 +576,20 @@ fun HomeScreen(
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // ── Recordings section ──
-                    if (recordings.isNotEmpty()) {
-                        item(key = "header_recordings") {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Default.Mic, contentDescription = null,
-                                    modifier = Modifier.size(18.dp),
-                                    tint = MaterialTheme.colorScheme.tertiary)
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Grabaciones", style = MaterialTheme.typography.labelLarge,
-                                    color = MaterialTheme.colorScheme.tertiary,
-                                    fontWeight = FontWeight.SemiBold)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("${recordings.size}", style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.5f))
-                                Spacer(modifier = Modifier.weight(1f))
-                                // Reprocess locally-processed recordings
-                                val localCount = recordings.count { it.processedLocally || it.processingStatus == RecordingStatus.FAILED }
-                                if (localCount > 0) {
-                                    IconButton(
-                                        onClick = {
-                                            scope.launch(Dispatchers.IO) {
-                                                val toReprocess = recordings.filter {
-                                                    it.processedLocally || it.processingStatus == RecordingStatus.FAILED
-                                                }
-                                                val processor = RecordingProcessor(context)
-                                                for (rec in toReprocess) {
-                                                    processor.process(rec.id, repository)
-                                                }
-                                                withContext(Dispatchers.Main) {
-                                                    snackbarHostState.showSnackbar(
-                                                        "$localCount grabaciones reprocesadas"
-                                                    )
-                                                }
-                                            }
-                                        },
-                                        modifier = Modifier.size(32.dp)
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Refresh,
-                                            contentDescription = "Reprocesar con Gemini",
-                                            modifier = Modifier.size(18.dp),
-                                            tint = MaterialTheme.colorScheme.tertiary
-                                        )
-                                    }
-                                }
-                                IconButton(onClick = { showRecordings = !showRecordings },
-                                    modifier = Modifier.size(32.dp)) {
-                                    Icon(
-                                        if (showRecordings) Icons.Default.ExpandLess
-                                        else Icons.Default.ExpandMore,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(20.dp),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
-                                }
-                            }
+                    // Possible duplicates (top for visibility)
+                    if (duplicateEntries.isNotEmpty()) {
+                        item(key = "header_duplicates") {
+                            SectionHeader("Posibles duplicados", duplicateEntries.size,
+                                MaterialTheme.colorScheme.tertiary)
                         }
-                        if (showRecordings) {
-                            items(recordings.take(5), key = { "rec_${it.id}" }) { recording ->
-                                RecordingCard(
-                                    recording = recording,
-                                    isSelectionMode = recSelectionMode,
-                                    isSelected = recording.id in selectedRecIds,
-                                    onClick = {
-                                        if (recSelectionMode) {
-                                            selectedRecIds = if (recording.id in selectedRecIds)
-                                                selectedRecIds - recording.id else selectedRecIds + recording.id
-                                            if (selectedRecIds.isEmpty()) recSelectionMode = false
-                                        } else {
-                                            onRecordingClick(recording.id)
-                                        }
-                                    },
-                                    onLongClick = {
-                                        if (!recSelectionMode) {
-                                            recSelectionMode = true
-                                            selectedRecIds = setOf(recording.id)
-                                        }
-                                    }
-                                )
-                            }
-                            if (recordings.size > 5) {
-                                item(key = "rec_more") {
-                                    TextButton(
-                                        onClick = { /* TODO: recordings list screen */ },
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Text("Ver todas (${recordings.size})")
-                                    }
-                                }
-                            }
-                            item(key = "rec_divider") {
-                                HorizontalDivider(
-                                    modifier = Modifier.padding(vertical = 4.dp),
-                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
-                                )
-                            }
+                        items(duplicateEntries, key = { "dup_${it.id}" }) { entry ->
+                            val originalEntry = allPendingEntries.find { it.id == entry.duplicateOfId }
+                            DuplicateCard(
+                                entry = entry,
+                                originalText = originalEntry?.displayText,
+                                onKeep = { scope.launch { repository.clearDuplicate(entry.id) } },
+                                onDelete = { scope.launch { repository.deleteById(entry.id); syncDeleted(entry) } }
+                            )
                         }
                     }
 
@@ -691,23 +640,6 @@ fun HomeScreen(
                         }
                     }
 
-                    // Possible duplicates
-                    if (duplicateEntries.isNotEmpty()) {
-                        item(key = "header_duplicates") {
-                            SectionHeader("Posibles duplicados", duplicateEntries.size,
-                                MaterialTheme.colorScheme.tertiary)
-                        }
-                        items(duplicateEntries, key = { "dup_${it.id}" }) { entry ->
-                            val originalEntry = allPendingEntries.find { it.id == entry.duplicateOfId }
-                            DuplicateCard(
-                                entry = entry,
-                                originalText = originalEntry?.displayText,
-                                onKeep = { scope.launch { repository.clearDuplicate(entry.id) } },
-                                onDelete = { scope.launch { repository.deleteById(entry.id); syncDeleted(entry) } }
-                            )
-                        }
-                    }
-
                     // Completed (collapsible)
                     if (completedEntries.isNotEmpty()) {
                         item(key = "header_completed") {
@@ -735,6 +667,58 @@ fun HomeScreen(
                                     { scope.launch { repository.markPending(entry.id) } },
                                     { id, sel -> selectedIds = if (sel) selectedIds + id else selectedIds - id; if (selectedIds.isEmpty()) selectionMode = false },
                                     { selectionMode = true; selectedIds = setOf(entry.id) })
+                            }
+                        }
+                    }
+
+                    // ── Recordings (compact: last 3) ──
+                    if (recordings.isNotEmpty()) {
+                        item(key = "header_recordings") {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.Mic, contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Grabaciones", style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("${recordings.size}", style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+                            }
+                        }
+                        items(recordings.take(3), key = { "rec_${it.id}" }) { recording ->
+                            RecordingCard(
+                                recording = recording,
+                                isSelectionMode = recSelectionMode,
+                                isSelected = recording.id in selectedRecIds,
+                                onClick = {
+                                    if (recSelectionMode) {
+                                        selectedRecIds = if (recording.id in selectedRecIds)
+                                            selectedRecIds - recording.id else selectedRecIds + recording.id
+                                        if (selectedRecIds.isEmpty()) recSelectionMode = false
+                                    } else {
+                                        onRecordingClick(recording.id)
+                                    }
+                                },
+                                onLongClick = {
+                                    if (!recSelectionMode) {
+                                        recSelectionMode = true
+                                        selectedRecIds = setOf(recording.id)
+                                    }
+                                }
+                            )
+                        }
+                        if (recordings.size > 3) {
+                            item(key = "ver_todas_rec") {
+                                TextButton(
+                                    onClick = onRecordingsListClick,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Ver todas (${recordings.size})")
+                                }
                             }
                         }
                     }
