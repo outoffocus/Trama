@@ -1,0 +1,43 @@
+package com.trama.app.summary
+
+import com.trama.shared.model.EntryActionType
+import com.trama.shared.model.EntryPriority
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.util.Calendar
+
+class ManualActionSuggestionExtractorTest {
+
+    @Test
+    fun `extract builds action suggestions from reminder text`() {
+        val suggestions = ManualActionSuggestionExtractor.extract(
+            "Recordar llamar al dentista y comprar leche mañana"
+        )
+
+        assertEquals(2, suggestions.size)
+        assertEquals(EntryActionType.CALL, suggestions[0].actionType)
+        assertEquals("Llamar al dentista", suggestions[0].text)
+        assertEquals(EntryActionType.BUY, suggestions[1].actionType)
+        assertEquals("Comprar leche mañana", suggestions[1].text)
+        assertNotNull(suggestions[1].dueDate)
+    }
+
+    @Test
+    fun `extract detects priority and weekday`() {
+        val suggestions = ManualActionSuggestionExtractor.extract(
+            "Tengo que enviar el informe importante el lunes"
+        )
+
+        assertEquals(1, suggestions.size)
+        assertEquals(EntryPriority.HIGH, suggestions[0].priority)
+        val cal = Calendar.getInstance().apply { timeInMillis = suggestions[0].dueDate!! }
+        assertEquals(Calendar.MONDAY, cal.get(Calendar.DAY_OF_WEEK))
+    }
+
+    @Test
+    fun `extract returns empty for blank text`() {
+        assertTrue(ManualActionSuggestionExtractor.extract("   ").isEmpty())
+    }
+}

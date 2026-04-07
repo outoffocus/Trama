@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(mydiary_whisper)
+project(trama_whisper)
 
 set(CMAKE_CXX_STANDARD 17)
 set(WHISPER_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/whisper.cpp)

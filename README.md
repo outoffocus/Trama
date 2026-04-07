@@ -1,137 +1,145 @@
-# MyDiary
+# Trama
 
-Voice-activated note capture app for Android phone (Galaxy S25+) and Wear OS watch (Galaxy Watch 4). Speak naturally and MyDiary captures your tasks, reminders, and notes hands-free.
+Trama es una app Android para capturar recordatorios y tareas por voz desde el móvil, con soporte también para Wear OS. La idea central es escuchar de forma continua, reconocer frases activadoras configurables y convertirlas en entradas accionables.
 
-## What it does
+## Estado actual
 
-MyDiary listens continuously in the background for trigger phrases like *"tengo que"*, *"recordar"*, *"comprar"*, etc. When it hears one, it captures the full phrase, processes it with AI, and adds it to your pending action list.
+El proyecto ya está migrado desde `MyDiary` a `Trama` y hoy combina dos caminos de escucha en móvil:
 
-**Examples:**
-- *"Recordar mover el coche mañana"* → Task: Mover el coche (due: tomorrow)
-- *"Tengo que llamar al dentista"* → Task: Llamar al dentista (type: CALL)
-- *"Comprar leche y pan"* → Task: Leche y pan (type: BUY)
+- `ASR dedicado on-device` con `AudioRecord` + buffer contextual `t0/t1` + `sherpa-onnx` + Whisper `small`
+- `fallback` a `SpeechRecognizer` de Android si el backend dedicado no está disponible o falla
 
-Works from both your phone and watch simultaneously, with automatic mic coordination so they don't interfere.
+En reloj sigue existiendo el flujo basado en `SpeechRecognizer`.
 
-## Features
+## Qué hace ahora mismo
 
-- **Voice capture** — Always-on background listening with keyword detection (12 categories, 100+ trigger phrases)
-- **ActionItem system** — Every note becomes a trackable task with status (pending/completed), action type, due date, and priority
-- **AI processing** — Gemini Flash cleans text, extracts action type, due dates, and priority automatically
-- **Watch support** — Full Wear OS app with independent speech recognition and smart battery management
-- **Phone-watch sync** — Bidirectional sync via Wearable Data Layer (entries, settings, mic coordination)
-- **Daily summary** — AI-generated suggested actions at configurable time (default 21:00)
-- **Calendar view** — Monthly view with dot indicators showing entries and completions per day
-- **Google Drive backup** — Automatic daily backup to a user-selected file in Google Drive
-- **Speaker verification** — Optional voice enrollment on phone to filter out other voices (radio, TV, coworkers)
-- **Noise filtering** — Heuristic validation rejects ads, news, and non-personal speech
-- **Manual entry** — Quick-add button for typing tasks directly
+- Escucha continua en segundo plano en el móvil
+- Captura contexto de audio previo y posterior a la voz (`t0` y `t1`)
+- Detecta categorías configurables por el usuario
+- Crea entradas pendientes en la base de datos local
+- Postprocesa cada entrada para extraer `cleanText`, tipo de acción, prioridad y fecha
+- Sincroniza entradas y ajustes entre teléfono y reloj
+- Permite extraer acciones manualmente desde el detalle de un recordatorio
+- Muestra estados de diagnóstico y procesamiento en UI
+- Incluye resumen diario, calendario, búsqueda y backup
 
-## Architecture
+## Categorías y activadores
 
+La detección ya no depende de un set fijo grande de keywords. El usuario puede crear categorías y definir dentro de cada una las frases activadoras que quiera.
+
+Por defecto solo existe una categoría:
+
+- `Recordatorios`
+  - `recordar`
+  - `acordarme de`
+  - `acordarnos de`
+  - `me olvidé`
+  - `se me fue la olla`
+
+## Flujo de voz en móvil
+
+### Ruta preferente
+
+1. `KeywordListenerService` arranca escucha continua
+2. `ContextualAudioCaptureEngine` mantiene un ring buffer PCM en memoria
+3. Cuando el VAD detecta voz, se construye una ventana con `t0` previo y `t1` posterior
+4. `SherpaWhisperAsrEngine` transcribe localmente con Whisper `small`
+5. `IntentDetector` intenta clasificar la transcripción
+6. Si hay match, se guarda una `DiaryEntry`
+7. `ActionItemProcessor` la postprocesa
+
+### Fallback
+
+Si el ASR dedicado falla o no está disponible:
+
+1. La app vuelve a `SpeechRecognizer`
+2. Usa parciales para detección temprana
+3. Consolida el resultado final y guarda la entrada
+
+## Feedback en la UI
+
+Durante la captura y el procesado:
+
+- hay vibración corta al match parcial
+- hay vibración más marcada al confirmar el patrón
+- en Ajustes puede activarse un modo diagnóstico ASR
+- en las tarjetas de recordatorios aparece `Procesando...` en rojo pequeño mientras esa entrada sigue en postproceso
+
+## Estructura del proyecto
+
+```text
+Trama/
+├── app/
+│   ├── src/main/java/com/trama/app/
+│   │   ├── audio/        # Ring buffer, captura contextual, engines ASR
+│   │   ├── service/      # Listener, estado compartido, recording, control de servicio
+│   │   ├── speech/       # Enrollment, validación, diccionario
+│   │   ├── summary/      # Postproceso AI, resumen, extracción manual
+│   │   ├── sync/         # Sync teléfono ↔ reloj
+│   │   └── ui/           # Compose UI
+│   ├── src/main/assets/asr/whisper/
+│   │   └── small-*       # Modelo Whisper small usado por sherpa-onnx
+│   └── src/main/jniLibs/arm64-v8a/
+│       └── libsherpa-onnx-jni.so
+├── shared/
+│   └── src/main/java/com/trama/shared/
+│       ├── data/
+│       ├── model/
+│       ├── speech/
+│       └── sync/
+└── wear/
+    └── src/main/java/com/trama/wear/
 ```
-┌─────────────────────────────────────────────────┐
-│                    Phone App                     │
-│  ┌──────────────┐  ┌────────────┐  ┌──────────┐ │
-│  │ Keyword      │  │ ActionItem │  │ Summary  │ │
-│  │ Listener     │→ │ Processor  │  │Generator │ │
-│  │ Service      │  │ (Gemini)   │  │(Gemini)  │ │
-│  └──────────────┘  └────────────┘  └──────────┘ │
-│         ↓               ↓              ↓        │
-│  ┌──────────────────────────────────────────────┐│
-│  │              Room Database                   ││
-│  │              (DiaryEntry)                    ││
-│  └──────────────────────────────────────────────┘│
-│         ↕ Wearable Data Layer                    │
-└─────────────────────────────────────────────────┘
-┌─────────────────────────────────────────────────┐
-│                   Watch App                      │
-│  ┌──────────────┐  ┌────────────────────────┐   │
-│  │ Keyword      │  │ Local Room DB          │   │
-│  │ Listener     │→ │ + Sync to Phone        │   │
-│  │ (Backoff)    │  └────────────────────────┘   │
-│  └──────────────┘                                │
-└─────────────────────────────────────────────────┘
-```
 
-### Modules
+## Tecnologías principales
 
-| Module | Description |
-|--------|-------------|
-| `app/` | Phone app — UI (Compose + Material 3), services, AI processing, backup |
-| `wear/` | Watch app — Wear Compose UI, independent listener, battery-optimized |
-| `shared/` | Common code — Room database, data models, keyword detection, sync payloads |
+- Kotlin
+- Jetpack Compose
+- Wear Compose
+- Room
+- DataStore
+- WorkManager
+- Android `SpeechRecognizer`
+- `AudioRecord`
+- `sherpa-onnx`
+- Whisper `small` on-device
+- Gemini / Gemma para postproceso según disponibilidad
 
-### Key components
+## Limitaciones actuales
 
-**Speech pipeline (phone):**
-`SpeechRecognizer` → `IntentDetector` (keyword match) → `SpeakerProfile` (voice verification) → `EntryValidatorHeuristics` (noise filter) → `ActionItemProcessor` (Gemini AI) → `Room DB`
+- El backend ASR dedicado está preparado y funcional en móvil, pero todavía necesita más ajuste fino de consistencia
+- La librería nativa de `sherpa-onnx` está empaquetada para `arm64-v8a`
+- El reloj aún no usa el mismo pipeline contextual que el móvil
+- Hay ejecuciones esporádicas del daemon de Kotlin que devuelven errores inconsistentes del proyecto; una recompilación posterior del módulo `app` suele pasar correctamente
 
-**Speech pipeline (watch):**
-`SpeechRecognizer` (smart backoff 1s→8s) → `IntentDetector` → `EntryValidatorHeuristics` → `Room DB` → `WatchToPhoneSyncer`
+## Requisitos
 
-**Mic coordination:**
-Only one device listens at a time. When the watch starts, it sends PAUSE to the phone. When the watch stops, it sends RESUME. Prevents duplicate captures.
-
-## Tech stack
-
-- **Language:** Kotlin
-- **UI:** Jetpack Compose (phone), Wear Compose (watch)
-- **Database:** Room 2.7 (shared module)
-- **AI:** Google Generative AI SDK (Gemini Flash)
-- **Speech:** Android SpeechRecognizer
-- **Sync:** Play Services Wearable Data Layer
-- **Background:** WorkManager (summaries, backup), Foreground Service (listener)
-- **Storage:** DataStore Preferences, Google Drive (via SAF)
-
-## Setup
-
-### Prerequisites
-- Android Studio Ladybug or newer
+- Android Studio reciente
 - JDK 17
-- Galaxy Watch 4 (or Wear OS 3+ device) for watch features
-- Gemini API key for AI features
+- dispositivo Android arm64 para probar el ASR dedicado
 
-### Build
+## Build
+
 ```bash
-git clone https://github.com/outoffocus/MyDiary.git
-cd MyDiary
+./gradlew :app:compileDebugKotlin
 ```
 
-Open in Android Studio and sync Gradle. Build and run the `app` module on your phone and the `wear` module on your watch.
+Tests que estamos usando como comprobación rápida del pipeline nuevo:
 
-### Configuration
-1. **Gemini API key** — Add in Settings → API Key
-2. **Permissions** — Grant microphone, notifications, and calendar when prompted
-3. **Google Drive backup** — Settings → Backup → select file location in Google Drive
-4. **Speaker enrollment** — Settings → Voice enrollment → record 3 samples
-
-## Project structure
-
-```
-MyDiary/
-├── app/src/main/java/com/mydiary/app/
-│   ├── backup/          # Google Drive backup (AutoBackupWorker, BackupManager)
-│   ├── service/         # KeywordListenerService, ServiceController
-│   ├── speech/          # SpeakerEnrollment, VoiceActivityDetector
-│   ├── summary/         # SummaryGenerator, ActionItemProcessor, CalendarHelper
-│   ├── sync/            # WatchDataReceiverService, MicCoordinator
-│   └── ui/
-│       ├── screens/     # Home, Settings, Summary, Calendar, EntryDetail
-│       ├── components/  # EntryCard, CalendarBar
-│       └── theme/       # Colors, Typography
-├── wear/src/main/java/com/mydiary/wear/
-│   ├── service/         # WatchKeywordListenerService
-│   ├── speech/          # WatchSpeakerEnrollment, AudioRecorder
-│   ├── sync/            # WatchToPhoneSyncer, PhoneToWatchReceiver
-│   └── ui/screens/      # WatchHome, WatchSettings, WatchEnrollment
-├── shared/src/main/java/com/mydiary/shared/
-│   ├── data/            # DiaryDatabase, DiaryDao, DiaryRepository
-│   ├── model/           # DiaryEntry, SyncPayload, Source
-│   └── speech/          # IntentDetector, IntentPattern, SpeakerProfile, SimpleVAD
-└── gradle/              # Version catalog (libs.versions.toml)
+```bash
+./gradlew :app:testDebugUnitTest --tests com.trama.app.audio.CircularAudioBufferTest --tests com.trama.app.audio.ContextualCaptureAssemblerTest
 ```
 
-## License
+## Notas de privacidad
 
-Private project.
+- El audio contextual `t0/t1` se mantiene en memoria
+- No se guarda audio crudo en disco
+- Solo se persisten las transcripciones y metadatos de la entrada
+
+## Modelos grandes
+
+Los modelos `.onnx` de Whisper para `sherpa-onnx` se mantienen fuera de Git porque GitHub no acepta esos binarios grandes en el repositorio. La carpeta esperada sigue siendo:
+
+- `app/src/main/assets/asr/whisper/`
+
+Ahí pueden existir localmente, pero no se versionan.

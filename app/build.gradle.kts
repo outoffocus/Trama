@@ -7,11 +7,11 @@ plugins {
 }
 
 android {
-    namespace = "com.mydiary.app"
+    namespace = "com.trama.app"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.mydiary.app"
+        applicationId = "com.trama.app"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

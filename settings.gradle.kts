@@ -15,7 +15,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "MyDiary"
+rootProject.name = "Trama"
 include(":app")
 include(":wear")
 include(":shared")

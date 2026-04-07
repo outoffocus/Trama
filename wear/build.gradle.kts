@@ -7,11 +7,11 @@ plugins {
 }
 
 android {
-    namespace = "com.mydiary.wear"
+    namespace = "com.trama.wear"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.mydiary.app"  // Must match phone app for Data Layer sync
+        applicationId = "com.trama.app"  // Must match phone app for Data Layer sync
         minSdk = 30
         targetSdk = 34
         versionCode = 1

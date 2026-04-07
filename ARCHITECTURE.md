@@ -1,340 +1,169 @@
-# MyDiary — Arquitectura
+# Trama — Arquitectura
 
-## Visión general
+## Resumen
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           GALAXY S25+  (Phone)                          │
-│                                                                         │
-│  ┌──────────────────────┐    ┌──────────────────────┐                   │
-│  │  KeywordListener     │    │  UI (Compose)        │                   │
-│  │  Service             │    │                      │                   │
-│  │                      │    │  HomeScreen          │                   │
-│  │  SpeechRecognizer    │    │  SettingsScreen      │                   │
-│  │  (bucle continuo)    │    │  SummaryScreen       │                   │
-│  │        │             │    │  SearchScreen        │                   │
-│  │        ▼             │    │  EntryDetailScreen   │                   │
-│  │  Keyword matching    │    └────────┬─────────────┘                   │
-│  │  (44 frases, 10 cat) │            │                                  │
-│  │        │             │            │ Flow<List<DiaryEntry>>           │
-│  │        ▼             │            │                                  │
-│  │  PersonalDictionary  │    ┌───────┴──────────┐                       │
-│  │  (correcciones)      │    │                  │                       │
-│  │        │             │    │   Room Database   │                       │
-│  │        ▼             │    │   (diary_entries) │                       │
-│  │  repository.insert() ├───▶│                  │                       │
-│  └──────────┬───────────┘    │  DiaryDao         │                       │
-│             │                │  DiaryRepository   │                       │
-│             │                └───────┬──────────┘                       │
-│             │                        │                                  │
-│  ┌──────────▼───────────┐    ┌───────┴──────────┐                       │
-│  │  PhoneToWatch        │    │  DailySummary     │                       │
-│  │  Syncer              │    │  Worker           │                       │
-│  │  (DataClient)        │    │  (WorkManager)    │                       │
-│  └──────────┬───────────┘    │       │           │                       │
-│             │                │       ▼           │                       │
-│             │                │  SummaryGenerator  │                       │
-│             │                │  (Gemini Flash)    │                       │
-│             │                │       │           │                       │
-│             │                │       ▼           │                       │
-│             │                │  Notificación +    │                       │
-│             │                │  SummaryScreen     │                       │
-│             │                └──────────────────┘                       │
-│             │                                                           │
-│  ┌──────────┴───────────────────────────────────┐                       │
-│  │            Wearable Data Layer                │                       │
-│  │                                               │                       │
-│  │  DataClient:                                  │                       │
-│  │   /mydiary/phone-entries  (entries → watch)   │                       │
-│  │   /mydiary/sync           (entries ← watch)   │                       │
-│  │   /mydiary/settings       (keywords → watch)  │                       │
-│  │                                               │                       │
-│  │  MessageClient:                               │                       │
-│  │   /mydiary/mic  (PAUSE/RESUME ↔ bidireccional)│                       │
-│  └──────────┬───────────────────────────────────┘                       │
-└─────────────┼───────────────────────────────────────────────────────────┘
-              │  Bluetooth
-┌─────────────┼───────────────────────────────────────────────────────────┐
-│             │                    GALAXY WATCH 4                         │
-│  ┌──────────┴───────────────────────────────────┐                       │
-│  │          PhoneToWatchReceiver                 │                       │
-│  │          (WearableListenerService)            │                       │
-│  │                                               │                       │
-│  │  onDataChanged:                               │                       │
-│  │   • /mydiary/settings → SharedPrefs           │                       │
-│  │   • /mydiary/phone-entries → Room DB (dedup)  │                       │
-│  │                                               │                       │
-│  │  onMessageReceived:                           │                       │
-│  │   • /mydiary/mic PAUSE → para servicio        │                       │
-│  │   • /mydiary/mic RESUME → reanuda servicio    │                       │
-│  └──────────────────────────────────────────────┘                       │
-│                                                                         │
-│  ┌──────────────────────┐    ┌──────────────────┐                       │
-│  │  WatchKeywordListener│    │  UI (Wear Compose)│                       │
-│  │  Service             │    │                   │                       │
-│  │                      │    │  WatchHomeScreen  │                       │
-│  │  SpeechRecognizer    │    │  (toggle + entries)│                       │
-│  │  (via phone proxy)   │    │                   │                       │
-│  │        │             │    │  EntryDetailScreen│                       │
-│  │        ▼             │    └────────┬──────────┘                       │
-│  │  Keyword matching    │            │                                  │
-│  │        │             │            │ Flow<List<DiaryEntry>>           │
-│  │        ▼             │    ┌───────┴──────────┐                       │
-│  │  repository.insert() ├───▶│   Room Database   │                       │
-│  └──────────┬───────────┘    │   (diary_entries) │                       │
-│             │                └──────────────────┘                       │
-│             ▼                                                           │
-│  ┌──────────────────────┐                                               │
-│  │  WatchToPhoneSyncer  │                                               │
-│  │  (DataClient)        │                                               │
-│  └──────────────────────┘                                               │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+Trama tiene hoy dos capas importantes:
+
+- captura y detección de recordatorios por voz
+- postproceso de cada entrada para convertirla en algo más estructurado
+
+El punto clave de la arquitectura actual es que el móvil ya no depende solo de `SpeechRecognizer`. Ahora existe una ruta preferente de ASR dedicado on-device con buffer contextual de audio.
 
 ## Módulos
 
-```
-MyDiary/
-├── app/          Phone app (Android, Compose, minSdk 26)
-├── wear/         Watch app (Wear OS, Wear Compose, minSdk 30)
-└── shared/       Librería compartida (Room DB, modelos, serialización)
-```
-
-Ambos módulos dependen de `shared` y comparten `applicationId = "com.mydiary.app"`.
-
-## Pipeline de voz
-
-```
-                    ┌─────────────────────┐
-                    │   Usuario habla     │
-                    └──────────┬──────────┘
-                               │
-                    ┌──────────▼──────────┐
-                    │  SpeechRecognizer   │
-                    │  (bucle continuo)   │
-                    │  es-ES + en-US      │
-                    └──────────┬──────────┘
-                               │ onResults
-                    ┌──────────▼──────────┐
-                    │  processText()      │
-                    │                     │
-                    │  "oye mira, hay que │
-                    │   llamar a Pedro"   │
-                    └──────────┬──────────┘
-                               │
-                    ┌──────────▼──────────┐
-                    │  Keyword matching   │
-                    │  (longest first)    │
-                    │                     │
-                    │  1. "hay que" ✓     │
-                    │     → TAREA         │
-                    └──────────┬──────────┘
-                               │
-              ┌────────────────┼────────────────┐
-              │                │                │
-    ┌─────────▼─────┐  ┌──────▼──────┐  ┌──────▼──────┐
-    │ Room insert   │  │  Vibración  │  │ Notificación│
-    │ (isSynced=0)  │  │  (feedback) │  │ "Nueva      │
-    └───────┬───────┘  └─────────────┘  │  entrada"   │
-            │                            └─────────────┘
-            ▼
-    ┌───────────────┐
-    │ Sync al otro  │
-    │ dispositivo   │
-    │ (DataClient)  │
-    └───────────────┘
+```text
+app/     móvil: UI, servicios, ASR, postproceso, backup
+shared/  modelos, Room, detección, sync, utilidades comunes
+wear/    reloj: listener, sync y UI Wear
 ```
 
-## Coordinación de micrófonos
+## Flujo principal en móvil
 
-```
-    PHONE activo                          WATCH
-    ────────────                          ─────
-    Service.start()
-         │
-         ├── MicCoordinator ──PAUSE──▶  PhoneToWatchReceiver
-         │                                    │
-         │                              WatchService.stop()
-         │                              phone_active = true
-         │
-    Service.stop()
-         │
-         ├── MicCoordinator ──RESUME──▶ PhoneToWatchReceiver
-                                              │
-                                        WatchService.resumeIfAllowed()
-                                        phone_active = false
-
-    ─────────────────────────────────────────────────────
-
-    PHONE                                 WATCH activo
-    ─────                                 ────────────
-                                          User taps toggle
-                                               │
-    WatchDataReceiver ◀──PAUSE── MicCoordinator ┤
-         │                                      │
-    ServiceController                     WatchService.start()
-      .stopByWatch()                      phone_active = false
-
-                                          WatchService.stop()
-                                               │
-    WatchDataReceiver ◀──RESUME── MicCoordinator┤
-         │
-    ServiceController
-      .start() (si user lo tenía activo)
+```text
+Usuario habla
+  -> KeywordListenerService
+  -> ContextualAudioCaptureEngine
+  -> CircularAudioBuffer
+  -> ventana de audio t0 + evento + t1
+  -> SherpaWhisperAsrEngine
+  -> IntentDetector
+  -> saveEntry()
+  -> ActionItemProcessor
+  -> Room
+  -> UI / sync / notificaciones
 ```
 
-**Regla**: El phone tiene prioridad automática. El usuario puede tomar el control manualmente desde el watch.
+## Rutas de escucha
 
-## Resumen diario (Gemini)
+### 1. Ruta preferente: ASR dedicado
 
-```
-    ┌─────────────┐         ┌──────────────────┐
-    │ WorkManager │──21:00──▶ DailySummaryWorker│
-    │ (diario)    │         └────────┬─────────┘
-    └─────────────┘                  │
-                          ┌──────────▼──────────┐
-                          │ Room: entries de hoy │
-                          │ byDateRange()        │
-                          └──────────┬──────────┘
-                                     │
-                          ┌──────────▼──────────┐
-                          │ SummaryGenerator     │
-                          │                     │
-                          │ ¿API key Gemini?     │
-                          │   Sí → gemini-flash  │
-                          │   No → rule-based    │
-                          └──────────┬──────────┘
-                                     │
-                    ┌────────────────┼────────────────┐
-                    │                                 │
-          ┌─────────▼─────────┐            ┌──────────▼──────────┐
-          │  Gemini Flash API │            │  Fallback           │
-          │                   │            │  (reglas simples)   │
-          │  Prompt:          │            │                     │
-          │  - Entries del día│            │  Agrupa por cat.    │
-          │  - Formato JSON   │            │  Detecta "llamar",  │
-          │                   │            │  "mañana", etc.     │
-          │  Respuesta:       │            │                     │
-          │  {                │            └──────────┬──────────┘
-          │   narrative: "...",│                       │
-          │   actions: [...]  │                       │
-          │  }                │                       │
-          └────────┬──────────┘                       │
-                   └──────────────┬───────────────────┘
-                                  │
-                       ┌──────────▼──────────┐
-                       │   DailySummary      │
-                       │   narrative + actions│
-                       └──────────┬──────────┘
-                                  │
-                   ┌──────────────┼──────────────┐
-                   │                             │
-          ┌────────▼────────┐          ┌─────────▼────────┐
-          │  Notificación   │          │  SummaryScreen   │
-          │  "Resumen del   │          │                  │
-          │   día — 5       │          │  Narrativa       │
-          │   acciones"     │          │  + ActionCards   │
-          └─────────────────┘          │  (tap = intent)  │
-                                       └──────────────────┘
+Archivos clave:
 
-    ActionTypes:
-    📅 CALENDAR_EVENT → CalendarContract
-    ⏰ REMINDER      → AlarmClock
-    ✅ TODO          → Share intent
-    💬 MESSAGE       → Share intent
-    📞 CALL          → Contactos
-    📝 NOTE          → Toast
-```
+- [`app/src/main/java/com/trama/app/service/KeywordListenerService.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/service/KeywordListenerService.kt)
+- [`app/src/main/java/com/trama/app/audio/ContextualAudioCaptureEngine.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/audio/ContextualAudioCaptureEngine.kt)
+- [`app/src/main/java/com/trama/app/audio/CircularAudioBuffer.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/audio/CircularAudioBuffer.kt)
+- [`app/src/main/java/com/trama/app/audio/SherpaWhisperAsrEngine.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/audio/SherpaWhisperAsrEngine.kt)
 
-## Almacenamiento
+Funcionamiento:
 
-```
-    PHONE                               WATCH
-    ─────                               ─────
+1. `AudioRecord` captura PCM mono a 16 kHz
+2. `CircularAudioBuffer` conserva siempre los últimos segundos de audio
+3. `SimpleVAD` detecta inicio y fin de voz
+4. Al cerrarse una ventana se construye un `CapturedAudioWindow`
+5. Whisper `small` en `sherpa-onnx` transcribe ese bloque
+6. `IntentDetector` clasifica la transcripción
 
-    Room Database                       Room Database
-    "mydiary-database"                  "mydiary-database"
-    ┌─────────────────┐                 ┌─────────────────┐
-    │ diary_entries    │  ◀──sync──▶    │ diary_entries    │
-    │                  │                │                  │
-    │ id, text, keyword│                │ id, text, keyword│
-    │ category, source │                │ category, source │
-    │ createdAt,       │                │ createdAt,       │
-    │ isSynced, ...    │                │ isSynced, ...    │
-    └─────────────────┘                 └─────────────────┘
+Propiedades:
 
-    DataStore Preferences               SharedPreferences
-    ┌─────────────────┐                 ┌─────────────────┐
-    │ keyword_mappings │──settings──▶   │ keyword_mappings │
-    │ categories       │    sync        │ phone_active     │
-    │ auto_start       │                │ user_enabled     │
-    │ summary_enabled  │                └─────────────────┘
-    │ summary_hour     │
-    └─────────────────┘
+- audio solo en RAM
+- `t0` y `t1` configurables
+- fallback automático si el backend dedicado falla
 
-    SharedPreferences
-    ┌─────────────────┐
-    │ daily_summary   │
-    │ (latest JSON)   │
-    │ gemini_api_key  │
-    └─────────────────┘
+### 2. Ruta fallback: `SpeechRecognizer`
 
-    SharedPreferences
-    ┌─────────────────┐
-    │ service_prefs   │
-    │ should_run      │
-    └─────────────────┘
-```
+Se mantiene como red de seguridad:
 
-## Categorías y keywords
+1. parciales para detección temprana
+2. resultado final para consolidar y guardar
+3. si hay match parcial pero el final llega peor, el servicio conserva esa detección parcial y la reutiliza
 
-```
-    TAREA       ■ "hay que", "tengo que", "me toca", "no te olvides de",
-                  "acuérdate de", "a ver si podemos"
+Esto evita perder recordatorios que sí se detectaron durante los parciales.
 
-    DECISIÓN    ■ "entonces hacemos", "vale pues", "lo dejamos en",
-                  "al final vamos a", "quedamos en que"
+## Detección semántica
 
-    PROBLEMA    ■ "el tema es que", "lo que pasa es que", "resulta que",
-                  "es que no", "la cosa es que", "el problema es"
+Archivos clave:
 
-    IDEA        ■ "oye y si", "yo creo que", "igual podríamos",
-                  "a lo mejor", "y si hacemos"
+- [`shared/src/main/java/com/trama/shared/speech/IntentDetector.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/shared/src/main/java/com/trama/shared/speech/IntentDetector.kt)
+- [`shared/src/main/java/com/trama/shared/speech/IntentPattern.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/shared/src/main/java/com/trama/shared/speech/IntentPattern.kt)
 
-    CONTACTO    ■ "llama a", "dile a", "pregúntale a",
-                  "escríbele a", "habla con"
+La app trabaja con categorías y frases activadoras. La configuración por defecto es mínima y el usuario puede crear las suyas.
 
-    URGENCIA    ■ "esto es para ya", "corre prisa",
-                  "cuanto antes", "no puede esperar"
+## Persistencia
 
-    CITA        ■ "tengo que ir a", "he quedado a las",
-                  "me han dado hora", "tengo cita en"
+Archivos clave:
 
-    DATO        ■ "por cierto", "que se me olvidaba",
-                  "una cosa", "oye mira"
+- [`shared/src/main/java/com/trama/shared/model/DiaryEntry.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/shared/src/main/java/com/trama/shared/model/DiaryEntry.kt)
+- [`shared/src/main/java/com/trama/shared/data/DiaryDao.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/shared/src/main/java/com/trama/shared/data/DiaryDao.kt)
+- [`shared/src/main/java/com/trama/shared/data/DiaryRepository.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/shared/src/main/java/com/trama/shared/data/DiaryRepository.kt)
 
-    RECORDATORIO ■ "se me fue la olla", "me olvidé de", "recuerda",
-                   "se me pasó", "no me acordé de", "se me fue de la cabeza",
-                   "que no se me olvide", "casi se me pasa", "tengo pendiente"
+`DiaryEntry` guarda:
 
-    CIERRE      ■ "ya está", "listo", "hecho", "pues nada"
-```
+- texto original
+- categoría / keyword
+- estado
+- prioridad
+- `cleanText`
+- tipo de acción
+- `dueDate`
+- metadatos de revisión AI
 
-**Matching**: Keywords ordenadas por longitud descendente.
-`"tengo que ir a"` (CITA) matchea antes que `"tengo que"` (TAREA).
+No se guarda audio crudo.
 
-## Stack tecnológico
+## Postproceso de entradas
 
-| Capa | Tecnología |
-|------|------------|
-| UI Phone | Jetpack Compose + Material 3 |
-| UI Watch | Wear Compose Material |
-| Base de datos | Room 2.7 (shared) |
-| Preferencias | DataStore (phone), SharedPreferences (watch) |
-| Reconocimiento | Android SpeechRecognizer (on-device / online) |
-| Sync | Wearable Data Layer (DataClient + MessageClient) |
-| Resumen IA | Gemini 2.0 Flash (cloud, con fallback rule-based) |
-| Programación | WorkManager (resumen diario) |
-| Serialización | kotlinx.serialization (JSON) |
-| Concurrencia | Kotlin Coroutines + Flow |
-| Build | AGP 9.0, Kotlin 2.2, KSP |
+Archivo clave:
+
+- [`app/src/main/java/com/trama/app/summary/ActionItemProcessor.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/summary/ActionItemProcessor.kt)
+
+Después de insertar una entrada:
+
+1. se marca como “procesando” en UI
+2. se intenta enriquecer con IA
+3. se actualizan `cleanText`, `actionType`, `dueDate`, `priority`
+4. se comprueban duplicados
+5. se limpia el estado visual de procesamiento
+
+## Estado compartido para UI
+
+Archivos clave:
+
+- [`app/src/main/java/com/trama/app/service/EntryProcessingState.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/service/EntryProcessingState.kt)
+- [`app/src/main/java/com/trama/app/service/RecordingState.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/service/RecordingState.kt)
+
+Se usan `StateFlow` simples para exponer:
+
+- grabación en curso
+- errores recientes
+- entradas que siguen en procesamiento
+
+La UI usa esto para pintar `Procesando...` en las tarjetas y en el panel de diagnóstico.
+
+## Diagnóstico ASR
+
+Archivos clave:
+
+- [`app/src/main/java/com/trama/app/ui/SettingsDataStore.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/ui/SettingsDataStore.kt)
+- [`app/src/main/java/com/trama/app/ui/screens/SettingsScreen.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/ui/screens/SettingsScreen.kt)
+
+Se persisten y muestran:
+
+- motor activo
+- estado
+- última transcripción
+- duración de ventana
+- tiempo de decodificación
+
+## Wear OS
+
+El reloj sigue una arquitectura más clásica:
+
+- escucha independiente
+- sincronización por Wearable Data Layer
+- coordinación de micrófono con el móvil
+
+El pipeline contextual con `AudioRecord` todavía no está portado al reloj.
+
+## Assets y nativo
+
+ASR dedicado móvil:
+
+- modelo Whisper `small` en [`app/src/main/assets/asr/whisper`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/assets/asr/whisper)
+- JNI de `sherpa-onnx` en [`app/src/main/jniLibs/arm64-v8a`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/jniLibs/arm64-v8a)
+- API Java vendorizada en [`app/src/main/java/com/k2fsa/sherpa/onnx`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/k2fsa/sherpa/onnx)
+
+## Limitaciones conocidas
+
+- La consistencia del ASR dedicado todavía está en ajuste
+- Solo está empaquetado `arm64-v8a`
+- El reloj no comparte aún la misma ruta de captura contextual
+- Hay fallos esporádicos del daemon de Kotlin que a veces muestran errores inconsistentes en compilaciones intermedias

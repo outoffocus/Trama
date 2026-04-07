@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.mydiary.shared"
+    namespace = "com.trama.shared"
     compileSdk = 34
 
     defaultConfig {

@@ -14,7 +14,7 @@ static struct whisper_context *g_context = nullptr;
 extern "C" {
 
 JNIEXPORT jboolean JNICALL
-Java_com_mydiary_app_speech_WhisperEngine_nativeLoadModel(
+Java_com_trama_app_speech_WhisperEngine_nativeLoadModel(
         JNIEnv *env, jobject /* this */, jstring modelPath) {
 
     if (g_context) {
@@ -40,7 +40,7 @@ Java_com_mydiary_app_speech_WhisperEngine_nativeLoadModel(
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_mydiary_app_speech_WhisperEngine_nativeTranscribe(
+Java_com_trama_app_speech_WhisperEngine_nativeTranscribe(
         JNIEnv *env, jobject /* this */, jfloatArray audioData, jstring language) {
 
     if (!g_context) {
@@ -113,7 +113,7 @@ Java_com_mydiary_app_speech_WhisperEngine_nativeTranscribe(
 }
 
 JNIEXPORT void JNICALL
-Java_com_mydiary_app_speech_WhisperEngine_nativeFree(
+Java_com_trama_app_speech_WhisperEngine_nativeFree(
         JNIEnv * /* env */, jobject /* this */) {
     if (g_context) {
         whisper_free(g_context);
