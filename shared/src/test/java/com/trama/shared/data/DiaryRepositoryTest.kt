@@ -182,6 +182,7 @@ private class FakeDiaryDao : DiaryDao {
     var lastSyncedIds: List<Long>? = null
 
     override fun getById(id: Long): Flow<DiaryEntry?> = flowOf(null)
+    override suspend fun getByIdOnce(id: Long): DiaryEntry? = inserted.find { it.id == id }
     override fun getAll(): Flow<List<DiaryEntry>> = flowOf(emptyList())
     override fun getPending(): Flow<List<DiaryEntry>> = flowOf(emptyList())
     override fun getCompleted(): Flow<List<DiaryEntry>> = flowOf(emptyList())

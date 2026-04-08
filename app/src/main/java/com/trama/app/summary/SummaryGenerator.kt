@@ -147,21 +147,31 @@ class SummaryGenerator(private val context: Context) {
 
         return """Eres un asistente personal. Analiza las notas de voz del usuario capturadas hoy ($dateStr).
 
-Responde UNICAMENTE con un JSON valido (sin texto antes ni después) con esta estructura:
+Responde UNICAMENTE con un JSON valido, sin texto antes ni despues, con esta estructura:
 - "narrative": string con resumen de 2-3 frases del dia en español
 - "groups": array de objetos con "label" (string), "emoji" (string), "items" (array de strings)
 - "actions": array de objetos con "type" (CALENDAR_EVENT|REMINDER|TODO|MESSAGE|CALL|NOTE), "title" (string), y opcionalmente "description", "datetime" (ISO 8601), "contact"
+
+Reglas generales:
+- No inventes hechos, fechas, personas ni acciones
+- Si algo es ambiguo, elige la interpretacion mas conservadora
+- Todo debe salir de las notas o del contexto de calendario proporcionado
 
 Reglas para "groups":
 - Agrupa TODAS las notas en categorias SEMANTICAS. Maximo 5-6 categorias
 - Los items deben ser frases cortas que resuman cada nota
 - NUNCA repitas una misma nota en dos categorias
+- Usa etiquetas utiles y naturales en español
 
 Reglas para "actions":
 - Solo incluye acciones que se deduzcan claramente de las notas
 - Detecta fechas relativas: "mañana" = dia siguiente a $dateStr
 - Si mencionan una persona, usa "contact"
+- "title" debe ser breve y accionable
+- "description" solo si aporta contexto real
+- Si no puedes inferir una fecha con claridad, omite "datetime"
 - NO inventes acciones que no esten en las notas
+- No dupliques acciones equivalentes
 $calendarContext
 Notas del dia:
 $entriesText"""

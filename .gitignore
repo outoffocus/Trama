@@ -49,3 +49,4 @@ wear/src/main/assets/model-es/conf/
 
 # sherpa-onnx / Whisper assets (keep local, do not commit large binaries)
 app/src/main/assets/asr/whisper/*.onnx
+app/src/main/assets/asr/moonshine/*.ort

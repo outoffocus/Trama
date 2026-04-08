@@ -11,6 +11,11 @@ import java.io.FileOutputStream
 class AssetFileCache(private val context: Context) {
     private val assetManager: AssetManager = context.assets
 
+    fun listAssets(path: String): List<String> {
+        val normalized = path.trim('/').trim()
+        return assetManager.list(normalized)?.toList().orEmpty()
+    }
+
     fun assetExists(path: String): Boolean {
         val normalized = path.trim('/').trim()
         if (normalized.isBlank()) return false
@@ -38,6 +43,14 @@ class AssetFileCache(private val context: Context) {
                 input.copyTo(output)
             }
         }
+        return outFile.absolutePath
+    }
+
+    fun ensureTextFile(path: String, contents: String): String {
+        val normalized = path.trim('/').trim()
+        val outFile = File(context.filesDir, normalized)
+        outFile.parentFile?.mkdirs()
+        outFile.writeText(contents)
         return outFile.absolutePath
     }
 }

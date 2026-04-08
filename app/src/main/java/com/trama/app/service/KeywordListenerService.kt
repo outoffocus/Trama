@@ -28,8 +28,11 @@ import com.trama.app.NotificationConfig
 import com.trama.app.R
 import com.trama.app.audio.ContextualAudioCaptureEngine
 import com.trama.app.audio.ContextualCaptureConfig
+import com.trama.app.audio.LightweightGateAsr
 import com.trama.app.audio.NoOpAsrEngine
+import com.trama.app.audio.NoOpLightweightGateAsr
 import com.trama.app.audio.OnDeviceAsrEngine
+import com.trama.app.audio.SherpaMoonshineGateAsr
 import com.trama.app.audio.SherpaWhisperAsrEngine
 import com.trama.app.speech.EntryValidator
 import com.trama.app.speech.IntentDetector
@@ -100,12 +103,12 @@ class KeywordListenerService : LifecycleService() {
     private var phoneToWatchSyncer: PhoneToWatchSyncer? = null
     private lateinit var settingsSyncer: SettingsSyncer
     private lateinit var asrEngine: OnDeviceAsrEngine
+    private lateinit var gateAsr: LightweightGateAsr
     private var contextualCaptureEngine: ContextualAudioCaptureEngine? = null
     private var contextualCaptureJob: Job? = null
     private var contextPreRollSeconds: Int = SettingsDataStore.DEFAULT_CONTEXT_PRE_ROLL
     private var contextPostRollSeconds: Int = SettingsDataStore.DEFAULT_CONTEXT_POST_ROLL
     private var asrDebugEnabled: Boolean = false
-
     @Volatile
     private var listening = false
 
@@ -165,6 +168,7 @@ class KeywordListenerService : LifecycleService() {
         speakerEnrollment = SpeakerEnrollment(applicationContext)
         settingsSyncer = SettingsSyncer(applicationContext)
         asrEngine = createAsrEngine()
+        gateAsr = createGateAsr()
         loadSettings()
         observeSettings()
         registerScreenReceiver()
@@ -291,9 +295,23 @@ class KeywordListenerService : LifecycleService() {
         }
     }
 
+    private fun createGateAsr(): LightweightGateAsr {
+        return try {
+            SherpaMoonshineGateAsr(applicationContext).takeIf { it.isAvailable } ?: NoOpLightweightGateAsr
+        } catch (e: Throwable) {
+            Log.w(TAG, "Lightweight Moonshine gate unavailable, will use Whisper directly", e)
+            NoOpLightweightGateAsr
+        }
+    }
+
     private fun initRecognizerAndStart() {
         if (asrEngine.isAvailable) {
-            publishAsrDebug(engine = asrEngine.name, status = "asr dedicado")
+            val status = if (gateAsr.isAvailable) {
+                "vad + moonshine + whisper"
+            } else {
+                "asr dedicado"
+            }
+            publishAsrDebug(engine = "${gateAsr.name} -> ${asrEngine.name}", status = status)
             initContextualCaptureAndStart()
         } else {
             publishAsrDebug(engine = "speechrecognizer", status = "fallback android")
@@ -305,14 +323,31 @@ class KeywordListenerService : LifecycleService() {
         listening = true
         val captureEngine = ContextualAudioCaptureEngine(
             context = applicationContext,
-            initialConfig = currentContextualConfig()
+            initialConfig = currentContextualConfig(),
+            gateAsr = gateAsr,
+            triggerDetector = { text -> intentDetector.detect(text) != null }
         ).also { engine ->
             engine.onStatusChanged = { state ->
-                publishAsrDebug(engine = asrEngine.name, status = state)
+                if (state == "gating" || state == "capturing") {
+                    partialAlreadyVibrated = false
+                    confirmedAlreadyVibrated = false
+                    pendingPartialDetection = null
+                    recentRmsValues.clear()
+                }
+                publishAsrDebug(engine = "${gateAsr.name} -> ${asrEngine.name}", status = humanReadableAsrState(state))
                 when (state) {
                     "capturing" -> updateNotificationIfChanged("Capturando contexto...")
+                    "gating" -> updateNotificationIfChanged("Escuchando (gate ligero)")
+                    "trigger_detected" -> updateNotificationIfChanged("Trigger detectado, procesando contexto...")
                     else -> updateNotificationIfChanged("Escuchando (ASR dedicado)")
                 }
+            }
+            engine.onGateMatch = {
+                if (!partialAlreadyVibrated) {
+                    vibrate(longArrayOf(0, 35))
+                    partialAlreadyVibrated = true
+                }
+                publishAsrDebug(status = "trigger detectado")
             }
             engine.onWindowCaptured = { window ->
                 lifecycleScope.launch(Dispatchers.IO) {
@@ -567,6 +602,16 @@ class KeywordListenerService : LifecycleService() {
             preRollSeconds = contextPreRollSeconds,
             postRollSeconds = contextPostRollSeconds
         )
+    }
+
+    private fun humanReadableAsrState(state: String): String {
+        return when (state) {
+            "gating" -> "esperando trigger"
+            "capturing" -> "capturando voz"
+            "trigger_detected" -> "trigger detectado"
+            "listening" -> if (gateAsr.isAvailable) "esperando trigger" else "escuchando"
+            else -> state
+        }
     }
 
     /**

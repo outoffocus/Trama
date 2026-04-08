@@ -6,8 +6,10 @@ import com.google.ai.client.generativeai.GenerativeModel
 import com.trama.app.GeminiConfig
 import com.google.ai.client.generativeai.type.generationConfig
 import com.trama.shared.data.DiaryRepository
+import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.EntryActionType
 import com.trama.shared.model.EntryPriority
+import com.trama.shared.model.EntryStatus
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.text.SimpleDateFormat
@@ -27,8 +29,12 @@ class ActionItemProcessor(private val context: Context) {
 
     suspend fun process(entryId: Long, text: String, repository: DiaryRepository) {
         val result = tryProcess(text)
+        val splitCleanTexts = maybeAutoSplitEntry(entryId, text, result, repository)
+        val dedupTargets = splitCleanTexts.ifEmpty {
+            listOf(result?.cleanText ?: text)
+        }
 
-        if (result != null) {
+        if (result != null && splitCleanTexts.isEmpty()) {
             repository.updateAIProcessing(
                 id = entryId,
                 cleanText = result.cleanText,
@@ -44,11 +50,66 @@ class ActionItemProcessor(private val context: Context) {
 
         // Check for duplicates
         try {
-            val cleanText = result?.cleanText ?: text
-            checkForDuplicates(entryId, cleanText, repository)
+            checkForDuplicates(entryId, dedupTargets.first(), repository)
         } catch (e: Exception) {
             Log.w(TAG, "Duplicate check failed", e)
         }
+    }
+
+    private suspend fun maybeAutoSplitEntry(
+        entryId: Long,
+        originalText: String,
+        result: ProcessingResult?,
+        repository: DiaryRepository
+    ): List<String> {
+        val suggestions = ManualActionSuggestionExtractor.extract(originalText)
+            .distinctBy { it.text.lowercase(Locale.getDefault()) }
+            .take(4)
+
+        if (suggestions.size < 2) return emptyList()
+
+        val originalEntry = repository.getByIdOnce(entryId) ?: return emptyList()
+        val primary = suggestions.first()
+
+        repository.updateAIProcessing(
+            id = entryId,
+            cleanText = primary.text,
+            actionType = primary.actionType,
+            dueDate = primary.dueDate,
+            priority = primary.priority,
+            confidence = result?.confidence ?: 0.8f
+        )
+
+        Log.i(TAG, "Auto-splitting entry $entryId into ${suggestions.size} actions")
+
+        for (suggestion in suggestions.drop(1)) {
+            val siblingId = repository.insert(
+                DiaryEntry(
+                    text = suggestion.text,
+                    keyword = originalEntry.keyword,
+                    category = originalEntry.category,
+                    confidence = originalEntry.confidence,
+                    createdAt = System.currentTimeMillis(),
+                    source = originalEntry.source,
+                    duration = originalEntry.duration,
+                    correctedText = null,
+                    wasReviewedByLLM = true,
+                    llmConfidence = result?.confidence ?: originalEntry.llmConfidence,
+                    status = EntryStatus.PENDING,
+                    actionType = suggestion.actionType,
+                    cleanText = suggestion.text,
+                    dueDate = suggestion.dueDate,
+                    priority = suggestion.priority
+                )
+            )
+            try {
+                checkForDuplicates(siblingId, suggestion.text, repository)
+            } catch (e: Exception) {
+                Log.w(TAG, "Duplicate check failed for auto-split sibling $siblingId", e)
+            }
+        }
+
+        return suggestions.map { it.text }
     }
 
     private suspend fun tryProcess(text: String): ProcessingResult? {
@@ -136,7 +197,11 @@ class ActionItemProcessor(private val context: Context) {
         val tomorrow = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 1) }
         val tomorrowStr = dateFormat.format(tomorrow.time)
 
-        return """Analiza esta nota de voz capturada y responde SOLO con JSON:
+        return """Analiza esta nota de voz capturada y devuelve SOLO un objeto JSON valido.
+- No añadas explicaciones, markdown, backticks ni texto extra.
+- Si dudas entre varias interpretaciones, elige la mas conservadora.
+
+Formato exacto:
 {
   "cleanText": "texto limpio y corregido, sin el trigger inicial",
   "actionType": "CALL|BUY|SEND|EVENT|REVIEW|TALK_TO|GENERIC",
@@ -146,10 +211,30 @@ class ActionItemProcessor(private val context: Context) {
 }
 
 Reglas:
-- cleanText: elimina frases activadoras ("tengo que", "hay que", "debería", "recordar") y deja solo la acción limpia. Capitaliza. Corrige errores de transcripción.
+- cleanText:
+  - elimina frases activadoras como "recordar", "tengo que", "hay que", "deberia", "acordarme de", "acordarnos de", "me olvide", "se me fue la olla"
+  - deja solo el contenido util de la nota
+  - corrige errores claros de transcripcion
+  - manten el mismo idioma
+  - escribe una frase breve, natural y capitalizada
+  - no inventes detalles que no aparecen en la nota
 - actionType: CALL=llamar, BUY=comprar, SEND=enviar, EVENT=cita/reunión, REVIEW=revisar, TALK_TO=hablar con, GENERIC=otro
-- dueDate: si menciona fecha, conviértela. Hoy=$today, mañana=$tomorrowStr. Si no hay fecha, null.
-- priority: URGENT si urgente/ya/ahora. HIGH si importante. LOW si cuando pueda. NORMAL en el resto.
+- dueDate:
+  - usa YYYY-MM-DD
+  - conviertela solo si la nota menciona una fecha o momento temporal claro
+  - hoy = $today
+  - mañana = $tomorrowStr
+  - si no hay fecha clara, devuelve null
+  - no inventes fechas
+- priority:
+  - URGENT si aparece urgencia explicita como "urgente", "ya", "ahora", "cuanto antes"
+  - HIGH si indica alta importancia
+  - LOW si transmite baja prioridad o "cuando pueda"
+  - NORMAL en el resto
+- confidence:
+  - entre 0.0 y 1.0
+  - alto si el contenido es claro y especifico
+  - bajo si la nota es ambigua o esta mal transcrita
 
 Nota de voz: "$text""""
     }
@@ -176,8 +261,9 @@ Nota de voz: "$text""""
 
         val entriesList = existing.take(20).joinToString("\n") { "${it.id}: ${it.displayText}" }
 
-        val prompt = """Compara esta nueva tarea con las existentes y dime si es un DUPLICADO.
-Responde SOLO con JSON: {"duplicateOfId": ID_NUMBER o null}
+        val prompt = """Compara esta nueva tarea con las existentes y decide si es un DUPLICADO exacto.
+Responde SOLO con un objeto JSON valido y nada mas:
+{"duplicateOfId": ID_NUMBER o null}
 
 Nueva tarea: "$cleanText"
 
@@ -186,10 +272,13 @@ $entriesList
 
 Reglas:
 - DUPLICADO = la MISMA tarea concreta: mismo verbo + mismo objeto/persona específica
+- Debe referirse a la misma accion pendiente, no solo al mismo tema general
 - "Llamar a Juan" y "Telefonear a Juan" → SÍ duplicado (misma persona)
 - "Comprar ajos" y "Comprar un coche" → NO duplicado (objetos distintos)
 - "Llamar al dentista" y "Llamar a mi hermana" → NO duplicado (personas distintas)
+- "Mirar presupuesto de cocina" y "Pedir presupuesto de cocina" → NO duplicado si la accion principal cambia
 - Compartir solo el verbo (comprar, llamar, enviar) NO es suficiente para ser duplicado
+- Si no coincide exactamente la persona, objeto o accion principal, responde null
 - En caso de duda, responde null"""
 
         // Try Cloud

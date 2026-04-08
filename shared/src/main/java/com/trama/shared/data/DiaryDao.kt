@@ -13,6 +13,9 @@ interface DiaryDao {
     @Query("SELECT * FROM diary_entries WHERE id = :id")
     fun getById(id: Long): Flow<DiaryEntry?>
 
+    @Query("SELECT * FROM diary_entries WHERE id = :id")
+    suspend fun getByIdOnce(id: Long): DiaryEntry?
+
     @Query("SELECT * FROM diary_entries ORDER BY createdAt DESC")
     fun getAll(): Flow<List<DiaryEntry>>
 

@@ -165,20 +165,37 @@ class RecordingProcessor(private val context: Context) {
             .format(Calendar.getInstance().time)
 
         // Call 1: title + summary (plain text, no JSON needed)
-        val titlePrompt = "Pon un titulo breve (maximo 8 palabras) a esta nota. Responde SOLO con el titulo:\n\n$transcription"
+        val titlePrompt = """Escribe un titulo breve para esta nota.
+- Maximo 8 palabras
+- Debe describir el tema principal
+- Responde SOLO con el titulo, sin comillas ni texto extra
+
+$transcription"""
         val title = GemmaClient.generate(context, titlePrompt, maxTokens = 32)
             ?.trim()?.removeSurrounding("\"")?.take(80)
             ?: "Nota de voz"
 
-        val summaryPrompt = "Resume esta nota en 2-3 frases. Responde SOLO con el resumen:\n\n$transcription"
+        val summaryPrompt = """Resume esta nota en 2 o 3 frases.
+- Se fiel al contenido
+- No inventes informacion
+- Responde SOLO con el resumen, sin encabezados ni viñetas
+
+$transcription"""
         val summary = GemmaClient.generate(context, summaryPrompt, maxTokens = 256)
             ?.trim() ?: transcription.take(200)
 
         // Call 2: extract actions as simple JSON array
-        val actionsPrompt = """Lista las tareas o cosas por hacer de este texto como JSON.
-Responde SOLO con un array JSON, ejemplo: [{"text":"Comprar leche","type":"BUY"}]
-Si no hay tareas, responde: []
+        val actionsPrompt = """Extrae las tareas o cosas por hacer de este texto.
+Responde SOLO con un array JSON valido y nada mas.
+Ejemplo: [{"text":"Comprar leche","type":"BUY"}]
+Si no hay tareas, responde [].
 Tipos validos: CALL, BUY, SEND, EVENT, REVIEW, TALK_TO, GENERIC
+Reglas:
+- text debe ser breve, claro y accionable
+- corrige errores obvios de transcripcion
+- no inventes tareas
+- no incluyas contexto innecesario
+- si una fecha aparece de forma implicita o poco clara, ignorala
 Hoy es $today.
 
 Texto: "$transcription""""
@@ -222,7 +239,11 @@ Texto: "$transcription""""
         val tomorrow = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
             .format(Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 1) }.time)
 
-        return """Analiza esta transcripción de una grabación de voz y responde SOLO con JSON válido:
+        return """Analiza esta transcripcion de una grabacion de voz y devuelve SOLO un objeto JSON valido.
+- No añadas explicaciones, markdown, backticks ni texto fuera del JSON.
+- No inventes hechos, fechas ni tareas.
+
+Formato exacto:
 {
   "title": "Título breve y descriptivo (max 8 palabras)",
   "summary": "Resumen de 2-3 párrafos del contenido principal",
@@ -238,14 +259,26 @@ Texto: "$transcription""""
 }
 
 Reglas:
-- title: resumir el tema principal en pocas palabras
-- summary: contexto, decisiones, temas discutidos. Neutro y conciso
-- keyPoints: máximo 7 puntos. Frases cortas con la información más importante
-- actionItems: TODAS las tareas, compromisos, cosas por hacer mencionadas. Si no hay, lista vacía
+- title:
+  - resume el tema principal en pocas palabras
+  - maximo 8 palabras
+  - no uses comillas
+- summary:
+  - resume el contenido principal en 2 o 3 parrafos cortos
+  - tono neutro y fiel al contenido
+  - incluye contexto, decisiones o temas tratados solo si aparecen de verdad
+- keyPoints:
+  - maximo 7 puntos
+  - frases cortas con informacion realmente importante
+  - si hay poco contenido, usa menos puntos
+- actionItems:
+  - incluye TODAS las tareas, compromisos o cosas por hacer mencionadas claramente
+  - si no hay tareas, usa []
   - text: acción limpia y concisa
   - actionType: CALL=llamar, BUY=comprar, SEND=enviar, EVENT=cita/reunión, REVIEW=revisar, TALK_TO=hablar con, GENERIC=otro
-  - dueDate: SOLO si mencionan una fecha EXPLÍCITA (hoy, mañana, lunes, 5 de abril, etc.), convertir a YYYY-MM-DD. Hoy=$today, mañana=$tomorrow. Si NO mencionan ninguna fecha concreta, SIEMPRE null. "Recordar" o "no olvidar" NO implican fecha
-  - priority: URGENT si urgente/ya/ahora. HIGH si importante. LOW si cuando pueda. NORMAL en el resto
+  - dueDate: SOLO si mencionan una fecha o momento temporal claro y explicito (hoy, mañana, lunes, 5 de abril, etc.), convertir a YYYY-MM-DD. Hoy=$today, mañana=$tomorrow. Si NO mencionan ninguna fecha concreta, devuelve null. "Recordar" o "no olvidar" NO implican fecha
+  - priority: URGENT si urgente/ya/ahora/cuanto antes. HIGH si importante. LOW si cuando pueda. NORMAL en el resto
+  - no crees dos tareas si en realidad es la misma accion expresada dos veces
 
 Transcripción:
 \"\"\"

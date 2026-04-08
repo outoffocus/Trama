@@ -22,7 +22,9 @@ import kotlin.math.max
  */
 class ContextualAudioCaptureEngine(
     private val context: Context,
-    initialConfig: ContextualCaptureConfig
+    initialConfig: ContextualCaptureConfig,
+    private val gateAsr: LightweightGateAsr = NoOpLightweightGateAsr,
+    private val triggerDetector: (String) -> Boolean = { false }
 ) {
     companion object {
         private const val TAG = "ContextualAudioCapture"
@@ -37,6 +39,8 @@ class ContextualAudioCaptureEngine(
         val config: ContextualCaptureConfig,
         val assembler: ContextualCaptureAssembler,
         val preRollWindow: CapturedAudioWindow,
+        var gateTranscript: String? = null,
+        var triggerMatched: Boolean = false,
         var postRollRemainingSamples: Int = -1,
         var capturedSamples: Int = 0
     )
@@ -49,6 +53,7 @@ class ContextualAudioCaptureEngine(
 
     var onWindowCaptured: ((CapturedAudioWindow) -> Unit)? = null
     var onStatusChanged: ((String) -> Unit)? = null
+    var onGateMatch: ((String) -> Unit)? = null
 
     fun updateConfig(newConfig: ContextualCaptureConfig) {
         config = sanitize(newConfig)
@@ -103,16 +108,23 @@ class ContextualAudioCaptureEngine(
                 assembler = assembler,
                 preRollWindow = assembler.beginCapture(rollingBuffer)
             )
-            onStatusChanged?.invoke("capturing")
+            onStatusChanged?.invoke(if (gateAsr.isAvailable) "gating" else "capturing")
         }
 
         fun finalizeCapture() {
             val capture = activeCapture ?: return
             val finalWindow = capture.assembler.finalizeWindow(capture.preRollWindow)
             activeCapture = null
-            if (finalWindow.mergedPcm().isNotEmpty()) {
+            val shouldEmit = !gateAsr.isAvailable || capture.triggerMatched
+            if (shouldEmit && finalWindow.mergedPcm().isNotEmpty()) {
                 onWindowCaptured?.invoke(finalWindow)
             }
+            onStatusChanged?.invoke("listening")
+        }
+
+        fun discardCapture() {
+            activeCapture ?: return
+            activeCapture = null
             onStatusChanged?.invoke("listening")
         }
 
@@ -125,7 +137,11 @@ class ContextualAudioCaptureEngine(
         }
         vad.onVoiceEnd = {
             activeCapture?.let { capture ->
-                capture.postRollRemainingSamples = capture.config.postRollSeconds * capture.config.sampleRateHz
+                if (!capture.triggerMatched && gateAsr.isAvailable) {
+                    capture.postRollRemainingSamples = 0
+                } else {
+                    capture.postRollRemainingSamples = capture.config.postRollSeconds * capture.config.sampleRateHz
+                }
             }
         }
 
@@ -149,11 +165,32 @@ class ContextualAudioCaptureEngine(
 
                     val maxSamples = MAX_SPEECH_SECONDS * capture.config.sampleRateHz
                     if (capture.capturedSamples >= maxSamples) {
-                        finalizeCapture()
+                        if (gateAsr.isAvailable && !capture.triggerMatched) {
+                            discardCapture()
+                        } else {
+                            finalizeCapture()
+                        }
                     } else if (capture.postRollRemainingSamples >= 0) {
                         capture.postRollRemainingSamples -= read
                         if (capture.postRollRemainingSamples <= 0) {
-                            finalizeCapture()
+                            if (gateAsr.isAvailable && !capture.triggerMatched) {
+                                val gateWindow = capture.assembler.finalizeWindow(capture.preRollWindow)
+                                val transcript = runCatching { transcribeWithGate(gateWindow) }
+                                    .getOrNull()
+                                    ?.trim()
+                                    .orEmpty()
+                                capture.gateTranscript = transcript
+                                if (transcript.isNotBlank() && triggerDetector(transcript)) {
+                                    capture.triggerMatched = true
+                                    onGateMatch?.invoke(transcript)
+                                    onStatusChanged?.invoke("trigger_detected")
+                                    capture.postRollRemainingSamples = capture.config.postRollSeconds * capture.config.sampleRateHz
+                                } else {
+                                    discardCapture()
+                                }
+                            } else {
+                                finalizeCapture()
+                            }
                         }
                     }
                 }
@@ -182,5 +219,9 @@ class ContextualAudioCaptureEngine(
             sampleRateHz = raw.sampleRateHz.coerceAtLeast(8_000),
             silenceStopMs = raw.silenceStopMs.coerceAtLeast(250L)
         )
+    }
+
+    private suspend fun transcribeWithGate(window: CapturedAudioWindow): String? {
+        return gateAsr.transcribe(window, languageTag = "es")
     }
 }

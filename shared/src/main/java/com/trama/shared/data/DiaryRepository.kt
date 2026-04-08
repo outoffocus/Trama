@@ -14,6 +14,8 @@ class DiaryRepository(
 
     fun getById(id: Long): Flow<DiaryEntry?> = dao.getById(id).distinctUntilChanged()
 
+    suspend fun getByIdOnce(id: Long): DiaryEntry? = dao.getByIdOnce(id)
+
     fun getAll(): Flow<List<DiaryEntry>> = dao.getAll().distinctUntilChanged()
 
     fun getPending(): Flow<List<DiaryEntry>> = dao.getPending().distinctUntilChanged()
