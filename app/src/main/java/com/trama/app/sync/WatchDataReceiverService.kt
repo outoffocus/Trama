@@ -1,11 +1,15 @@
 package com.trama.app.sync
 
 import android.util.Log
+import com.google.android.gms.wearable.DataMap
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.MessageEvent
+import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
+import com.trama.app.audio.CapturedAudioWindow
+import com.trama.app.audio.SherpaWhisperAsrEngine
 import com.trama.app.service.RecordingState
 import com.trama.app.service.ServiceController
 import com.trama.shared.sync.MicCoordinator
@@ -13,12 +17,15 @@ import com.trama.shared.data.DatabaseProvider
 import com.trama.shared.data.DiaryRepository
 import com.trama.shared.model.Recording
 import com.trama.shared.model.RecordingStatus
+import com.trama.shared.model.Source
 import com.trama.shared.model.SyncPayload
+import com.trama.shared.model.WatchAudioSyncMetadata
 import com.trama.app.summary.RecordingProcessor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import kotlinx.serialization.json.Json
 
 /**
@@ -31,6 +38,7 @@ class WatchDataReceiverService : WearableListenerService() {
     companion object {
         private const val TAG = "WatchDataReceiver"
         private const val SYNC_PATH = "/trama/sync"
+        private const val AUDIO_RECORDING_PATH_PREFIX = "/trama/audio-recording"
         private const val MIC_PATH = "/trama/mic"
         private const val SYNC_REQUEST_PATH = "/trama/request-full-sync"
         private const val CMD_PAUSE = MicCoordinator.CMD_PAUSE
@@ -47,10 +55,16 @@ class WatchDataReceiverService : WearableListenerService() {
         dataEvents.forEach { event ->
             if (event.type == DataEvent.TYPE_CHANGED) {
                 val path = event.dataItem.uri.path ?: return@forEach
-                if (path == SYNC_PATH) {
-                    val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
-                    val json = dataMap.getString("payload") ?: return@forEach
-                    handleEntries(json, repository)
+                when {
+                    path == SYNC_PATH -> {
+                        val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
+                        val json = dataMap.getString("payload") ?: return@forEach
+                        handleEntries(json, repository)
+                    }
+                    path.startsWith(AUDIO_RECORDING_PATH_PREFIX) -> {
+                        val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
+                        handleAudioRecording(dataMap, repository)
+                    }
                 }
             }
         }
@@ -139,5 +153,86 @@ class WatchDataReceiverService : WearableListenerService() {
                 Log.e(TAG, "Failed to process sync data", e)
             }
         }
+    }
+
+    private fun handleAudioRecording(dataMap: DataMap, repository: DiaryRepository) {
+        scope.launch {
+            try {
+                val metadataJson = dataMap.getString("metadata") ?: return@launch
+                val asset = dataMap.getAsset("audio_pcm16") ?: return@launch
+                val metadata = Json.decodeFromString<WatchAudioSyncMetadata>(metadataJson)
+
+                if (repository.existsRecordingByCreatedAt(metadata.createdAt)) {
+                    Log.i(TAG, "Watch audio already imported for ${metadata.createdAt}")
+                    return@launch
+                }
+
+                val assetInput = Wearable.getDataClient(applicationContext)
+                    .getFdForAsset(asset)
+                    .await()
+                    .inputStream
+                    ?: return@launch
+
+                val pcmBytes = assetInput.use { it.readBytes() }
+                val pcm = bytesToShortArray(pcmBytes)
+                if (pcm.isEmpty()) {
+                    Log.w(TAG, "Empty watch PCM payload")
+                    return@launch
+                }
+
+                val whisper = SherpaWhisperAsrEngine(applicationContext)
+                val transcript = if (whisper.isAvailable) {
+                    whisper.transcribe(
+                        CapturedAudioWindow(
+                            preRollPcm = shortArrayOf(),
+                            livePcm = pcm,
+                            sampleRateHz = metadata.sampleRateHz
+                        ),
+                        languageTag = "es"
+                    )?.text?.trim().orEmpty()
+                } else {
+                    ""
+                }
+
+                val effectiveTranscript = transcript.ifBlank { metadata.triggerText.orEmpty() }
+
+                val recordingId = repository.insertRecording(
+                    Recording(
+                        transcription = effectiveTranscript.ifBlank { "[Audio del reloj pendiente de transcripcion]" },
+                        durationSeconds = metadata.durationSeconds,
+                        source = Source.valueOf(metadata.source),
+                        createdAt = metadata.createdAt,
+                        processingStatus = if (effectiveTranscript.isBlank()) RecordingStatus.FAILED else RecordingStatus.PENDING,
+                        isSynced = true
+                    )
+                )
+
+                if (effectiveTranscript.isNotBlank()) {
+                    try {
+                        RecordingProcessor(applicationContext).process(recordingId, repository)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to process imported watch audio $recordingId", e)
+                        repository.updateRecordingStatus(recordingId, RecordingStatus.FAILED)
+                    }
+                }
+
+                Log.i(TAG, "Imported watch audio recording (id=$recordingId)")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to process watch audio payload", e)
+            }
+        }
+    }
+
+    private fun bytesToShortArray(bytes: ByteArray): ShortArray {
+        if (bytes.size < 2) return shortArrayOf()
+        val result = ShortArray(bytes.size / 2)
+        var byteIndex = 0
+        for (sampleIndex in result.indices) {
+            val lo = bytes[byteIndex].toInt() and 0xFF
+            val hi = bytes[byteIndex + 1].toInt()
+            result[sampleIndex] = ((hi shl 8) or lo).toShort()
+            byteIndex += 2
+        }
+        return result
     }
 }

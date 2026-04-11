@@ -60,6 +60,9 @@ interface DiaryDao {
     @Query("UPDATE diary_entries SET text = :text, cleanText = :text, correctedText = NULL WHERE id = :id")
     suspend fun updateText(id: Long, text: String)
 
+    @Query("UPDATE diary_entries SET dueDate = :dueDate WHERE id = :id")
+    suspend fun updateDueDate(id: Long, dueDate: Long?)
+
     @Query("UPDATE diary_entries SET isSynced = 1 WHERE id IN (:ids)")
     suspend fun markSynced(ids: List<Long>): Int
 
@@ -102,6 +105,10 @@ interface DiaryDao {
     /** Get most recent pending entry (for watch home screen) */
     @Query("SELECT * FROM diary_entries WHERE status = 'PENDING' ORDER BY createdAt DESC LIMIT 1")
     fun getLatestPending(): Flow<DiaryEntry?>
+
+    /** One-shot latest pending entry for transactional dedup checks */
+    @Query("SELECT * FROM diary_entries WHERE status = 'PENDING' ORDER BY createdAt DESC LIMIT 1")
+    suspend fun getLatestPendingOnce(): DiaryEntry?
 
     /** Total entry count (lightweight) */
     @Query("SELECT COUNT(*) FROM diary_entries")

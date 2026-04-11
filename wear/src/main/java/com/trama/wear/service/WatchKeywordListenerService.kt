@@ -19,17 +19,17 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
+import com.trama.wear.audio.WatchTriggeredAudioCapture
 import com.trama.wear.NotificationConfig
 import com.trama.wear.R
 import com.trama.wear.ui.WatchMainActivity
 import com.trama.shared.data.DiaryRepository
 import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.Source
+import com.trama.shared.model.WatchAudioSyncMetadata
 import com.trama.shared.speech.EntryValidatorHeuristics
 import com.trama.shared.speech.IntentDetector
 import com.trama.shared.speech.IntentPattern
-import com.trama.shared.speech.SpeakerProfile
-import com.trama.wear.speech.WatchSpeakerEnrollment
 import com.trama.shared.sync.MicCoordinator
 import com.trama.wear.sync.PhoneToWatchReceiver
 import com.trama.wear.sync.WatchToPhoneSyncer
@@ -42,10 +42,10 @@ import kotlinx.coroutines.launch
  * Watch keyword listener — SpeechRecognizer with smart backoff.
  *
  * No VAD (avoids mic contention that cuts phrases). Battery strategy:
- * 1. Smart backoff: speech without keyword → delay grows (1s→2s→4s→8s)
+ * 1. Smart backoff: speech without keyword → delay grows (1s→2s→4s→5s)
  *    Only keyword match resets backoff to fast mode (300ms)
  * 2. Silence backoff: ERROR_NO_MATCH/TIMEOUT → same progressive delay
- * 3. Speaker verification using locally enrolled profile (watch mic)
+ * 3. Battery receiver stops continuous listening immediately on low battery
  * 4. Sync per entry without setUrgent()
  */
 class WatchKeywordListenerService : LifecycleService() {
@@ -59,13 +59,10 @@ class WatchKeywordListenerService : LifecycleService() {
         // Restart delays — progressive backoff
         private const val RESTART_AFTER_KEYWORD_MS = 300L    // fast: user actively dictating
         private const val RESTART_MIN_BACKOFF_MS = 1000L     // 1s initial backoff
-        private const val RESTART_MAX_BACKOFF_MS = 8000L     // 8s max backoff
+        private const val RESTART_MAX_BACKOFF_MS = 5000L     // 5s max backoff
         private const val ERROR_RETRY_DELAY_MS = 3000L       // 3s on hard errors
 
         private const val DEDUP_WINDOW_MS = 5000L
-
-        // Battery check: every N restarts
-        private const val BATTERY_CHECK_INTERVAL = 15
     }
 
     private var recognizer: SpeechRecognizer? = null
@@ -79,11 +76,8 @@ class WatchKeywordListenerService : LifecycleService() {
     private var consecutiveErrors = 0      // hard errors (not silence/no-match)
     private var lastNotificationText = ""
     private var useSimpleIntent = false
-
-    // Speaker verification (enrolled locally on watch)
-    private var speakerProfile: SpeakerProfile? = null
-    private var speakerThreshold: Float = 0.45f
-    private val recentRmsValues = mutableListOf<Double>()
+    private var batteryPct = 100
+    @Volatile private var captureInFlight = false
 
     // Deduplication
     private var lastSavedText = ""
@@ -93,6 +87,23 @@ class WatchKeywordListenerService : LifecycleService() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == "com.trama.wear.SETTINGS_UPDATED") {
                 lifecycleScope.launch(Dispatchers.IO) { loadSettingsFromPrefs() }
+            }
+        }
+    }
+
+    private val batteryReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != Intent.ACTION_BATTERY_CHANGED) return
+            val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+            val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1).coerceAtLeast(1)
+            batteryPct = if (level >= 0) (level * 100) / scale else batteryPct
+
+            if (listening && batteryPct in 1 until LOW_BATTERY_THRESHOLD) {
+                Log.w(TAG, "Battery dropped to $batteryPct%, stopping watch listener")
+                updateNotificationIfChanged("Batería baja · vuelve al teléfono")
+                listening = false
+                WatchServiceController.sendResumeToPhone(applicationContext)
+                stopSelf()
             }
         }
     }
@@ -129,6 +140,7 @@ class WatchKeywordListenerService : LifecycleService() {
 
             launch(Dispatchers.Main) {
                 registerSettingsReceiver()
+                registerBatteryReceiver()
                 initRecognizerAndStart()
             }
 
@@ -145,9 +157,20 @@ class WatchKeywordListenerService : LifecycleService() {
         } catch (_: Exception) {}
     }
 
+    private fun registerBatteryReceiver() {
+        try {
+            registerReceiver(
+                batteryReceiver,
+                IntentFilter(Intent.ACTION_BATTERY_CHANGED),
+                Context.RECEIVER_NOT_EXPORTED
+            )
+        } catch (_: Exception) {}
+    }
+
     override fun onDestroy() {
         listening = false
         try { unregisterReceiver(settingsReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(batteryReceiver) } catch (_: Exception) {}
         recognizer?.destroy()
         recognizer = null
 
@@ -184,23 +207,6 @@ class WatchKeywordListenerService : LifecycleService() {
             intentDetector?.setCustomKeywords(keywords)
         }
 
-        // Speaker verification — user can enable/disable from watch settings
-        val watchPrefs = getSharedPreferences("watch_settings", Context.MODE_PRIVATE)
-        val speakerVerificationEnabled = watchPrefs.getBoolean("speaker_verification_enabled", false)
-        speakerThreshold = watchPrefs.getFloat("speaker_threshold", 0.45f)
-
-        if (speakerVerificationEnabled) {
-            prefs.getString("speaker_profile_json", null)?.let { json ->
-                speakerProfile = SpeakerProfile.deserialize(json)
-                Log.i(TAG, "Speaker verification enabled (threshold=${"%.0f".format(speakerThreshold * 100)}%)")
-            } ?: run {
-                speakerProfile = null
-                Log.i(TAG, "Speaker verification enabled but no profile found")
-            }
-        } else {
-            speakerProfile = null
-            Log.d(TAG, "Speaker verification disabled")
-        }
     }
 
     private fun initDatabase() {
@@ -232,7 +238,6 @@ class WatchKeywordListenerService : LifecycleService() {
         if (!listening) return
         val rec = recognizer ?: return
 
-        recentRmsValues.clear()
         updateNotificationIfChanged(
             if (consecutiveNoKeyword == 0) "Escuchando..." else "Esperando..."
         )
@@ -240,12 +245,7 @@ class WatchKeywordListenerService : LifecycleService() {
         rec.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {}
             override fun onBeginningOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) {
-                if (speakerProfile != null) {
-                    recentRmsValues.add(rmsdB.toDouble())
-                    if (recentRmsValues.size > 30) recentRmsValues.removeAt(0)
-                }
-            }
+            override fun onRmsChanged(rmsdB: Float) {}
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() {}
 
@@ -291,9 +291,8 @@ class WatchKeywordListenerService : LifecycleService() {
                     Log.i(TAG, "Heard: '$text'")
                     val matched = processText(text)
                     if (matched) {
-                        // Keyword match → reset backoff, stay responsive
+                        // Keyword match → transferTriggeredAudio() handles resuming the listener
                         consecutiveNoKeyword = 0
-                        restartListening(RESTART_AFTER_KEYWORD_MS)
                     } else {
                         // Speech but no keyword → background noise / others talking
                         Log.d(TAG, "No keyword match for: '$text'")
@@ -372,17 +371,6 @@ class WatchKeywordListenerService : LifecycleService() {
     private fun restartListening(delayMs: Long) {
         if (!listening) return
 
-        restartCount++
-        if (restartCount % BATTERY_CHECK_INTERVAL == 0 && isBatteryLow()) {
-            Log.w(TAG, "Battery low, stopping")
-            updateNotificationIfChanged("Bateria baja")
-            listening = false
-            // Resume phone mic before dying — use controller scope (not lifecycleScope)
-            WatchServiceController.sendResumeToPhone(applicationContext)
-            stopSelf()
-            return
-        }
-
         lifecycleScope.launch(Dispatchers.Main) {
             delay(delayMs)
             if (listening) startListening()
@@ -398,16 +386,6 @@ class WatchKeywordListenerService : LifecycleService() {
     private fun processText(text: String): Boolean {
         val result = intentDetector?.detect(text) ?: return false
 
-        // Speaker verification (locally enrolled on watch)
-        val profile = speakerProfile
-        if (profile != null) {
-            val verification = SpeakerProfile.verify(recentRmsValues.toList(), profile, speakerThreshold)
-            if (!verification.isMatch) {
-                Log.i(TAG, "Speaker rejected (sim=${"%.2f".format(verification.similarity)})")
-                return true  // keyword was there, wrong speaker — don't reset backoff
-            }
-        }
-
         // Heuristic validation
         val heuristic = EntryValidatorHeuristics.check(result.capturedText)
         if (heuristic != null && !heuristic.isValid) {
@@ -421,28 +399,73 @@ class WatchKeywordListenerService : LifecycleService() {
 
         val intentId = result.pattern?.id ?: result.customKeyword ?: "nota"
         Log.i(TAG, "Intent '$intentId' [${result.label}]: '${text.take(60)}'")
-        saveEntry(intentId, result.label, result.capturedText, 0.9f)
+        transferTriggeredAudio(
+            intentId = intentId,
+            label = result.label,
+            capturedText = result.capturedText
+        )
 
         lastSavedText = text
         lastSavedTime = now
         return true
     }
 
-    private fun saveEntry(intentId: String, label: String, text: String, confidence: Float) {
-        lifecycleScope.launch(Dispatchers.IO) {
-            val entry = DiaryEntry(
-                text = text, keyword = intentId, category = label,
-                confidence = confidence, source = Source.WATCH, duration = 0
-            )
-            repository?.insert(entry)
-            Log.i(TAG, "Entry saved: '$text'")
+    private fun transferTriggeredAudio(intentId: String, label: String, capturedText: String) {
+        if (captureInFlight) {
+            Log.i(TAG, "Skipping trigger capture because another capture is in flight")
+            return
+        }
 
-            // Sync per entry (no setUrgent — DataClient batches naturally)
+        captureInFlight = true
+        lifecycleScope.launch(Dispatchers.IO) {
             try {
-                syncer?.syncUnsentEntries()
-            } catch (e: Exception) {
-                Log.w(TAG, "Sync failed, will retry later", e)
+                pauseRecognizerForCapture()
+                val pcm = WatchTriggeredAudioCapture().capture()
+                if (pcm.isEmpty()) {
+                    Log.w(TAG, "Triggered audio capture returned empty PCM, falling back to text entry")
+                    saveEntry(intentId, label, capturedText, 0.9f)
+                    return@launch
+                }
+
+                val metadata = WatchAudioSyncMetadata(
+                    createdAt = System.currentTimeMillis(),
+                    durationSeconds = pcm.size / 16_000,
+                    sampleRateHz = 16_000,
+                    source = Source.WATCH.name,
+                    kind = "CONTEXTUAL_TRIGGER",
+                    triggerText = capturedText,
+                    intentId = intentId,
+                    label = label
+                )
+
+                runCatching {
+                    syncer?.syncRecordingAudio(shortsToBytes(pcm), metadata)
+                }.onSuccess {
+                    Log.i(TAG, "Triggered audio transferred to phone")
+                }.onFailure { error ->
+                    Log.w(TAG, "Triggered audio transfer failed, falling back to text entry", error)
+                    saveEntry(intentId, label, capturedText, 0.9f)
+                }
+            } finally {
+                captureInFlight = false
+                resumeRecognizerAfterCapture()
             }
+        }
+    }
+
+    private suspend fun saveEntry(intentId: String, label: String, text: String, confidence: Float) {
+        val entry = DiaryEntry(
+            text = text, keyword = intentId, category = label,
+            confidence = confidence, source = Source.WATCH, duration = 0
+        )
+        repository?.insert(entry)
+        Log.i(TAG, "Entry saved: '$text'")
+
+        // Sync per entry (no setUrgent — DataClient batches naturally)
+        try {
+            syncer?.syncUnsentEntries()
+        } catch (e: Exception) {
+            Log.w(TAG, "Sync failed, will retry later", e)
         }
     }
 
@@ -459,6 +482,38 @@ class WatchKeywordListenerService : LifecycleService() {
     private fun isBatteryLow(): Boolean {
         val bm = getSystemService(BatteryManager::class.java)
         return bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) in 1 until LOW_BATTERY_THRESHOLD
+    }
+
+    private suspend fun pauseRecognizerForCapture() {
+        kotlinx.coroutines.withContext(Dispatchers.Main) {
+            try { recognizer?.cancel() } catch (_: Exception) {}
+            try { recognizer?.destroy() } catch (_: Exception) {}
+            recognizer = null
+        }
+        delay(150)
+    }
+
+    private suspend fun resumeRecognizerAfterCapture() {
+        if (!listening) return
+        delay(RESTART_AFTER_KEYWORD_MS)
+        kotlinx.coroutines.withContext(Dispatchers.Main) {
+            try {
+                recognizer?.destroy()
+            } catch (_: Exception) {}
+            recognizer = SpeechRecognizer.createSpeechRecognizer(applicationContext)
+            startListening()
+        }
+    }
+
+    private fun shortsToBytes(samples: ShortArray): ByteArray {
+        val bytes = ByteArray(samples.size * 2)
+        var byteIndex = 0
+        samples.forEach { sample ->
+            bytes[byteIndex] = (sample.toInt() and 0xFF).toByte()
+            bytes[byteIndex + 1] = ((sample.toInt() shr 8) and 0xFF).toByte()
+            byteIndex += 2
+        }
+        return bytes
     }
 
     private fun createNotificationChannel() {

@@ -11,13 +11,23 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicReference
 
 object ServiceController {
 
     private const val PREFS = "service_prefs"
     private const val KEY_SHOULD_RUN = "should_run"
 
+    private enum class ServiceMode {
+        IDLE,
+        LISTENING,
+        RECORDING,
+        WATCH
+    }
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val transitionLock = Any()
+    private val modeRef = AtomicReference(ServiceMode.IDLE)
 
     private val _isRunning = MutableStateFlow(false)
     val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()
@@ -25,20 +35,25 @@ object ServiceController {
     private val _isWatchActive = MutableStateFlow(false)
     val isWatchActive: StateFlow<Boolean> = _isWatchActive.asStateFlow()
 
+    private val _isLocationRunning = MutableStateFlow(false)
+    val isLocationRunning: StateFlow<Boolean> = _isLocationRunning.asStateFlow()
+
     /**
      * Start keyword listening. Stops recording if active (modes are exclusive).
      */
     fun start(context: Context) {
-        // Stop recording if active — modes are exclusive
-        if (RecordingState.isRecording.value) {
-            RecordingState.stopRecording(context)
+        synchronized(transitionLock) {
+            if (RecordingState.isRecording.value) {
+                RecordingState.stopRecording(context)
+            }
+            val intent = Intent(context, KeywordListenerService::class.java)
+            ContextCompat.startForegroundService(context, intent)
+            _isRunning.value = true
+            _isWatchActive.value = false
+            modeRef.set(ServiceMode.LISTENING)
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().putBoolean(KEY_SHOULD_RUN, true).commit()
         }
-        val intent = Intent(context, KeywordListenerService::class.java)
-        ContextCompat.startForegroundService(context, intent)
-        _isRunning.value = true
-        _isWatchActive.value = false
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putBoolean(KEY_SHOULD_RUN, true).apply()
     }
 
     /**
@@ -46,24 +61,42 @@ object ServiceController {
      * use transferToWatch() to hand control to the watch explicitly.
      */
     fun stop(context: Context) {
-        val intent = Intent(context, KeywordListenerService::class.java)
-        context.stopService(intent)
-        _isRunning.value = false
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putBoolean(KEY_SHOULD_RUN, false).apply()
+        synchronized(transitionLock) {
+            val intent = Intent(context, KeywordListenerService::class.java)
+            context.stopService(intent)
+            _isRunning.value = false
+            if (!RecordingState.isRecording.value && !_isWatchActive.value) {
+                modeRef.set(ServiceMode.IDLE)
+            }
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().putBoolean(KEY_SHOULD_RUN, false).commit()
+        }
+    }
+
+    fun startLocationTracking(context: Context) {
+        val intent = Intent(context, LocationForegroundService::class.java)
+        ContextCompat.startForegroundService(context, intent)
+        _isLocationRunning.value = true
+    }
+
+    fun stopLocationTracking(context: Context) {
+        context.stopService(Intent(context, LocationForegroundService::class.java))
+        _isLocationRunning.value = false
     }
 
     /**
      * Start recording. Stops keyword listener if active (modes are exclusive).
      */
     fun startRecording(context: Context) {
-        // Stop keyword listener — modes are exclusive
-        if (_isRunning.value) {
-            context.stopService(Intent(context, KeywordListenerService::class.java))
-            _isRunning.value = false
+        synchronized(transitionLock) {
+            if (_isRunning.value) {
+                context.stopService(Intent(context, KeywordListenerService::class.java))
+                _isRunning.value = false
+            }
+            _isWatchActive.value = false
+            modeRef.set(ServiceMode.RECORDING)
+            RecordingState.startRecording(context)
         }
-        _isWatchActive.value = false
-        RecordingState.startRecording(context)
     }
 
     /**
@@ -71,10 +104,13 @@ object ServiceController {
      * so the service can resume when watch releases.
      */
     fun stopByWatch(context: Context) {
-        context.stopService(Intent(context, KeywordListenerService::class.java))
-        _isRunning.value = false
-        if (RecordingState.isRecording.value) {
-            RecordingState.stopRecording(context)
+        synchronized(transitionLock) {
+            context.stopService(Intent(context, KeywordListenerService::class.java))
+            _isRunning.value = false
+            if (RecordingState.isRecording.value) {
+                RecordingState.stopRecording(context)
+            }
+            modeRef.set(ServiceMode.WATCH)
         }
     }
 
@@ -83,25 +119,26 @@ object ServiceController {
      * Does NOT clear should_run so phone can auto-resume if watch returns control.
      */
     fun transferToWatch(context: Context) {
-        val wasRecording = RecordingState.isRecording.value
+        synchronized(transitionLock) {
+            val wasRecording = RecordingState.isRecording.value
 
-        // Stop everything locally
-        if (_isRunning.value) {
-            context.stopService(Intent(context, KeywordListenerService::class.java))
-            _isRunning.value = false
-        }
-        if (wasRecording) {
-            RecordingState.stopRecording(context)
-        }
-
-        _isWatchActive.value = true
-
-        // Send the appropriate command to the watch
-        scope.launch {
+            if (_isRunning.value) {
+                context.stopService(Intent(context, KeywordListenerService::class.java))
+                _isRunning.value = false
+            }
             if (wasRecording) {
-                MicCoordinator.sendStartRecording(context)
-            } else {
-                MicCoordinator.sendStartKeyword(context)
+                RecordingState.stopRecording(context)
+            }
+
+            _isWatchActive.value = true
+            modeRef.set(ServiceMode.WATCH)
+
+            scope.launch {
+                if (wasRecording) {
+                    MicCoordinator.sendStartRecording(context)
+                } else {
+                    MicCoordinator.sendStartKeyword(context)
+                }
             }
         }
     }
@@ -114,13 +151,28 @@ object ServiceController {
 
     fun notifyStopped() {
         _isRunning.value = false
+        if (!RecordingState.isRecording.value && !_isWatchActive.value) {
+            modeRef.set(ServiceMode.IDLE)
+        }
     }
 
     fun notifyWatchActive() {
         _isWatchActive.value = true
+        modeRef.set(ServiceMode.WATCH)
     }
 
     fun notifyWatchInactive() {
         _isWatchActive.value = false
+        if (_isRunning.value) {
+            modeRef.set(ServiceMode.LISTENING)
+        } else if (RecordingState.isRecording.value) {
+            modeRef.set(ServiceMode.RECORDING)
+        } else {
+            modeRef.set(ServiceMode.IDLE)
+        }
+    }
+
+    fun notifyLocationRunning(running: Boolean) {
+        _isLocationRunning.value = running
     }
 }

@@ -1,13 +1,23 @@
 package com.trama.shared.data
 
+import androidx.room.withTransaction
 import com.trama.shared.model.DiaryEntry
+import com.trama.shared.model.DailyPage
+import com.trama.shared.model.DwellDetectionState
+import com.trama.shared.model.Place
 import com.trama.shared.model.Recording
+import com.trama.shared.model.TimelineEvent
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 class DiaryRepository(
     private val dao: DiaryDao,
-    private val recordingDao: RecordingDao? = null
+    private val recordingDao: RecordingDao? = null,
+    private val timelineEventDao: TimelineEventDao? = null,
+    private val placeDao: PlaceDao? = null,
+    private val dwellDetectionStateDao: DwellDetectionStateDao? = null,
+    private val dailyPageDao: DailyPageDao? = null,
+    private val database: DiaryDatabase? = null
 ) {
 
     // ── DiaryEntry ──
@@ -41,6 +51,8 @@ class DiaryRepository(
 
     suspend fun updateText(id: Long, text: String) = dao.updateText(id, text)
 
+    suspend fun updateDueDate(id: Long, dueDate: Long?) = dao.updateDueDate(id, dueDate)
+
     suspend fun markSynced(ids: List<Long>) = dao.markSynced(ids)
 
     suspend fun existsByCreatedAtAndText(createdAt: Long, text: String): Boolean =
@@ -68,6 +80,8 @@ class DiaryRepository(
 
     fun getLatestPending(): Flow<DiaryEntry?> = dao.getLatestPending().distinctUntilChanged()
 
+    suspend fun getLatestPendingOnce(): DiaryEntry? = dao.getLatestPendingOnce()
+
     fun countAll(): Flow<Int> = dao.countAll().distinctUntilChanged()
 
     fun countPending(): Flow<Int> = dao.countPending().distinctUntilChanged()
@@ -81,6 +95,15 @@ class DiaryRepository(
     fun getDuplicates(): Flow<List<DiaryEntry>> = dao.getDuplicates().distinctUntilChanged()
 
     suspend fun getRecentPendingForDedup(): List<DiaryEntry> = dao.getRecentPendingForDedup()
+
+    suspend fun <T> withTransaction(block: suspend DiaryRepository.() -> T): T {
+        val db = database
+        return if (db != null) {
+            db.withTransaction { block() }
+        } else {
+            block()
+        }
+    }
 
     suspend fun markCompletedByKey(createdAt: Long, text: String) = dao.markCompletedByKey(createdAt, text)
 
@@ -137,4 +160,130 @@ class DiaryRepository(
 
     suspend fun existsRecordingByCreatedAt(createdAt: Long): Boolean =
         recordingDao?.existsByCreatedAt(createdAt) ?: false
+
+    // ── TimelineEvent ──
+
+    fun getTimelineEvents(): Flow<List<TimelineEvent>> =
+        timelineEventDao?.getAll()?.distinctUntilChanged()
+            ?: kotlinx.coroutines.flow.flowOf(emptyList())
+
+    fun getTimelineEventsByDateRange(startTime: Long, endTime: Long): Flow<List<TimelineEvent>> =
+        timelineEventDao?.byDateRange(startTime, endTime)?.distinctUntilChanged()
+            ?: kotlinx.coroutines.flow.flowOf(emptyList())
+
+    suspend fun getTimelineEventsByDateRangeOnce(startTime: Long, endTime: Long): List<TimelineEvent> =
+        timelineEventDao?.byDateRangeOnce(startTime, endTime) ?: emptyList()
+
+    suspend fun insertTimelineEvent(event: TimelineEvent): Long =
+        timelineEventDao?.insert(event) ?: -1
+
+    suspend fun insertTimelineEvents(events: List<TimelineEvent>) =
+        timelineEventDao?.insertAll(events)
+
+    suspend fun getTimelineEventByIdOnce(id: Long): TimelineEvent? =
+        timelineEventDao?.getByIdOnce(id)
+
+    fun getTimelineEventsByPlaceId(placeId: Long): Flow<List<TimelineEvent>> =
+        timelineEventDao?.getByPlaceId(placeId)?.distinctUntilChanged()
+            ?: kotlinx.coroutines.flow.flowOf(emptyList())
+
+    suspend fun updateTimelineEvent(event: TimelineEvent) =
+        timelineEventDao?.update(event)
+
+    suspend fun deleteTimelineEventById(id: Long) =
+        timelineEventDao?.deleteById(id)
+
+    suspend fun updateTimelineEventTitlesForPlace(placeId: Long, title: String) =
+        timelineEventDao?.updateTitleForPlace(placeId, title)
+
+    // ── Places ──
+
+    fun getPlaces(): Flow<List<Place>> =
+        placeDao?.getAll()?.distinctUntilChanged()
+            ?: kotlinx.coroutines.flow.flowOf(emptyList())
+
+    fun getPlaceById(id: Long): Flow<Place?> =
+        placeDao?.getById(id)?.distinctUntilChanged()
+            ?: kotlinx.coroutines.flow.flowOf(null)
+
+    suspend fun getPlaceByIdOnce(id: Long): Place? =
+        placeDao?.getByIdOnce(id)
+
+    suspend fun getAllPlacesOnce(): List<Place> =
+        placeDao?.getAllOnce() ?: emptyList()
+
+    suspend fun insertPlace(place: Place): Long =
+        placeDao?.insert(place) ?: -1
+
+    suspend fun updatePlace(place: Place) =
+        placeDao?.update(place)
+
+    suspend fun renamePlace(id: Long, name: String) =
+        placeDao?.rename(id, name)
+
+    suspend fun incrementPlaceVisit(id: Long, visitedAt: Long) =
+        placeDao?.incrementVisit(id, visitedAt)
+
+    suspend fun updatePlaceOpinion(
+        id: Long,
+        rating: Int?,
+        opinionText: String?,
+        opinionSummary: String?,
+        opinionUpdatedAt: Long?
+    ) = placeDao?.updateOpinion(id, rating, opinionText, opinionSummary, opinionUpdatedAt)
+
+    suspend fun updatePlaceOpinionSummary(
+        id: Long,
+        opinionSummary: String?,
+        opinionUpdatedAt: Long?
+    ) = placeDao?.updateOpinionSummary(id, opinionSummary, opinionUpdatedAt)
+
+    suspend fun markHomePlace(id: Long) =
+        placeDao?.markHome(id)
+
+    suspend fun clearHomePlace(id: Long) =
+        placeDao?.clearHome(id)
+
+    suspend fun markWorkPlace(id: Long) =
+        placeDao?.markWork(id)
+
+    suspend fun clearWorkPlace(id: Long) =
+        placeDao?.clearWork(id)
+
+    suspend fun findPlacesInBoundingBox(
+        minLat: Double,
+        maxLat: Double,
+        minLon: Double,
+        maxLon: Double
+    ): List<Place> = placeDao?.findInBoundingBox(minLat, maxLat, minLon, maxLon) ?: emptyList()
+
+    // ── Dwell detector state ──
+
+    fun observeDwellDetectionState(): Flow<DwellDetectionState?> =
+        dwellDetectionStateDao?.observe()?.distinctUntilChanged()
+            ?: kotlinx.coroutines.flow.flowOf(null)
+
+    suspend fun getDwellDetectionState(): DwellDetectionState? =
+        dwellDetectionStateDao?.get()
+
+    suspend fun saveDwellDetectionState(state: DwellDetectionState) =
+        dwellDetectionStateDao?.save(state)
+
+    suspend fun clearDwellDetectionState() =
+        dwellDetectionStateDao?.clear()
+
+    // ── DailyPage ──
+
+    fun getDailyPage(dayStartMillis: Long): Flow<DailyPage?> =
+        dailyPageDao?.getByDay(dayStartMillis)?.distinctUntilChanged()
+            ?: kotlinx.coroutines.flow.flowOf(null)
+
+    suspend fun getDailyPageOnce(dayStartMillis: Long): DailyPage? =
+        dailyPageDao?.getByDayOnce(dayStartMillis)
+
+    suspend fun upsertDailyPage(page: DailyPage) =
+        dailyPageDao?.upsert(page)
+
+    suspend fun markDailyPageReviewed(dayStartMillis: Long, reviewedAt: Long = System.currentTimeMillis()) =
+        dailyPageDao?.markReviewed(dayStartMillis, reviewedAt)
 }

@@ -9,6 +9,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
@@ -34,11 +36,12 @@ import com.trama.app.audio.NoOpLightweightGateAsr
 import com.trama.app.audio.OnDeviceAsrEngine
 import com.trama.app.audio.SherpaMoonshineGateAsr
 import com.trama.app.audio.SherpaWhisperAsrEngine
+import com.trama.app.audio.VoskGateAsr
 import com.trama.app.speech.EntryValidator
 import com.trama.app.speech.IntentDetector
 import com.trama.app.speech.IntentPattern
 import com.trama.app.speech.PersonalDictionary
-import com.trama.app.speech.SpeakerEnrollment
+import com.trama.app.speech.speaker.SherpaSpeakerVerificationManager
 import com.trama.app.summary.ActionItemProcessor
 import com.trama.shared.sync.MicCoordinator
 import com.trama.app.sync.PhoneToWatchSyncer
@@ -53,7 +56,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlin.math.sqrt
+import kotlinx.coroutines.isActive
+import java.text.Normalizer
 
 /**
  * Continuous speech listening service using Android SpeechRecognizer.
@@ -63,7 +67,6 @@ import kotlin.math.sqrt
  *
  * Integrated features:
  * - VAD (Voice Activity Detection): Only starts SpeechRecognizer when voice is detected
- * - Speaker verification: Filters out TV/radio using enrolled voice profile
  * - Entry validation: Heuristics + Gemini to validate/correct transcriptions
  *
  * Battery optimizations:
@@ -81,16 +84,34 @@ class KeywordListenerService : LifecycleService() {
         private const val NOTIFICATION_ID = NotificationConfig.ID_LISTENER
         private const val NEW_ENTRY_CHANNEL_ID = NotificationConfig.CHANNEL_NEW_ENTRY
 
-        private const val RESTART_DELAY_FAST_MS = 200L
         private const val RESTART_DELAY_NORMAL_MS = 500L
         private const val RESTART_DELAY_SLOW_MS = 1500L
+        private const val RESTART_DELAY_DEEP_SLEEP_MS = 3000L
+        private const val RESTART_DELAY_HIBERNATE_MS = 5000L
         private const val ERROR_RETRY_DELAY_MS = 1000L
+        private const val CONTEXTUAL_RESTART_DELAY_MS = 500L
 
         private const val SLOW_MODE_THRESHOLD = 20
         private const val BATTERY_THRESHOLD = 15
+        private const val DEEP_SLEEP_THRESHOLD = 15
+        private const val HIBERNATE_THRESHOLD = 30
 
         // Deduplication: ignore entries within this window of a previous capture
         private const val DEDUP_WINDOW_MS = 5000L
+        private const val PERSISTED_DEDUP_WINDOW_MS = 15000L
+        private val DEDUP_STOPWORDS = setOf(
+            "recordar",
+            "recorda",
+            "acordarme",
+            "acordarnos",
+            "de",
+            "me",
+            "olvide",
+            "se",
+            "fue",
+            "la",
+            "olla"
+        )
     }
 
     private var recognizer: SpeechRecognizer? = null
@@ -99,7 +120,7 @@ class KeywordListenerService : LifecycleService() {
     private lateinit var dictionary: PersonalDictionary
     private lateinit var intentDetector: IntentDetector
     private lateinit var entryValidator: EntryValidator
-    private lateinit var speakerEnrollment: SpeakerEnrollment
+    private lateinit var speakerVerificationManager: SherpaSpeakerVerificationManager
     private var phoneToWatchSyncer: PhoneToWatchSyncer? = null
     private lateinit var settingsSyncer: SettingsSyncer
     private lateinit var asrEngine: OnDeviceAsrEngine
@@ -109,6 +130,7 @@ class KeywordListenerService : LifecycleService() {
     private var contextPreRollSeconds: Int = SettingsDataStore.DEFAULT_CONTEXT_PRE_ROLL
     private var contextPostRollSeconds: Int = SettingsDataStore.DEFAULT_CONTEXT_POST_ROLL
     private var asrDebugEnabled: Boolean = false
+    private var selectedGateEngine: String = SettingsDataStore.GATE_ENGINE_MOONSHINE
     @Volatile
     private var listening = false
 
@@ -122,11 +144,13 @@ class KeywordListenerService : LifecycleService() {
     private var dedicatedAsrFailedOver = false
 
     private var consecutiveSilent = 0
-    private var batteryCheckCounter = 0
     private var lastNotificationText = ""
+    @Volatile
+    private var batteryPct: Int = 100
 
     // Deduplication: avoid saving same entry from partial + final results
     private var lastSavedText = ""
+    private var lastSavedDedupKey = ""
     private var lastSavedTime = 0L
 
     // Track if partial result already triggered a save for this recognition cycle
@@ -134,9 +158,6 @@ class KeywordListenerService : LifecycleService() {
     private var partialAlreadyVibrated = false
     private var confirmedAlreadyVibrated = false
     private var pendingPartialDetection: DetectionResult? = null
-
-    // Audio features for speaker verification (RMS only — SpeechRecognizer doesn't expose raw audio for ZCR)
-    private val recentRmsValues = mutableListOf<Double>()
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -157,6 +178,28 @@ class KeywordListenerService : LifecycleService() {
         }
     }
 
+    private val batteryReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_BATTERY_LOW,
+                Intent.ACTION_BATTERY_CHANGED -> {
+                    val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+                    val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1).coerceAtLeast(1)
+                    if (level >= 0) {
+                        batteryPct = (level * 100) / scale
+                    }
+
+                    if (batteryPct in 1 until BATTERY_THRESHOLD && listening) {
+                        Log.w(TAG, "Battery low via receiver ($batteryPct%), stopping listener")
+                        updateNotificationIfChanged("Pausado: batería baja")
+                        listening = false
+                        stopSelf()
+                    }
+                }
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannels()
@@ -165,13 +208,14 @@ class KeywordListenerService : LifecycleService() {
         dictionary = PersonalDictionary(applicationContext)
         intentDetector = IntentDetector()
         entryValidator = EntryValidator(applicationContext)
-        speakerEnrollment = SpeakerEnrollment(applicationContext)
+        speakerVerificationManager = SherpaSpeakerVerificationManager(applicationContext)
         settingsSyncer = SettingsSyncer(applicationContext)
         asrEngine = createAsrEngine()
         gateAsr = createGateAsr()
         loadSettings()
         observeSettings()
         registerScreenReceiver()
+        registerBatteryReceiver()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -207,6 +251,9 @@ class KeywordListenerService : LifecycleService() {
         try {
             unregisterReceiver(screenReceiver)
         } catch (_: Exception) {}
+        try {
+            unregisterReceiver(batteryReceiver)
+        } catch (_: Exception) {}
         recognizer?.destroy()
         recognizer = null
 
@@ -229,6 +276,21 @@ class KeywordListenerService : LifecycleService() {
         screenOff = !pm.isInteractive
     }
 
+    private fun registerBatteryReceiver() {
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_BATTERY_CHANGED)
+            addAction(Intent.ACTION_BATTERY_LOW)
+        }
+        registerReceiver(batteryReceiver, filter)
+
+        val sticky = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val level = sticky?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = sticky?.getIntExtra(BatteryManager.EXTRA_SCALE, -1)?.coerceAtLeast(1) ?: 1
+        if (level >= 0) {
+            batteryPct = (level * 100) / scale
+        }
+    }
+
     private fun loadSettings() {
         lifecycleScope.launch(Dispatchers.IO) {
             val patterns = settings.intentPatterns.first()
@@ -245,10 +307,8 @@ class KeywordListenerService : LifecycleService() {
                 intentDetector.setPatterns(patterns)
                 Log.i(TAG, "Intent patterns updated: ${patterns.count { it.enabled }} enabled")
 
-                // Sync full patterns + speaker profile to watch
                 val keywords = settings.customKeywords.first()
-                val profile = speakerEnrollment.toSpeakerProfile()
-                launch(Dispatchers.IO) { settingsSyncer.syncPatterns(patterns, keywords, profile) }
+                launch(Dispatchers.IO) { settingsSyncer.syncPatterns(patterns, keywords) }
             }
         }
         lifecycleScope.launch {
@@ -256,10 +316,8 @@ class KeywordListenerService : LifecycleService() {
                 intentDetector.setCustomKeywords(keywords)
                 Log.i(TAG, "Custom keywords updated: ${keywords.size} keywords")
 
-                // Sync to watch
                 val patterns = settings.intentPatterns.first()
-                val profile = speakerEnrollment.toSpeakerProfile()
-                launch(Dispatchers.IO) { settingsSyncer.syncPatterns(patterns, keywords, profile) }
+                launch(Dispatchers.IO) { settingsSyncer.syncPatterns(patterns, keywords) }
             }
         }
         lifecycleScope.launch {
@@ -277,6 +335,22 @@ class KeywordListenerService : LifecycleService() {
         lifecycleScope.launch {
             settings.asrDebugEnabled.collect { enabled ->
                 asrDebugEnabled = enabled
+            }
+        }
+        lifecycleScope.launch {
+            settings.gateAsrEngine.collect { engine ->
+                val normalized = when (engine) {
+                    SettingsDataStore.GATE_ENGINE_VOSK -> SettingsDataStore.GATE_ENGINE_VOSK
+                    else -> SettingsDataStore.GATE_ENGINE_MOONSHINE
+                }
+                if (selectedGateEngine == normalized) return@collect
+                selectedGateEngine = normalized
+                if (listening && asrEngine.isAvailable && !dedicatedAsrFailedOver) {
+                    Log.i(TAG, "Gate engine changed to $normalized, restarting contextual capture")
+                    gateAsr = createGateAsr()
+                    stopContextualCapture()
+                    initContextualCaptureAndStart()
+                }
             }
         }
     }
@@ -297,9 +371,16 @@ class KeywordListenerService : LifecycleService() {
 
     private fun createGateAsr(): LightweightGateAsr {
         return try {
-            SherpaMoonshineGateAsr(applicationContext).takeIf { it.isAvailable } ?: NoOpLightweightGateAsr
+            when (selectedGateEngine) {
+                SettingsDataStore.GATE_ENGINE_VOSK -> {
+                    VoskGateAsr(applicationContext).takeIf { it.isAvailable } ?: NoOpLightweightGateAsr
+                }
+                else -> {
+                    SherpaMoonshineGateAsr(applicationContext).takeIf { it.isAvailable } ?: NoOpLightweightGateAsr
+                }
+            }
         } catch (e: Throwable) {
-            Log.w(TAG, "Lightweight Moonshine gate unavailable, will use Whisper directly", e)
+            Log.w(TAG, "Selected gate backend unavailable, will use Whisper directly", e)
             NoOpLightweightGateAsr
         }
     }
@@ -332,13 +413,13 @@ class KeywordListenerService : LifecycleService() {
                     partialAlreadyVibrated = false
                     confirmedAlreadyVibrated = false
                     pendingPartialDetection = null
-                    recentRmsValues.clear()
                 }
                 publishAsrDebug(engine = "${gateAsr.name} -> ${asrEngine.name}", status = humanReadableAsrState(state))
                 when (state) {
                     "capturing" -> updateNotificationIfChanged("Capturando contexto...")
                     "gating" -> updateNotificationIfChanged("Escuchando (gate ligero)")
                     "trigger_detected" -> updateNotificationIfChanged("Trigger detectado, procesando contexto...")
+                    "rearmed" -> updateNotificationIfChanged("Listo para siguiente frase")
                     else -> updateNotificationIfChanged("Escuchando (ASR dedicado)")
                 }
             }
@@ -347,7 +428,21 @@ class KeywordListenerService : LifecycleService() {
                     vibrate(longArrayOf(0, 35))
                     partialAlreadyVibrated = true
                 }
-                publishAsrDebug(status = "trigger detectado")
+                val detection = intentDetector.detect(it)
+                val reason = detection?.label?.let { label -> "gate -> $label" } ?: "gate -> trigger"
+                publishAsrDebug(status = "trigger detectado", gateText = it, triggerReason = reason)
+            }
+            engine.onGateEvaluated = { transcript, matched, debugSummary ->
+                val reason = if (matched) {
+                    intentDetector.detect(transcript)?.label?.let { label -> "gate -> $label" } ?: "gate -> trigger"
+                } else {
+                    "gate descartado"
+                }
+                publishAsrDebug(
+                    status = if (matched) "trigger detectado" else "esperando trigger",
+                    gateText = debugSummary.ifBlank { transcript.ifBlank { "sin transcripcion en gate" } },
+                    triggerReason = reason
+                )
             }
             engine.onWindowCaptured = { window ->
                 lifecycleScope.launch(Dispatchers.IO) {
@@ -364,11 +459,25 @@ class KeywordListenerService : LifecycleService() {
                     val text = transcript?.text?.trim().orEmpty()
                     if (text.isNotBlank()) {
                         val elapsedMs = System.currentTimeMillis() - startedAt
-                        val rmsValues = extractRmsSeries(window)
+                        val speakerVerification = speakerVerificationManager.verify(window)
+                        if (!speakerVerification.accepted) {
+                            publishAsrDebug(
+                                engine = asrEngine.name,
+                                status = "rechazado por voz",
+                                lastText = text,
+                                triggerReason = "speaker ${"%.2f".format(speakerVerification.similarity)}"
+                            )
+                            Log.i(
+                                TAG,
+                                "Speaker verification rejected capture (sim=${speakerVerification.similarity}): '$text'"
+                            )
+                            return@launch
+                        }
                         publishAsrDebug(
                             engine = asrEngine.name,
                             status = "ultima captura",
                             lastText = text,
+                            triggerReason = "whisper final",
                             lastWindowMs = window.durationMs().toInt(),
                             lastDecodeMs = elapsedMs.toInt()
                         )
@@ -377,7 +486,7 @@ class KeywordListenerService : LifecycleService() {
                             "ASR[${asrEngine.name}] heard (${window.durationMs()}ms window, " +
                                 "${elapsedMs}ms decode): '$text'"
                         )
-                        processText(text, rmsValues)
+                        processText(text)
                     }
                 }
             }
@@ -386,11 +495,19 @@ class KeywordListenerService : LifecycleService() {
         contextualCaptureEngine = captureEngine
         contextualCaptureJob?.cancel()
         contextualCaptureJob = lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                captureEngine.start()
-            } catch (t: Throwable) {
-                Log.e(TAG, "Contextual capture crashed", t)
-                fallbackToSpeechRecognizer(t)
+            while (listening && isActive && asrEngine.isAvailable && !dedicatedAsrFailedOver) {
+                try {
+                    captureEngine.start()
+                    if (listening && asrEngine.isAvailable && !dedicatedAsrFailedOver) {
+                        Log.w(TAG, "Contextual capture stopped unexpectedly, restarting")
+                        publishAsrDebug(status = "rearmando captura")
+                        delay(CONTEXTUAL_RESTART_DELAY_MS)
+                    }
+                } catch (t: Throwable) {
+                    Log.e(TAG, "Contextual capture crashed", t)
+                    fallbackToSpeechRecognizer(t)
+                    break
+                }
             }
         }
     }
@@ -399,13 +516,22 @@ class KeywordListenerService : LifecycleService() {
         lifecycleScope.launch(Dispatchers.Main) {
             try {
                 recognizer?.destroy()
-                recognizer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                val onDeviceAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                     SpeechRecognizer.isOnDeviceRecognitionAvailable(applicationContext)
-                ) {
+                val recognizerAvailable = SpeechRecognizer.isRecognitionAvailable(applicationContext)
+
+                recognizer = if (onDeviceAvailable) {
                     SpeechRecognizer.createOnDeviceSpeechRecognizer(applicationContext).also {
                         Log.i(TAG, "On-device SpeechRecognizer created")
                     }
-                } else if (SpeechRecognizer.isRecognitionAvailable(applicationContext)) {
+                } else if (recognizerAvailable) {
+                    if (!hasActiveNetwork()) {
+                        Log.w(TAG, "Cloud SpeechRecognizer fallback unavailable without network, waiting")
+                        updateNotificationIfChanged("Esperando conexión para fallback")
+                        publishAsrDebug(engine = "speechrecognizer", status = "fallback sin red")
+                        scheduleFallbackRecognizerInit(adaptiveDelay())
+                        return@launch
+                    }
                     SpeechRecognizer.createSpeechRecognizer(applicationContext).also {
                         Log.i(TAG, "Standard SpeechRecognizer created")
                     }
@@ -446,8 +572,6 @@ class KeywordListenerService : LifecycleService() {
         partialAlreadyVibrated = false
         confirmedAlreadyVibrated = false
         pendingPartialDetection = null
-        recentRmsValues.clear()
-
         rec.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
                 speechRecognizerActive = true
@@ -458,14 +582,7 @@ class KeywordListenerService : LifecycleService() {
                 consecutiveSilent = 0
             }
 
-            override fun onRmsChanged(rmsdB: Float) {
-                // Collect raw dB values for speaker verification
-                // Same scale as enrollment (both use SpeechRecognizer.onRmsChanged)
-                if (speakerEnrollment.isEnrolled() && speakerEnrollment.isEnabled()) {
-                    recentRmsValues.add(rmsdB.toDouble())
-                    if (recentRmsValues.size > 50) recentRmsValues.removeAt(0)
-                }
-            }
+            override fun onRmsChanged(rmsdB: Float) {}
 
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() {
@@ -507,6 +624,11 @@ class KeywordListenerService : LifecycleService() {
                             vibrate(longArrayOf(0, 35))
                             partialAlreadyVibrated = true
                         }
+                        publishAsrDebug(
+                            status = "trigger parcial",
+                            gateText = text,
+                            triggerReason = "speech partial -> ${result.label}"
+                        )
                         Log.i(TAG, "Partial match [${result.label}]: '${text.take(60)}'")
                     }
                 }
@@ -527,7 +649,7 @@ class KeywordListenerService : LifecycleService() {
                     }
                 }
 
-                restartListening(RESTART_DELAY_FAST_MS)
+                restartListening(RESTART_DELAY_NORMAL_MS)
             }
 
             override fun onEvent(eventType: Int, params: Bundle?) {}
@@ -563,8 +685,10 @@ class KeywordListenerService : LifecycleService() {
 
     private fun adaptiveDelay(): Long {
         return when {
+            screenOff && consecutiveSilent >= HIBERNATE_THRESHOLD -> RESTART_DELAY_HIBERNATE_MS
+            consecutiveSilent >= HIBERNATE_THRESHOLD -> RESTART_DELAY_DEEP_SLEEP_MS
+            consecutiveSilent >= DEEP_SLEEP_THRESHOLD -> RESTART_DELAY_SLOW_MS
             screenOff -> RESTART_DELAY_SLOW_MS
-            consecutiveSilent >= SLOW_MODE_THRESHOLD -> RESTART_DELAY_SLOW_MS
             else -> RESTART_DELAY_NORMAL_MS
         }
     }
@@ -572,20 +696,28 @@ class KeywordListenerService : LifecycleService() {
     private fun restartListening(delayMs: Long) {
         if (!listening) return
 
-        if (++batteryCheckCounter % 50 == 0) {
-            if (isBatteryLow()) {
-                Log.w(TAG, "Battery low, stopping")
-                updateNotificationIfChanged("Pausado: batería baja")
-                listening = false
-                stopSelf()
-                return
-            }
+        if (isBatteryLow()) {
+            Log.w(TAG, "Battery low, stopping")
+            updateNotificationIfChanged("Pausado: batería baja")
+            listening = false
+            stopSelf()
+            return
         }
 
         lifecycleScope.launch(Dispatchers.Main) {
             delay(delayMs)
             if (listening) {
                 startListening()
+            }
+        }
+    }
+
+    private fun scheduleFallbackRecognizerInit(delayMs: Long) {
+        if (!listening) return
+        lifecycleScope.launch(Dispatchers.Main) {
+            delay(delayMs)
+            if (listening && dedicatedAsrFailedOver && recognizer == null) {
+                initSpeechRecognizerAndStart()
             }
         }
     }
@@ -600,7 +732,9 @@ class KeywordListenerService : LifecycleService() {
     private fun currentContextualConfig(): ContextualCaptureConfig {
         return ContextualCaptureConfig(
             preRollSeconds = contextPreRollSeconds,
-            postRollSeconds = contextPostRollSeconds
+            postRollSeconds = contextPostRollSeconds,
+            silenceStopMs = 1800L,
+            gateEvalWindowsMs = listOf(0L, 15_000L, 12_000L, 8_000L, 5_000L, 3_000L)
         )
     }
 
@@ -609,9 +743,19 @@ class KeywordListenerService : LifecycleService() {
             "gating" -> "esperando trigger"
             "capturing" -> "capturando voz"
             "trigger_detected" -> "trigger detectado"
+            "rearmed" -> "listo para siguiente frase"
+            "stalled" -> "rearmando captura"
             "listening" -> if (gateAsr.isAvailable) "esperando trigger" else "escuchando"
             else -> state
         }
+    }
+
+    private fun hasActiveNetwork(): Boolean {
+        val connectivityManager = getSystemService(ConnectivityManager::class.java) ?: return false
+        val network = connectivityManager.activeNetwork ?: return false
+        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
     /**
@@ -619,32 +763,36 @@ class KeywordListenerService : LifecycleService() {
      * Uses regex patterns for flexible matching of natural speech variations.
      * Now includes speaker verification and LLM validation.
      */
-    private fun processText(text: String, rmsValuesOverride: List<Double>? = null): Boolean {
+    private fun processText(text: String): Boolean {
         val result = intentDetector.detect(text) ?: return false
+        publishAsrDebug(
+            gateText = text,
+            triggerReason = "detector final -> ${result.label}"
+        )
         return processDetectedResult(
             result = result,
-            text = text,
-            rmsValuesOverride = rmsValuesOverride
+            text = text
         )
     }
 
     private fun processPendingPartialResult(
-        finalText: String,
-        rmsValuesOverride: List<Double>? = null
+        finalText: String
     ): Boolean {
         val result = pendingPartialDetection ?: return false
         Log.i(TAG, "Using pending partial detection to preserve recognized reminder")
+        publishAsrDebug(
+            gateText = finalText,
+            triggerReason = "partial latched -> ${result.label}"
+        )
         return processDetectedResult(
             result = result.copy(capturedText = finalText, label = result.label),
-            text = finalText,
-            rmsValuesOverride = rmsValuesOverride
+            text = finalText
         )
     }
 
     private fun processDetectedResult(
         result: DetectionResult,
-        text: String,
-        rmsValuesOverride: List<Double>? = null
+        text: String
     ): Boolean {
         pendingPartialDetection = null
 
@@ -654,21 +802,10 @@ class KeywordListenerService : LifecycleService() {
         }
         publishAsrDebug(status = "procesando entrada")
 
-        // Speaker verification — reject if voice doesn't match enrolled profile
-        if (speakerEnrollment.isEnrolled() && speakerEnrollment.isEnabled()) {
-            val verification = speakerEnrollment.verify(
-                rmsValuesOverride ?: recentRmsValues.toList()
-            )
-            if (!verification.isMatch) {
-                publishAsrDebug(status = "rechazado por voz")
-                Log.i(TAG, "Speaker verification failed (sim=${verification.similarity}), rejecting: '${text.take(40)}'")
-                return false
-            }
-        }
-
         // Deduplication: skip if we just saved something very similar recently
         val now = System.currentTimeMillis()
-        if (now - lastSavedTime < DEDUP_WINDOW_MS && isSimilar(text, lastSavedText)) {
+        val dedupKey = buildDedupKey(result, text)
+        if (now - lastSavedTime < DEDUP_WINDOW_MS && dedupKey.isNotBlank() && dedupKey == lastSavedDedupKey) {
             publishAsrDebug(status = "duplicado ignorado")
             Log.i(TAG, "Dedup: skipping similar entry within ${DEDUP_WINDOW_MS}ms")
             return false
@@ -705,45 +842,18 @@ class KeywordListenerService : LifecycleService() {
         }
 
         lastSavedText = text
+        lastSavedDedupKey = dedupKey
         lastSavedTime = now
         partialAlreadySaved = true
         return true
-    }
-
-    private fun extractRmsSeries(window: com.trama.app.audio.CapturedAudioWindow): List<Double> {
-        val pcm = window.mergedPcm()
-        if (pcm.isEmpty()) return emptyList()
-
-        val frameSize = 512
-        val rmsValues = ArrayList<Double>((pcm.size / frameSize) + 1)
-        var index = 0
-        while (index < pcm.size) {
-            val end = minOf(index + frameSize, pcm.size)
-            val rms = calculateRms(pcm, index, end)
-            if (rms > 0.0) {
-                rmsValues.add(rms)
-            }
-            index = end
-        }
-        return rmsValues
-    }
-
-    private fun calculateRms(samples: ShortArray, start: Int, end: Int): Double {
-        val length = end - start
-        if (length <= 0) return 0.0
-
-        var sum = 0.0
-        for (index in start until end) {
-            val sample = samples[index].toDouble()
-            sum += sample * sample
-        }
-        return sqrt(sum / length)
     }
 
     private fun publishAsrDebug(
         engine: String? = null,
         status: String? = null,
         lastText: String? = null,
+        gateText: String? = null,
+        triggerReason: String? = null,
         lastWindowMs: Int? = null,
         lastDecodeMs: Int? = null
     ) {
@@ -753,6 +863,8 @@ class KeywordListenerService : LifecycleService() {
                 engine = engine,
                 status = status,
                 lastText = lastText,
+                gateText = gateText,
+                triggerReason = triggerReason,
                 lastWindowMs = lastWindowMs,
                 lastDecodeMs = lastDecodeMs
             )
@@ -770,35 +882,73 @@ class KeywordListenerService : LifecycleService() {
         confidence: Float
     ) {
         lifecycleScope.launch(Dispatchers.IO) {
+            val repo = repository ?: return@launch
+            val normalizedCaptured = normalizeTextForDedup(originalText.ifBlank { text })
+            val normalizedSaved = normalizeTextForDedup(text)
             val entry = DiaryEntry(
-                text = text,
+                text = originalText.ifBlank { text },
                 keyword = intentId,
                 category = label,
                 confidence = confidence,
                 source = Source.PHONE,
                 duration = 0,
-                correctedText = correctedByLLM,
+                correctedText = text,
                 wasReviewedByLLM = wasReviewed,
-                llmConfidence = llmConfidence
+                llmConfidence = llmConfidence,
+                cleanText = null
             )
-            val entryId = repository?.insert(entry) ?: return@launch
-            Log.i(TAG, "Entry saved: '$text' (intent: $intentId, label: $label, reviewed: $wasReviewed)")
+            val entryId = repo.withTransaction {
+                val latestPending = getLatestPendingOnce()
+                if (
+                    latestPending != null &&
+                    System.currentTimeMillis() - latestPending.createdAt <= PERSISTED_DEDUP_WINDOW_MS
+                ) {
+                    val latestNormalizedText = normalizeTextForDedup(latestPending.text)
+                    val latestNormalizedClean = normalizeTextForDedup(latestPending.cleanText ?: "")
+                    val isSameRecentEntry =
+                        normalizedCaptured.isNotBlank() && (
+                            normalizedCaptured == latestNormalizedText ||
+                                normalizedCaptured == latestNormalizedClean
+                            ) ||
+                            normalizedSaved.isNotBlank() && (
+                            normalizedSaved == latestNormalizedText ||
+                                normalizedSaved == latestNormalizedClean
+                            ) ||
+                            isSimilar(normalizedSaved, latestNormalizedText) ||
+                            isSimilar(normalizedCaptured, latestNormalizedText)
+
+                    if (isSameRecentEntry) {
+                        return@withTransaction null
+                    }
+                }
+
+                insert(entry)
+            }
+
+            if (entryId == null) {
+                Log.i(TAG, "Persisted dedup: skipping recently saved duplicate '$text'")
+                publishAsrDebug(status = "duplicado reciente ignorado")
+                return@launch
+            }
+            Log.i(
+                TAG,
+                "Entry saved: raw='${originalText.ifBlank { text }}' corrected='${text}' " +
+                    "(intent: $intentId, label: $label, reviewed: $wasReviewed)"
+            )
             publishAsrDebug(status = "entrada guardada")
             showNewEntryNotification(entry)
 
             phoneToWatchSyncer?.syncUnsentEntries()
 
             // Fire-and-forget: process entry through AI to extract action metadata
-            repository?.let { repo ->
-                EntryProcessingState.markProcessing(entryId)
-                try {
-                    val processor = ActionItemProcessor(this@KeywordListenerService)
-                    processor.process(entryId, text, repo)
-                } catch (e: Exception) {
-                    Log.w(TAG, "ActionItemProcessor failed for entry $entryId", e)
-                } finally {
-                    EntryProcessingState.markFinished(entryId)
-                }
+            EntryProcessingState.markProcessing(entryId)
+            try {
+                val processor = ActionItemProcessor(this@KeywordListenerService)
+                processor.process(entryId, text, repo)
+            } catch (e: Exception) {
+                Log.w(TAG, "ActionItemProcessor failed for entry $entryId", e)
+            } finally {
+                EntryProcessingState.markFinished(entryId)
             }
         }
     }
@@ -814,6 +964,44 @@ class KeywordListenerService : LifecycleService() {
         val intersection = wordsA.intersect(wordsB)
         val smaller = minOf(wordsA.size, wordsB.size)
         return intersection.size.toFloat() / smaller >= 0.7f
+    }
+
+    private fun buildDedupKey(result: DetectionResult, text: String): String {
+        val normalized = normalizeTextForDedup(text)
+        if (normalized.isBlank()) return ""
+
+        val stripped = result.pattern
+            ?.normalizedTriggers
+            ?.mapNotNull { trigger ->
+                normalized
+                    .removePrefix("$trigger ")
+                    .takeIf { it != normalized }
+                    ?.trim()
+            }
+            ?.firstOrNull()
+            ?: result.customKeyword
+                ?.let { keyword ->
+                    val normalizedKeyword = normalizeTextForDedup(keyword)
+                    normalized.removePrefix("$normalizedKeyword ").trim()
+                }
+            ?: normalized
+
+        val meaningful = stripped
+            .split(" ")
+            .filter { token ->
+                token.isNotBlank() && token !in DEDUP_STOPWORDS
+            }
+            .joinToString(" ")
+
+        return meaningful.ifBlank { normalized }
+    }
+
+    private fun normalizeTextForDedup(text: String): String {
+        return Normalizer.normalize(text.lowercase(), Normalizer.Form.NFD)
+            .replace("\\p{M}+".toRegex(), "")
+            .replace("[^\\p{L}\\p{N}\\s]".toRegex(), " ")
+            .replace("\\s+".toRegex(), " ")
+            .trim()
     }
 
     private fun vibrate(pattern: LongArray) {
@@ -870,7 +1058,7 @@ class KeywordListenerService : LifecycleService() {
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
         )
 
-        val displayText = entry.correctedText ?: entry.text
+        val displayText = entry.displayText
         val reviewBadge = if (entry.wasReviewedByLLM) " (revisado por IA)" else ""
 
         val notification = NotificationCompat.Builder(this, NEW_ENTRY_CHANNEL_ID)

@@ -84,6 +84,8 @@ dependencies {
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.lifecycle.service)
     implementation(libs.datastore.preferences)
+    implementation(libs.osmdroid.android)
+    implementation(libs.vosk.android)
 
     // Wearable Data Layer (for watch sync)
     implementation(libs.play.services.wearable)

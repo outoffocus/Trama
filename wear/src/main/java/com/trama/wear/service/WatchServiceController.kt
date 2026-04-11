@@ -3,7 +3,9 @@ package com.trama.wear.service
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
+import com.trama.shared.data.DatabaseProvider
 import com.trama.shared.sync.MicCoordinator
+import com.trama.wear.sync.WatchToPhoneSyncer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -120,12 +122,24 @@ object WatchServiceController {
         _isPhoneActive.value = true
 
         scope.launch {
+            try {
+                WatchToPhoneSyncer(
+                    context = context.applicationContext,
+                    repository = DatabaseProvider.getRepository(context.applicationContext)
+                ).syncUnsentEntries()
+            } catch (_: Exception) {
+            }
             if (wasRecording) {
                 MicCoordinator.sendStartRecording(context)
             } else {
                 MicCoordinator.sendStartKeyword(context)
             }
         }
+    }
+
+    fun reclaimFromPhone(context: Context) {
+        notifyPhoneInactive(context)
+        start(context)
     }
 
     /** Called from service onDestroy to keep state in sync */

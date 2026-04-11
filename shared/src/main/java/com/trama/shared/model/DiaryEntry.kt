@@ -2,6 +2,7 @@ package com.trama.shared.model
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import java.util.Locale
 
 @Entity(tableName = "diary_entries")
 data class DiaryEntry(
@@ -29,8 +30,28 @@ data class DiaryEntry(
     val duplicateOfId: Long? = null,                // ID of original entry if this is a duplicate
     val sourceRecordingId: Long? = null              // ID of the Recording this action was extracted from
 ) {
-    /** Display text: cleanText > correctedText > text */
-    val displayText: String get() = cleanText ?: correctedText ?: text
+    /** Display text: cleanText > raw Whisper text */
+    val displayText: String
+        get() = normalizeDisplayCasing(cleanText ?: text)
+
+    private fun normalizeDisplayCasing(value: String): String {
+        val trimmed = value.trim()
+        if (trimmed.isEmpty()) return value
+
+        val letters = trimmed.filter { it.isLetter() }
+        if (letters.length < 4) return value
+
+        val uppercaseLetters = letters.count { it.isUpperCase() }
+        val uppercaseRatio = uppercaseLetters.toFloat() / letters.length.toFloat()
+        val looksLikeShouting = uppercaseRatio >= 0.85f
+        val hasLowercase = letters.any { it.isLowerCase() }
+
+        return if (looksLikeShouting && !hasLowercase) {
+            trimmed.lowercase(Locale.getDefault())
+        } else {
+            value
+        }
+    }
 }
 
 /** Entry lifecycle status */

@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.io.File
 
 /**
@@ -24,6 +25,7 @@ object GemmaClient {
 
     private const val TAG = "GemmaClient"
     const val DEFAULT_FILENAME = "gemma3-1b-it-int4.task"
+    private const val GENERATION_TIMEOUT_MS = 30_000L
 
     // ── Active runtime (only one at a time) ──
     private var mediaPipeInference: LlmInference? = null
@@ -127,12 +129,14 @@ object GemmaClient {
         return mutex.withLock {
             withContext(Dispatchers.IO) {
                 try {
-                    ensureLoaded(context)
+                    val response = withTimeout(GENERATION_TIMEOUT_MS) {
+                        ensureLoaded(context)
 
-                    val response = if (litertEngine != null) {
-                        generateLiteRtLm(prompt, responsePrefix)
-                    } else {
-                        generateMediaPipe(prompt, responsePrefix)
+                        if (litertEngine != null) {
+                            generateLiteRtLm(prompt, responsePrefix)
+                        } else {
+                            generateMediaPipe(prompt, responsePrefix)
+                        }
                     }
 
                     Log.d(TAG, "Generated ${response?.length ?: 0} chars")

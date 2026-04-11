@@ -3,6 +3,7 @@ package com.trama.shared.speech
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 import kotlinx.serialization.json.Json
+import java.text.Normalizer
 
 /**
  * A capture category that groups multiple trigger phrases under one intent.
@@ -31,6 +32,9 @@ data class IntentPattern(
     /** Compiled regex from triggers. Cached per instance. */
     @Transient
     val regex: Regex = buildRegex(triggers)
+
+    @Transient
+    val normalizedTriggers: List<String> = triggers.map(::normalizeTrigger).filter { it.isNotBlank() }
 
     companion object {
         private val json = Json { ignoreUnknownKeys = true }
@@ -94,11 +98,35 @@ data class IntentPattern(
             val result = mutableListOf<IntentPattern>()
 
             for (default in DEFAULTS) {
-                result += storedById[default.id] ?: default
+                val storedPattern = storedById[default.id]
+                result += if (storedPattern != null) {
+                    mergeBuiltInPattern(default, storedPattern)
+                } else {
+                    default
+                }
             }
 
             stored.filterTo(result) { it.isCustom && it.id !in defaultIds }
             return result
+        }
+
+        private fun mergeBuiltInPattern(default: IntentPattern, stored: IntentPattern): IntentPattern {
+            val legacyDefaults = LEGACY_DEFAULT_TRIGGER_SETS[default.id].orEmpty()
+            val mergedTriggers = linkedSetOf<String>()
+            default.triggers.forEach { trigger ->
+                if (trigger.isNotBlank()) mergedTriggers += trigger
+            }
+            stored.triggers.forEach { trigger ->
+                val normalized = normalizeTrigger(trigger)
+                if (trigger.isNotBlank() && normalized !in legacyDefaults) {
+                    mergedTriggers += trigger
+                }
+            }
+
+            return stored.copy(
+                label = stored.label.ifBlank { default.label },
+                triggers = mergedTriggers.toList()
+            )
         }
 
         // ── Default patterns ────────────────────────────────────────────────
@@ -109,12 +137,94 @@ data class IntentPattern(
                 label = "Recordatorios",
                 triggers = listOf(
                     "recordar",
+                    "recuerdame",
+                    "recuérdame",
                     "acordarme de",
                     "acordarnos de",
-                    "me olvidé",
-                    "se me fue la olla"
+                    "no olvidar"
+                )
+            ),
+            IntentPattern(
+                id = "tareas",
+                label = "Tareas",
+                triggers = listOf(
+                    "tengo que",
+                    "tenemos que",
+                    "hay que",
+                    "debo",
+                    "debemos",
+                    "deberia",
+                    "debería",
+                    "deberiamos",
+                    "deberíamos",
+                    "necesito",
+                    "necesitamos",
+                    "necesitaria",
+                    "necesitaría",
+                    "necesitariamos",
+                    "necesitaríamos"
+                )
+            ),
+            IntentPattern(
+                id = "comunicacion",
+                label = "Comunicacion",
+                triggers = listOf(
+                    "llamar a",
+                    "escribir a",
+                    "mandar mensaje a"
                 )
             )
         )
+
+        private val LEGACY_DEFAULT_TRIGGER_SETS: Map<String, Set<String>> = mapOf(
+            "recordatorios" to listOf(
+                "recordar",
+                "recuerdame",
+                "recuérdame",
+                "acordarme de",
+                "acordarnos de",
+                "me tengo que acordar de",
+                "tengo que",
+                "tenemos que",
+                "tengo q",
+                "tenemos q",
+                "hay que",
+                "hay q",
+                "he de",
+                "debo",
+                "debemos",
+                "deberia",
+                "debería",
+                "deberiamos",
+                "deberíamos",
+                "necesito",
+                "necesitamos",
+                "no olvidar",
+                "no olvidarme de",
+                "no olvidarnos de",
+                "no te olvides de",
+                "mañana tengo que",
+                "mañana hay que",
+                "esta tarde tengo que",
+                "esta noche tengo que",
+                "el lunes tengo que",
+                "el martes tengo que",
+                "el miércoles tengo que",
+                "el miercoles tengo que",
+                "el jueves tengo que",
+                "el viernes tengo que",
+                "me olvidé",
+                "se me fue la olla"
+            ).map(::normalizeTrigger).toSet()
+        )
+
+        private fun normalizeTrigger(trigger: String): String {
+            val decomposed = Normalizer.normalize(trigger.lowercase(), Normalizer.Form.NFD)
+            return decomposed
+                .replace("\\p{M}+".toRegex(), "")
+                .replace("[^\\p{L}\\p{N}\\s]".toRegex(), " ")
+                .replace("\\s+".toRegex(), " ")
+                .trim()
+        }
     }
 }

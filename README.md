@@ -22,6 +22,7 @@ En reloj sigue existiendo el flujo basado en `SpeechRecognizer`.
 - Permite extraer acciones manualmente desde el detalle de un recordatorio
 - Muestra estados de diagnóstico y procesamiento en UI
 - Incluye resumen diario, calendario, búsqueda y backup
+- Genera una `Daily Page` por fecha y un markdown técnico privado para memoria futura
 
 ## Categorías y activadores
 
@@ -65,6 +66,21 @@ Durante la captura y el procesado:
 - en Ajustes puede activarse un modo diagnóstico ASR
 - en las tarjetas de recordatorios aparece `Procesando...` en rojo pequeño mientras esa entrada sigue en postproceso
 
+## Daily Review
+
+La pantalla diaria ya no intenta repetir el timeline.
+
+Ahora funciona como revisión del día:
+
+- tareas abiertas para corregir, completar o posponer
+- duplicados pendientes
+- sitios visitados para valorar y comentar
+- resumen breve del día como apoyo
+
+Por debajo, la app genera una `DailyPage` persistida por fecha y un `.md` privado en
+`filesDir/daily-pages/`. Ese markdown no está pensado como UI final en esta fase; sirve como
+memoria para el futuro chat.
+
 ## Estructura del proyecto
 
 ```text
@@ -104,6 +120,22 @@ Trama/
 - `sherpa-onnx`
 - Whisper `small` on-device
 - Gemini / Gemma para postproceso según disponibilidad
+
+## "Solo mi voz"
+
+La antigua verificación por RMS/volumen se ha eliminado porque no distinguía de forma
+fiable a una persona concreta.
+
+El nuevo diseño preparado en el repo va por otra vía:
+
+- transcribir primero con Whisper
+- calcular después un embedding de hablante offline sobre esa misma ventana
+- comparar contra un perfil enrolado del usuario
+
+Interfaces preparadas:
+
+- [`app/src/main/java/com/trama/app/speech/speaker/SpeakerEmbeddingEngine.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/speech/speaker/SpeakerEmbeddingEngine.kt)
+- [`app/src/main/java/com/trama/app/speech/speaker/SpeakerVerificationManager.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/speech/speaker/SpeakerVerificationManager.kt)
 
 ## Limitaciones actuales
 

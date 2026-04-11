@@ -3,6 +3,7 @@ package com.trama.app.ui.screens
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -29,12 +30,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,6 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.unit.dp
 import com.trama.app.speech.PersonalDictionary
 import com.trama.app.summary.ManualActionSuggestion
@@ -59,6 +61,12 @@ import java.util.Date
 import java.util.Locale
 import android.widget.Toast
 
+private sealed interface EntryDetailUiState {
+    data object Loading : EntryDetailUiState
+    data class Success(val entry: DiaryEntry) : EntryDetailUiState
+    data object NotFound : EntryDetailUiState
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EntryDetailScreen(
@@ -70,18 +78,90 @@ fun EntryDetailScreen(
     val dictionary = remember { PersonalDictionary(context) }
     val scope = rememberCoroutineScope()
 
-    val entry by repository.getById(entryId).collectAsState(initial = null)
+    val entryState by produceState<EntryDetailUiState>(
+        initialValue = EntryDetailUiState.Loading,
+        key1 = entryId
+    ) {
+        repository.getById(entryId).collect { loadedEntry ->
+            value = if (loadedEntry == null) {
+                EntryDetailUiState.NotFound
+            } else {
+                EntryDetailUiState.Success(loadedEntry)
+            }
+        }
+    }
 
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showExtractDialog by remember { mutableStateOf(false) }
     var isEditing by remember { mutableStateOf(false) }
-    var editedText by remember(entry?.displayText) { mutableStateOf(entry?.displayText ?: "") }
+    val successEntry = (entryState as? EntryDetailUiState.Success)?.entry
+    var editedText by remember(successEntry?.displayText) { mutableStateOf(successEntry?.displayText ?: "") }
     var selectedSuggestionIndexes by remember { mutableStateOf(setOf<Int>()) }
 
-    val currentEntry = entry
-    if (currentEntry == null) {
-        return
+    when (entryState) {
+        EntryDetailUiState.Loading -> {
+            Scaffold(
+                topBar = {
+                    TopAppBar(
+                        title = { Text("Detalle") },
+                        navigationIcon = {
+                            IconButton(onClick = onBack) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
+                            }
+                        }
+                    )
+                }
+            ) { padding ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
+                }
+            }
+            return
+        }
+        EntryDetailUiState.NotFound -> {
+            Scaffold(
+                topBar = {
+                    TopAppBar(
+                        title = { Text("Detalle") },
+                        navigationIcon = {
+                            IconButton(onClick = onBack) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
+                            }
+                        }
+                    )
+                }
+            ) { padding ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "No se encontró esta entrada.",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Puede que ya no exista o que todavía no se haya cargado correctamente.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            return
+        }
+        is EntryDetailUiState.Success -> Unit
     }
+    val currentEntry = (entryState as EntryDetailUiState.Success).entry
 
     val dateFormat = SimpleDateFormat("dd MMMM yyyy, HH:mm", Locale("es"))
 
@@ -179,6 +259,53 @@ fun EntryDetailScreen(
                     DetailRow("Fuente", if (currentEntry.source == Source.PHONE) "Teléfono" else "Reloj")
                     DetailRow("Confianza", "${(currentEntry.confidence * 100).toInt()}%")
                     DetailRow("Duración grabación", "${currentEntry.duration}s")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Diagnóstico de texto",
+                        style = MaterialTheme.typography.titleSmall
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text(
+                        text = "rawWhisperText",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = currentEntry.text.ifBlank { "-" },
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text(
+                        text = "correctedText",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = currentEntry.correctedText?.ifBlank { "-" } ?: "-",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text(
+                        text = "cleanText",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = currentEntry.cleanText?.ifBlank { "-" } ?: "-",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
                 }
             }
         }

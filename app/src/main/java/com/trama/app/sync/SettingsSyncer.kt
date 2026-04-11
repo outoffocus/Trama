@@ -5,7 +5,6 @@ import android.util.Log
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import com.trama.shared.speech.IntentPattern
-import com.trama.shared.speech.SpeakerProfile
 import kotlinx.coroutines.tasks.await
 
 /**
@@ -38,12 +37,11 @@ class SettingsSyncer(private val context: Context) {
     }
 
     /**
-     * Sync full intent patterns + custom keywords + speaker profile to watch.
+     * Sync full intent patterns + custom keywords to watch.
      */
     suspend fun syncPatterns(
         patterns: List<IntentPattern>,
-        customKeywords: List<String>,
-        speakerProfile: SpeakerProfile? = null
+        customKeywords: List<String>
     ) {
         try {
             val patternsJson = IntentPattern.serialize(patterns)
@@ -52,15 +50,11 @@ class SettingsSyncer(private val context: Context) {
             val request = PutDataMapRequest.create(SETTINGS_PATH).apply {
                 dataMap.putString("intent_patterns_json", patternsJson)
                 dataMap.putString("keyword_mappings", keywordsStr)
-                if (speakerProfile != null) {
-                    dataMap.putString("speaker_profile_json", SpeakerProfile.serialize(speakerProfile))
-                }
                 dataMap.putLong("timestamp", System.currentTimeMillis())
             }.asPutDataRequest().setUrgent()
 
             Wearable.getDataClient(context).putDataItem(request).await()
-            Log.i(TAG, "Synced to watch: ${patterns.size} patterns, ${customKeywords.size} keywords" +
-                if (speakerProfile != null) ", speaker profile" else "")
+            Log.i(TAG, "Synced to watch: ${patterns.size} patterns, ${customKeywords.size} keywords")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to sync patterns", e)
         }

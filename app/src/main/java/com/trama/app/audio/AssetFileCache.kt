@@ -53,4 +53,25 @@ class AssetFileCache(private val context: Context) {
         outFile.writeText(contents)
         return outFile.absolutePath
     }
+
+    fun ensureDirectoryCopied(path: String): String {
+        val normalized = path.trim('/').trim()
+        require(normalized.isNotBlank()) { "Directory path cannot be blank" }
+        copyDirectoryRecursively(normalized)
+        return File(context.filesDir, normalized).absolutePath
+    }
+
+    private fun copyDirectoryRecursively(path: String) {
+        val children = assetManager.list(path).orEmpty()
+        if (children.isEmpty()) {
+            ensureCopied(path)
+            return
+        }
+
+        File(context.filesDir, path).mkdirs()
+        children.forEach { child ->
+            val childPath = if (path.isBlank()) child else "$path/$child"
+            copyDirectoryRecursively(childPath)
+        }
+    }
 }

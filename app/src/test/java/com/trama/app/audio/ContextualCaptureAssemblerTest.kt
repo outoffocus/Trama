@@ -1,6 +1,7 @@
 package com.trama.app.audio
 
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ContextualCaptureAssemblerTest {
@@ -24,5 +25,19 @@ class ContextualCaptureAssemblerTest {
             shortArrayOf(3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14),
             finalWindow.mergedPcm()
         )
+    }
+
+    @Test
+    fun tailWindow_returnsOnlyRequestedTailDuration() {
+        val window = CapturedAudioWindow(
+            preRollPcm = shortArrayOf(1, 2, 3, 4),
+            livePcm = shortArrayOf(5, 6, 7, 8, 9, 10),
+            sampleRateHz = 2
+        )
+
+        val tail = window.tailWindow(2_000)
+
+        assertEquals(0, tail.preRollPcm.size)
+        assertArrayEquals(shortArrayOf(7, 8, 9, 10), tail.livePcm)
     }
 }

@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -31,6 +32,7 @@ import com.trama.app.service.EntryProcessingState
 import com.trama.shared.data.DatabaseProvider
 import com.trama.app.ui.SettingsDataStore
 import com.trama.app.ui.components.EntryCard
+import com.trama.app.ui.theme.timelineAccentColor
 import kotlinx.coroutines.flow.flowOf
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -41,13 +43,21 @@ fun SearchScreen(
 ) {
     val context = LocalContext.current
     val repository = remember { DatabaseProvider.getRepository(context) }
+    val settings = remember { SettingsDataStore(context) }
     var query by remember { mutableStateOf("") }
 
-    val results by (
+    val resultsState by (
         if (query.length >= 2) repository.search(query)
         else flowOf(emptyList())
-    ).collectAsState(initial = emptyList())
+    ).collectAsState(initial = null)
     val processingEntryIds by EntryProcessingState.processingIds.collectAsState()
+    val pendingColorIndex by settings.timelineColorPending.collectAsState(
+        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PENDING
+    )
+    val pendingAccent = remember(pendingColorIndex) { timelineAccentColor(pendingColorIndex) }
+
+    val isSearching = query.length >= 2 && resultsState == null
+    val results = resultsState ?: emptyList()
 
     Scaffold(
         topBar = {
@@ -83,18 +93,68 @@ fun SearchScreen(
                     .padding(horizontal = 16.dp, vertical = 8.dp)
             )
 
-            LazyColumn(
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(results, key = { it.id }) { entry ->
-                    EntryCard(
-                        entry = entry,
-                        isProcessing = entry.id in processingEntryIds,
-                        onClick = { onEntryClick(entry.id) }
+            when {
+                isSearching -> {
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
+                    ) {
+                        CircularProgressIndicator()
+                        Text(
+                            text = "Buscando...",
+                            style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(top = 12.dp)
+                        )
+                    }
+                }
+                query.length < 2 -> {
+                    SearchPlaceholder(
+                        title = "Empieza a escribir",
+                        subtitle = "Busca por texto capturado, acciones o lugares mencionados."
                     )
+                }
+                results.isEmpty() -> {
+                    SearchPlaceholder(
+                        title = "No se encontraron resultados",
+                        subtitle = "Prueba con otra palabra o una frase más corta."
+                    )
+                }
+                else -> LazyColumn(
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(results, key = { it.id }) { entry ->
+                        EntryCard(
+                            entry = entry,
+                            accentColor = pendingAccent,
+                            isProcessing = entry.id in processingEntryIds,
+                            onClick = { onEntryClick(entry.id) }
+                        )
+                    }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SearchPlaceholder(
+    title: String,
+    subtitle: String
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
+    ) {
+        Text(title)
+        Text(
+            text = subtitle,
+            modifier = Modifier.padding(top = 8.dp),
+            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }

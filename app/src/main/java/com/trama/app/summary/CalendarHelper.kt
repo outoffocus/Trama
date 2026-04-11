@@ -2,11 +2,14 @@ package com.trama.app.summary
 
 import android.Manifest
 import android.content.ContentUris
-import android.content.ContentValues
 import android.content.Context
+import android.content.ContentValues
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.provider.CalendarContract
 import android.util.Log
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -81,6 +84,94 @@ object CalendarHelper {
         }
 
         return queryEvents(context, startCal.timeInMillis, endCal.timeInMillis)
+    }
+
+    fun getEventsForRange(context: Context, startMillis: Long, endMillis: Long): List<CalendarEvent> {
+        if (!hasCalendarPermission(context)) {
+            Log.w(TAG, "No READ_CALENDAR permission")
+            return emptyList()
+        }
+        return queryEvents(context, startMillis, endMillis)
+    }
+
+    fun openEvent(context: Context, event: CalendarEvent) {
+        val eventId = event.id
+        val directUri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, eventId)
+        val legacyUri = Uri.parse("content://com.android.calendar/events/$eventId")
+        val dayUri = CalendarContract.CONTENT_URI.buildUpon()
+            .appendPath("time")
+            .appendPath(event.startMillis.toString())
+            .build()
+        val legacyDayUri = Uri.parse("content://com.android.calendar/time/${event.startMillis}")
+
+        val intents = listOf(
+            Intent(Intent.ACTION_VIEW).apply {
+                data = legacyDayUri
+                `package` = "com.google.android.calendar"
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+            Intent(Intent.ACTION_VIEW).apply {
+                data = dayUri
+                `package` = "com.google.android.calendar"
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+            Intent(Intent.ACTION_VIEW).apply {
+                data = legacyDayUri
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+            Intent(Intent.ACTION_VIEW).apply {
+                data = dayUri
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+            Intent(Intent.ACTION_VIEW).apply {
+                data = legacyUri
+                `package` = "com.google.android.calendar"
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+            Intent(Intent.ACTION_VIEW).apply {
+                data = directUri
+                `package` = "com.google.android.calendar"
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+            Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(legacyUri, "vnd.android.cursor.item/event")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+            Intent(Intent.ACTION_VIEW).apply {
+                data = legacyUri
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+            Intent(Intent.ACTION_EDIT).apply {
+                data = directUri
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+            Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_APP_CALENDAR)
+                `package` = "com.google.android.calendar"
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+            Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_APP_CALENDAR)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+        )
+
+        intents.forEach { intent ->
+            val canResolve = intent.resolveActivity(context.packageManager) != null
+            if (!canResolve) return@forEach
+            try {
+                context.startActivity(intent)
+                return
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to launch calendar event $eventId with intent=$intent", e)
+            }
+        }
+
+        Toast.makeText(
+            context,
+            "No se pudo abrir el evento. Abre Calendario manualmente en esa hora.",
+            Toast.LENGTH_LONG
+        ).show()
     }
 
     /**

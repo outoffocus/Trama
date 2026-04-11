@@ -22,6 +22,9 @@ object NotificationConfig {
     /** Notification for daily summary results. */
     const val CHANNEL_DAILY_SUMMARY = "trama_daily_summary"
 
+    /** Foreground notification for passive location tracking. */
+    const val CHANNEL_LOCATION = "trama_location"
+
     // ── Notification IDs ──
 
     /** Foreground notification ID for KeywordListenerService. */
@@ -32,4 +35,7 @@ object NotificationConfig {
 
     /** Notification ID for DailySummaryWorker. */
     const val ID_DAILY_SUMMARY = 2000
+
+    /** Foreground notification ID for location tracking. */
+    const val ID_LOCATION = 3
 }

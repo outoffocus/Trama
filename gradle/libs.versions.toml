@@ -23,6 +23,8 @@ junit = "4.13.2"
 mockk = "1.13.13"
 androidxTestExt = "1.2.1"
 espresso = "3.6.1"
+osmdroid = "6.1.20"
+voskAndroid = "0.3.47"
 
 [libraries]
 # Compose
@@ -69,6 +71,8 @@ lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-
 activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
 datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastorePreferences" }
+osmdroid-android = { group = "org.osmdroid", name = "osmdroid-android", version.ref = "osmdroid" }
+vosk-android = { group = "com.alphacephei", name = "vosk-android", version.ref = "voskAndroid" }
 
 # Testing
 junit = { group = "junit", name = "junit", version.ref = "junit" }

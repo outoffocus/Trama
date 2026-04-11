@@ -4,6 +4,7 @@
 package com.trama.app.ui.screens
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -37,10 +38,15 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
@@ -52,6 +58,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -62,35 +70,64 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import com.trama.app.audio.OfflineDictationCapture
 import com.trama.app.backup.AutoBackupWorker
 import com.trama.app.backup.BackupManager
 import com.trama.app.backup.BackupScheduler
+import com.trama.app.service.LocationDebugState
+import com.trama.app.speech.PersonalDictionary
+import com.trama.app.speech.speaker.SherpaSpeakerVerificationManager
+import com.trama.app.speech.speaker.SpeakerEnrollmentStep
+import com.trama.app.service.ServiceController
 import com.trama.app.speech.IntentPattern
-import com.trama.app.speech.SpeakerEnrollment
 import com.trama.app.summary.GemmaClient
 import com.trama.app.summary.GemmaModelManager
+import com.trama.app.summary.PromptTemplateStore
 import com.trama.app.summary.SummaryScheduler
 import com.trama.shared.data.DatabaseProvider
 import com.trama.app.ui.SettingsDataStore
 import com.trama.app.ui.theme.CategoryColors
+import com.trama.app.ui.theme.TimelineAccentPalette
+import com.trama.app.ui.theme.timelineAccentColor
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
+enum class SettingsSection(val route: String, val title: String, val subtitle: String) {
+    ROOT("root", "Ajustes", "Control general de la app"),
+    CAPTURE_MEMORY("capture-memory", "Captura y memoria", "Categorías, diccionario y ubicación"),
+    IA("ia", "IA y resumen", "Resumen diario y automatización inteligente"),
+    APPEARANCE("appearance", "Apariencia", "Color y lectura del timeline"),
+    ADVANCED("advanced", "Avanzado", "Diagnóstico, modelos, prompts y backup");
+
+    companion object {
+        fun fromRoute(route: String?): SettingsSection =
+            entries.firstOrNull { it.route == route } ?: ROOT
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(
+    section: SettingsSection = SettingsSection.ROOT,
+    onBack: () -> Unit,
+    onOpenSection: (SettingsSection) -> Unit = {}
+) {
     val context = LocalContext.current
     val settings = remember { SettingsDataStore(context) }
     val repository = remember { DatabaseProvider.getRepository(context) }
@@ -98,7 +135,6 @@ fun SettingsScreen(onBack: () -> Unit) {
 
     // Settings state
     val autoStart by settings.autoStart.collectAsState(initial = false)
-    val duration by settings.recordingDuration.collectAsState(initial = SettingsDataStore.DEFAULT_DURATION)
     val summaryEnabled by settings.summaryEnabled.collectAsState(initial = true)
     val summaryHour by settings.summaryHour.collectAsState(initial = SettingsDataStore.DEFAULT_SUMMARY_HOUR)
     val intentPatterns by settings.intentPatterns.collectAsState(initial = IntentPattern.DEFAULTS)
@@ -107,10 +143,9 @@ fun SettingsScreen(onBack: () -> Unit) {
     val summaryPrefs = remember { context.getSharedPreferences("daily_summary", Context.MODE_PRIVATE) }
     var geminiApiKey by remember { mutableStateOf(summaryPrefs.getString("gemini_api_key", "") ?: "") }
 
-    // Speaker
-    val speakerEnrollment = remember { SpeakerEnrollment(context) }
-    var speakerEnabled by remember { mutableStateOf(speakerEnrollment.isEnabled()) }
-    var isEnrolled by remember { mutableStateOf(speakerEnrollment.isEnrolled()) }
+    val personalDictionary = remember { PersonalDictionary(context) }
+    val learnedCorrections by personalDictionary.corrections.collectAsState(initial = emptyList())
+    val speakerVerificationManager = remember { SherpaSpeakerVerificationManager(context) }
 
     // Backup
     val backupEnabled by settings.backupEnabled.collectAsState(initial = true)
@@ -121,15 +156,53 @@ fun SettingsScreen(onBack: () -> Unit) {
     val contextPostRoll by settings.contextPostRollSeconds.collectAsState(
         initial = SettingsDataStore.DEFAULT_CONTEXT_POST_ROLL
     )
+    val gateAsrEngine by settings.gateAsrEngine.collectAsState(
+        initial = SettingsDataStore.GATE_ENGINE_MOONSHINE
+    )
     val asrDebugEnabled by settings.asrDebugEnabled.collectAsState(initial = false)
     val asrDebugEngine by settings.asrDebugEngine.collectAsState(initial = "-")
     val asrDebugStatus by settings.asrDebugStatus.collectAsState(initial = "sin datos")
     val asrDebugLastText by settings.asrDebugLastText.collectAsState(initial = "")
+    val asrDebugGateText by settings.asrDebugGateText.collectAsState(initial = "")
+    val asrDebugTriggerReason by settings.asrDebugTriggerReason.collectAsState(initial = "")
     val asrDebugLastWindowMs by settings.asrDebugLastWindowMs.collectAsState(initial = 0)
     val asrDebugLastDecodeMs by settings.asrDebugLastDecodeMs.collectAsState(initial = 0)
     val asrProcessingInFlight = remember(asrDebugStatus) {
         asrDebugStatus.contains("procesando", ignoreCase = true)
     }
+    val locationEnabled by settings.locationEnabled.collectAsState(initial = false)
+    val locationIntervalMinutes by settings.locationIntervalMinutes.collectAsState(
+        initial = SettingsDataStore.DEFAULT_LOCATION_INTERVAL_MINUTES
+    )
+    val locationDwellMinutes by settings.locationDwellMinutes.collectAsState(
+        initial = SettingsDataStore.DEFAULT_LOCATION_DWELL_MINUTES
+    )
+    val locationEntryRadiusMeters by settings.locationEntryRadiusMeters.collectAsState(
+        initial = SettingsDataStore.DEFAULT_LOCATION_ENTRY_RADIUS_METERS
+    )
+    val locationExitRadiusMeters by settings.locationExitRadiusMeters.collectAsState(
+        initial = SettingsDataStore.DEFAULT_LOCATION_EXIT_RADIUS_METERS
+    )
+    val googlePlacesApiKey by settings.googlePlacesApiKey.collectAsState(initial = "")
+    val timelinePendingColorIndex by settings.timelineColorPending.collectAsState(
+        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PENDING
+    )
+    val timelineCompletedColorIndex by settings.timelineColorCompleted.collectAsState(
+        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_COMPLETED
+    )
+    val timelineRecordingColorIndex by settings.timelineColorRecording.collectAsState(
+        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_RECORDING
+    )
+    val timelinePlaceColorIndex by settings.timelineColorPlace.collectAsState(
+        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PLACE
+    )
+    val timelineCalendarColorIndex by settings.timelineColorCalendar.collectAsState(
+        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_CALENDAR
+    )
+    val locationDebugStatus by LocationDebugState.status.collectAsState()
+    val locationDebugLastSample by LocationDebugState.lastSample.collectAsState()
+    val locationDebugCandidate by LocationDebugState.candidate.collectAsState()
+    val locationDebugActiveDwell by LocationDebugState.activeDwell.collectAsState()
 
     // Gemma model
     val gemmaManager = remember { GemmaModelManager(context) }
@@ -142,6 +215,21 @@ fun SettingsScreen(onBack: () -> Unit) {
 
     // Sections expanded state
     var patternsExpanded by remember { mutableStateOf(false) }
+    var promptsExpanded by remember { mutableStateOf(false) }
+    var modelExpanded by remember { mutableStateOf(false) }
+    var speakerExpanded by remember { mutableStateOf(false) }
+    var backupExpanded by remember { mutableStateOf(false) }
+    var speakerStateVersion by remember { mutableIntStateOf(0) }
+    var speakerTrainingInProgress by remember { mutableStateOf(false) }
+    var speakerRecordingInProgress by remember { mutableStateOf(false) }
+    var speakerStatusMessage by remember { mutableStateOf<String?>(null) }
+    var activeSpeakerCapture by remember { mutableStateOf<OfflineDictationCapture?>(null) }
+
+    val speakerBackendAvailable = remember(speakerStateVersion) { speakerVerificationManager.isBackendAvailable }
+    val speakerEnabled = remember(speakerStateVersion) { speakerVerificationManager.isEnabled }
+    val speakerConfigured = remember(speakerStateVersion) { speakerVerificationManager.isConfigured }
+    val speakerSampleCount = remember(speakerStateVersion) { speakerVerificationManager.sampleCount }
+    val speakerThreshold = remember(speakerStateVersion) { speakerVerificationManager.threshold }
 
     // Dialogs
     var editingPattern by remember { mutableStateOf<IntentPattern?>(null) }
@@ -210,10 +298,72 @@ fun SettingsScreen(onBack: () -> Unit) {
         }
     }
 
+    val fineLocationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            scope.launch {
+                settings.setLocationEnabled(true)
+                ServiceController.startLocationTracking(context)
+            }
+        } else {
+            Toast.makeText(context, "Permiso de ubicación denegado", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun refreshSpeakerUi() {
+        speakerStateVersion += 1
+    }
+
+    fun startSpeakerEnrollment() {
+        if (!speakerBackendAvailable) {
+            speakerStatusMessage = "Falta el modelo offline de voz en app/src/main/assets/asr/speaker/model.onnx"
+            return
+        }
+
+        val capture = OfflineDictationCapture()
+        activeSpeakerCapture = capture
+        scope.launch {
+            speakerRecordingInProgress = true
+            speakerStatusMessage = "Grabando muestra..."
+            val window = capture.capture(maxDurationMs = 7_000L)
+            speakerRecordingInProgress = false
+            activeSpeakerCapture = null
+
+            if (window == null) {
+                speakerStatusMessage = "No he podido captar una muestra usable."
+                return@launch
+            }
+
+            speakerTrainingInProgress = true
+            val result = speakerVerificationManager.enrollSample(window)
+            speakerTrainingInProgress = false
+            speakerStatusMessage = when (result) {
+                is SpeakerEnrollmentStep.SampleAccepted ->
+                    "Muestra aceptada. Faltan ${result.remainingSamples}."
+                is SpeakerEnrollmentStep.EnrollmentReady ->
+                    "Perfil listo con ${result.acceptedSamples} muestras."
+                is SpeakerEnrollmentStep.Rejected ->
+                    result.reason
+            }
+            refreshSpeakerUi()
+        }
+    }
+
+    val speakerPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            startSpeakerEnrollment()
+        } else {
+            speakerStatusMessage = "Necesito permiso de micrófono para entrenar tu voz."
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Ajustes") },
+                title = { Text(section.title) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
@@ -234,137 +384,646 @@ fun SettingsScreen(onBack: () -> Unit) {
         ) {
             Spacer(modifier = Modifier.height(8.dp))
 
-            // ═══════════════════════════════════════════════════════════════
-            // GENERAL
-            // ═══════════════════════════════════════════════════════════════
-            SectionHeader("General")
-
-            SettingToggle(
-                title = "Inicio automatico",
-                subtitle = "Iniciar al encender el dispositivo",
-                checked = autoStart,
-                onCheckedChange = { scope.launch { settings.setAutoStart(it) } }
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Duracion de escucha", style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.weight(1f))
-                Text("${duration}s", style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold)
-            }
-            Slider(
-                value = duration.toFloat(),
-                onValueChange = { scope.launch { settings.setRecordingDuration(it.roundToInt()) } },
-                valueRange = 5f..60f, steps = 10,
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Contexto previo (t0)", style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.weight(1f))
-                Text("${contextPreRoll}s", style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold)
-            }
-            Slider(
-                value = contextPreRoll.toFloat(),
-                onValueChange = {
-                    scope.launch { settings.setContextPreRollSeconds(it.roundToInt()) }
-                },
-                valueRange = 1f..10f, steps = 8,
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Contexto posterior (t1)", style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.weight(1f))
-                Text("${contextPostRoll}s", style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold)
-            }
-            Slider(
-                value = contextPostRoll.toFloat(),
-                onValueChange = {
-                    scope.launch { settings.setContextPostRollSeconds(it.roundToInt()) }
-                },
-                valueRange = 1f..15f, steps = 13,
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Text(
-                "Se usan solo en memoria para el futuro motor ASR on-device; no se guarda audio.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            SettingToggle(
-                title = "Modo diagnostico ASR",
-                subtitle = "Muestra motor activo y ultima transcripcion",
-                checked = asrDebugEnabled,
-                onCheckedChange = { scope.launch { settings.setAsrDebugEnabled(it) } }
-            )
-
-            AnimatedVisibility(visible = asrDebugEnabled) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    ),
-                    shape = RoundedCornerShape(12.dp)
+            if (section == SettingsSection.ROOT) {
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f)
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
+                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
                         Text(
-                            "Diagnostico de escucha",
+                            text = "Menos ruido, más intención",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.SemiBold
                         )
-                        AnimatedVisibility(visible = asrProcessingInFlight) {
-                            Text(
-                                "Procesando...",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.padding(top = 6.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("Motor: $asrDebugEngine", style = MaterialTheme.typography.bodyMedium)
-                        Text("Estado: $asrDebugStatus", style = MaterialTheme.typography.bodyMedium)
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            "Ventana: ${asrDebugLastWindowMs} ms · Decodificacion: ${asrDebugLastDecodeMs} ms",
+                            text = "Aquí solo vive lo esencial. El resto está agrupado por intención para que ajustar Trama no se sienta como abrir una consola técnica.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            if (asrDebugLastText.isNotBlank()) asrDebugLastText else "Aun no hay transcripcion",
-                            style = MaterialTheme.typography.bodyMedium
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(18.dp))
+
+                SectionHeader("General")
+
+                SettingToggle(
+                    title = "Inicio automatico",
+                    subtitle = "Iniciar al encender el dispositivo",
+                    checked = autoStart,
+                    onCheckedChange = { scope.launch { settings.setAutoStart(it) } }
+                )
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                SettingsNavigationCard(
+                    icon = Icons.Default.Mic,
+                    title = SettingsSection.CAPTURE_MEMORY.title,
+                    subtitle = SettingsSection.CAPTURE_MEMORY.subtitle,
+                    summary = "Triggers, diccionario aprendido y ubicación pasiva",
+                    onClick = { onOpenSection(SettingsSection.CAPTURE_MEMORY) }
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                SettingsNavigationCard(
+                    icon = Icons.Default.AutoAwesome,
+                    title = SettingsSection.IA.title,
+                    subtitle = SettingsSection.IA.subtitle,
+                    summary = "Resumen diario, Gemini y modelo local",
+                    onClick = { onOpenSection(SettingsSection.IA) }
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                SettingsNavigationCard(
+                    icon = Icons.Default.Palette,
+                    title = SettingsSection.APPEARANCE.title,
+                    subtitle = SettingsSection.APPEARANCE.subtitle,
+                    summary = "Acentos visuales y legibilidad del timeline",
+                    onClick = { onOpenSection(SettingsSection.APPEARANCE) }
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                SettingsNavigationCard(
+                    icon = Icons.Default.Tune,
+                    title = SettingsSection.ADVANCED.title,
+                    subtitle = SettingsSection.ADVANCED.subtitle,
+                    summary = "Diagnóstico, prompts, backup y control fino",
+                    onClick = { onOpenSection(SettingsSection.ADVANCED) }
+                )
+
+                Spacer(modifier = Modifier.height(32.dp))
+            } else {
+
+            if (section == SettingsSection.ADVANCED) {
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f)
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+                    Text(
+                        text = "Herramientas de laboratorio",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Aquí viven los ajustes finos del pipeline, el diagnóstico y el mantenimiento del sistema. No son necesarios para usar Trama en el día a día.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        PatternLegendChip(
+                            text = "Captura",
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                            contentColor = MaterialTheme.colorScheme.primary
+                        )
+                        PatternLegendChip(
+                            text = "Diagnóstico",
+                            color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.14f),
+                            contentColor = MaterialTheme.colorScheme.tertiary
+                        )
+                        PatternLegendChip(
+                            text = "Modelos",
+                            color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.14f),
+                            contentColor = MaterialTheme.colorScheme.secondary
+                        )
+                        PatternLegendChip(
+                            text = "Mantenimiento",
+                            color = MaterialTheme.colorScheme.error.copy(alpha = 0.12f),
+                            contentColor = MaterialTheme.colorScheme.error
                         )
                     }
                 }
             }
 
+            Spacer(modifier = Modifier.height(18.dp))
+
+            // ═══════════════════════════════════════════════════════════════
+            // CAPTURA
+            // ═══════════════════════════════════════════════════════════════
+            SectionHeader("Captura")
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                ),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        "Captura de voz",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "Moonshine hace de filtro ligero y, si detecta una frase relevante, Whisper transcribe la captura completa. Estos dos controles solo ajustan cuánto contexto se conserva antes y después.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Text(
+                        "Motor del gate",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    SingleChoiceSegmentedButtonRow(
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        SegmentedButton(
+                            selected = gateAsrEngine == SettingsDataStore.GATE_ENGINE_MOONSHINE,
+                            onClick = {
+                                scope.launch {
+                                    settings.setGateAsrEngine(SettingsDataStore.GATE_ENGINE_MOONSHINE)
+                                }
+                            },
+                            shape = androidx.compose.material3.SegmentedButtonDefaults.itemShape(
+                                index = 0,
+                                count = 2
+                            )
+                        ) {
+                            Text("Moonshine")
+                        }
+                        SegmentedButton(
+                            selected = gateAsrEngine == SettingsDataStore.GATE_ENGINE_VOSK,
+                            onClick = {
+                                scope.launch {
+                                    settings.setGateAsrEngine(SettingsDataStore.GATE_ENGINE_VOSK)
+                                }
+                            },
+                            shape = androidx.compose.material3.SegmentedButtonDefaults.itemShape(
+                                index = 1,
+                                count = 2
+                            )
+                        ) {
+                            Text("Vosk")
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        if (gateAsrEngine == SettingsDataStore.GATE_ENGINE_VOSK) {
+                            "Vosk queda ya preparado como gate alternativo. Si no hay backend disponible, la app caerá al flujo sin gate."
+                        } else {
+                            "Moonshine sigue siendo el gate ligero actual antes de Whisper."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Contexto previo (t0)",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            "${contextPreRoll}s",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Slider(
+                        value = contextPreRoll.toFloat(),
+                        onValueChange = {
+                            scope.launch { settings.setContextPreRollSeconds(it.roundToInt()) }
+                        },
+                        valueRange = 1f..30f,
+                        steps = 28,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Contexto posterior (t1)",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            "${contextPostRoll}s",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Slider(
+                        value = contextPostRoll.toFloat(),
+                        onValueChange = {
+                            scope.launch { settings.setContextPostRollSeconds(it.roundToInt()) }
+                        },
+                        valueRange = 1f..30f,
+                        steps = 28,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Text(
+                        "El audio solo vive en memoria y se descarta después de procesarse.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    SettingToggle(
+                        title = "Modo diagnostico ASR",
+                        subtitle = "Muestra motor activo y ultima transcripcion",
+                        checked = asrDebugEnabled,
+                        onCheckedChange = { scope.launch { settings.setAsrDebugEnabled(it) } }
+                    )
+
+                    AnimatedVisibility(visible = asrDebugEnabled) {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 12.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(
+                                    "Diagnostico de escucha",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                AnimatedVisibility(visible = asrProcessingInFlight) {
+                                    Text(
+                                        "Procesando...",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.padding(top = 6.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("Motor: $asrDebugEngine", style = MaterialTheme.typography.bodyMedium)
+                                Text("Estado: $asrDebugStatus", style = MaterialTheme.typography.bodyMedium)
+                                if (asrDebugTriggerReason.isNotBlank()) {
+                                    Text(
+                                        "Motivo: $asrDebugTriggerReason",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Text(
+                                    "Ventana: ${asrDebugLastWindowMs} ms · Decodificacion: ${asrDebugLastDecodeMs} ms",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                if (asrDebugGateText.isNotBlank()) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        "Texto del gate",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        asrDebugGateText,
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    if (asrDebugLastText.isNotBlank()) asrDebugLastText else "Aun no hay transcripcion",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             SectionDivider()
+            }
+
+            if (section == SettingsSection.APPEARANCE) {
+            SectionHeader("Timeline")
+
+            Text(
+                "Cada tipo de evento puede tener su propio acento. Se usa de forma sutil en las cards para que el timeline sea más fácil de leer.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            TimelineColorPicker(
+                title = "Pendientes",
+                subtitle = "Entradas activas y tareas abiertas",
+                selectedIndex = timelinePendingColorIndex,
+                onSelect = { index -> scope.launch { settings.setTimelineColorPending(index) } }
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            TimelineColorPicker(
+                title = "Completadas",
+                subtitle = "Acciones ya resueltas",
+                selectedIndex = timelineCompletedColorIndex,
+                onSelect = { index -> scope.launch { settings.setTimelineColorCompleted(index) } }
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            TimelineColorPicker(
+                title = "Grabaciones",
+                subtitle = "Sesiones de voz y su procesado",
+                selectedIndex = timelineRecordingColorIndex,
+                onSelect = { index -> scope.launch { settings.setTimelineColorRecording(index) } }
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            TimelineColorPicker(
+                title = "Lugares",
+                subtitle = "Estancias y eventos de ubicación",
+                selectedIndex = timelinePlaceColorIndex,
+                onSelect = { index -> scope.launch { settings.setTimelineColorPlace(index) } }
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            TimelineColorPicker(
+                title = "Calendario",
+                subtitle = "Eventos leídos de tu agenda",
+                selectedIndex = timelineCalendarColorIndex,
+                onSelect = { index -> scope.launch { settings.setTimelineColorCalendar(index) } }
+            )
+
+            SectionDivider()
+            }
+
+            if (section == SettingsSection.CAPTURE_MEMORY) {
+            SectionHeader("Ubicacion")
+
+            SettingToggle(
+                title = "Deteccion de estancias",
+                subtitle = "Registra lugares visitados de forma pasiva",
+                checked = locationEnabled,
+                onCheckedChange = { enabled ->
+                    val hasPermission = ContextCompat.checkSelfPermission(
+                        context,
+                        android.Manifest.permission.ACCESS_FINE_LOCATION
+                    ) == PackageManager.PERMISSION_GRANTED
+                    if (enabled && !hasPermission) {
+                        fineLocationPermissionLauncher.launch(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                    } else {
+                        scope.launch {
+                            settings.setLocationEnabled(enabled)
+                            if (enabled) ServiceController.startLocationTracking(context)
+                            else ServiceController.stopLocationTracking(context)
+                        }
+                    }
+                }
+            )
+
+            AnimatedVisibility(visible = locationEnabled) {
+                Column {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Intervalo GPS", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                        Text("${locationIntervalMinutes} min", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    }
+                    Slider(
+                        value = locationIntervalMinutes.toFloat(),
+                        onValueChange = {
+                            scope.launch { settings.setLocationIntervalMinutes(it.roundToInt()) }
+                        },
+                        valueRange = 2f..15f,
+                        steps = 12,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Umbral de estancia", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                        Text("${locationDwellMinutes} min", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    }
+                    Slider(
+                        value = locationDwellMinutes.toFloat(),
+                        onValueChange = {
+                            scope.launch { settings.setLocationDwellMinutes(it.roundToInt()) }
+                        },
+                        valueRange = 5f..60f,
+                        steps = 10,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Radio de entrada", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                        Text("${locationEntryRadiusMeters} m", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    }
+                    Slider(
+                        value = locationEntryRadiusMeters.toFloat(),
+                        onValueChange = {
+                            val meters = it.roundToInt()
+                            scope.launch {
+                                settings.setLocationEntryRadiusMeters(meters)
+                                if (locationEnabled) {
+                                    ServiceController.stopLocationTracking(context)
+                                    ServiceController.startLocationTracking(context)
+                                }
+                            }
+                        },
+                        valueRange = 20f..200f,
+                        steps = 17,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Radio de salida", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                        Text("${locationExitRadiusMeters} m", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    }
+                    Slider(
+                        value = locationExitRadiusMeters.toFloat(),
+                        onValueChange = {
+                            val meters = it.roundToInt()
+                            scope.launch {
+                                settings.setLocationExitRadiusMeters(meters)
+                                if (locationEnabled) {
+                                    ServiceController.stopLocationTracking(context)
+                                    ServiceController.startLocationTracking(context)
+                                }
+                            }
+                        },
+                        valueRange = 50f..400f,
+                        steps = 34,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = googlePlacesApiKey,
+                        onValueChange = { scope.launch { settings.setGooglePlacesApiKey(it) } },
+                        label = { Text("Google Places API key") },
+                        supportingText = { Text("Opcional. Se usará más adelante como fallback.") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+
+                    Text(
+                        "Por ahora las estancias aparecen como \"Lugar sin identificar\" y se enriquecerán en la siguiente fase.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                "Diagnóstico de ubicación",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Estado: $locationDebugStatus", style = MaterialTheme.typography.bodyMedium)
+                            Text("Última muestra: $locationDebugLastSample", style = MaterialTheme.typography.bodySmall)
+                            Text("Candidato: $locationDebugCandidate", style = MaterialTheme.typography.bodySmall)
+                            Text("Dwell activo: $locationDebugActiveDwell", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+
+            SectionDivider()
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // DICCIONARIO
+            // ═══════════════════════════════════════════════════════════════
+            if (section == SettingsSection.CAPTURE_MEMORY) {
+            SectionHeader("Diccionario aprendido")
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                ),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        "Estas correcciones se aprenden cuando editas una entrada.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    if (learnedCorrections.isEmpty()) {
+                        Text(
+                            "Aún no hay correcciones aprendidas.",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    } else {
+                        learnedCorrections
+                            .sortedByDescending { it.count }
+                            .forEach { correction ->
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f)
+                                    ),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = correction.wrong,
+                                                style = MaterialTheme.typography.bodyMedium
+                                            )
+                                            Text(
+                                                text = "→ ${correction.correct}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                            Text(
+                                                text = "${correction.count} aprendizaje(s)",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        IconButton(
+                                            onClick = {
+                                                scope.launch {
+                                                    personalDictionary.removeCorrection(correction.wrong)
+                                                }
+                                            }
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Delete,
+                                                contentDescription = "Eliminar corrección"
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch { personalDictionary.clearAll() }
+                            },
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Vaciar diccionario")
+                        }
+                    }
+                }
+            }
+
+            SectionDivider()
+            }
 
             // ═══════════════════════════════════════════════════════════════
             // IA Y RESUMEN
             // ═══════════════════════════════════════════════════════════════
+            if (section == SettingsSection.IA) {
             SectionHeader("IA y resumen")
 
             SettingToggle(
@@ -422,12 +1081,55 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
 
             SectionDivider()
+            }
+
+            if (section == SettingsSection.ADVANCED) {
+            CollapsibleSectionHeader(
+                title = "Prompts",
+                subtitle = "Edita los prompts del sistema sin tocar código",
+                expanded = promptsExpanded,
+                onToggle = { promptsExpanded = !promptsExpanded }
+            )
+
+            AnimatedVisibility(
+                visible = promptsExpanded,
+                enter = expandVertically(),
+                exit = shrinkVertically()
+            ) {
+                Column {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    PromptTemplateStore.definitions.forEach { definition ->
+                        PromptEditorCard(
+                            definition = definition,
+                            onSave = { PromptTemplateStore.set(context, definition.id, it) },
+                            onReset = { PromptTemplateStore.reset(context, definition.id) }
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
+                }
+            }
+
+            SectionDivider()
+            }
 
             // ═══════════════════════════════════════════════════════════════
             // MODELO LOCAL
             // ═══════════════════════════════════════════════════════════════
-            SectionHeader("Modelo local")
+            if (section == SettingsSection.ADVANCED) {
+            CollapsibleSectionHeader(
+                title = "Modelo local",
+                subtitle = "Descarga, activa y configura el modelo en el dispositivo",
+                expanded = modelExpanded,
+                onToggle = { modelExpanded = !modelExpanded }
+            )
 
+            AnimatedVisibility(
+                visible = modelExpanded,
+                enter = expandVertically(),
+                exit = shrinkVertically()
+            ) {
+                Column {
+                    Spacer(modifier = Modifier.height(8.dp))
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -622,50 +1324,151 @@ fun SettingsScreen(onBack: () -> Unit) {
                     }
                 }
             }
-
-            SectionDivider()
-
-            // ═══════════════════════════════════════════════════════════════
-            // VOZ
-            // ═══════════════════════════════════════════════════════════════
-            SectionHeader("Verificacion de voz")
-
-            SettingToggle(
-                title = if (isEnrolled) "Activada" else "Desactivada",
-                subtitle = if (isEnrolled) "Solo guarda notas con tu voz"
-                           else "Registra tu voz para filtrar otras personas",
-                checked = speakerEnabled && isEnrolled,
-                onCheckedChange = {
-                    speakerEnabled = it
-                    speakerEnrollment.setEnabled(it)
                 }
-            )
-
-            if (isEnrolled) {
-                TextButton(onClick = {
-                    speakerEnrollment.resetEnrollment()
-                    isEnrolled = false
-                    speakerEnabled = false
-                    speakerEnrollment.setEnabled(false)
-                }) {
-                    Text("Repetir entrenamiento", color = MaterialTheme.colorScheme.error)
-                }
-            } else {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    "El entrenamiento se realiza desde la pantalla principal " +
-                    "(en una futura version).",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
 
             SectionDivider()
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // SOLO MI VOZ
+            // ═══════════════════════════════════════════════════════════════
+            if (section == SettingsSection.ADVANCED) {
+            CollapsibleSectionHeader(
+                title = "Solo mi voz",
+                subtitle = "Verificacion offline despues de Whisper",
+                expanded = speakerExpanded,
+                onToggle = { speakerExpanded = !speakerExpanded }
+            )
+
+            AnimatedVisibility(
+                visible = speakerExpanded,
+                enter = expandVertically(),
+                exit = shrinkVertically()
+            ) {
+                Column {
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    SettingToggle(
+                        title = if (speakerConfigured && speakerEnabled) "Activado"
+                        else if (speakerConfigured) "Preparado"
+                        else "Sin entrenar",
+                        subtitle = when {
+                            !speakerBackendAvailable -> "Falta el modelo de speaker embedding offline"
+                            speakerConfigured -> "Filtra capturas ajenas despues de transcribir"
+                            else -> "Necesita al menos 3 muestras de tu voz"
+                        },
+                        checked = speakerEnabled && speakerConfigured && speakerBackendAvailable,
+                        onCheckedChange = {
+                            speakerVerificationManager.setEnabled(it)
+                            refreshSpeakerUi()
+                        },
+                        enabled = speakerConfigured && speakerBackendAvailable
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text(
+                        "Muestras guardadas: $speakerSampleCount/${SherpaSpeakerVerificationManager.REQUIRED_SAMPLES}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilledTonalButton(
+                            onClick = {
+                                if (speakerRecordingInProgress) {
+                                    activeSpeakerCapture?.requestStop()
+                                } else {
+                                    val hasPermission = ContextCompat.checkSelfPermission(
+                                        context,
+                                        android.Manifest.permission.RECORD_AUDIO
+                                    ) == PackageManager.PERMISSION_GRANTED
+                                    if (hasPermission) {
+                                        startSpeakerEnrollment()
+                                    } else {
+                                        speakerPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                                    }
+                                }
+                            },
+                            enabled = !speakerTrainingInProgress,
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            if (speakerTrainingInProgress) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            } else {
+                                Text(if (speakerRecordingInProgress) "Detener muestra" else "Grabar muestra")
+                            }
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    speakerVerificationManager.reset()
+                                    speakerStatusMessage = "Perfil borrado"
+                                    refreshSpeakerUi()
+                                }
+                            },
+                            enabled = speakerSampleCount > 0,
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Resetear")
+                        }
+                    }
+
+                    if (speakerBackendAvailable) {
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Text(
+                            "Umbral de coincidencia: ${"%.0f".format(speakerThreshold * 100)}%",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Slider(
+                            value = speakerThreshold,
+                            onValueChange = {
+                                speakerVerificationManager.setThreshold(it)
+                                refreshSpeakerUi()
+                            },
+                            valueRange = 0.4f..0.95f
+                        )
+                    }
+
+                    speakerStatusMessage?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            SectionDivider()
+            }
 
             // ═══════════════════════════════════════════════════════════════
             // BACKUP
             // ═══════════════════════════════════════════════════════════════
-            SectionHeader("Copia de seguridad")
+            if (section == SettingsSection.ADVANCED) {
+            CollapsibleSectionHeader(
+                title = "Copia de seguridad",
+                subtitle = "Exporta o automatiza el respaldo de tus datos",
+                expanded = backupExpanded,
+                onToggle = { backupExpanded = !backupExpanded }
+            )
+
+            AnimatedVisibility(
+                visible = backupExpanded,
+                enter = expandVertically(),
+                exit = shrinkVertically()
+            ) {
+                Column {
+                    Spacer(modifier = Modifier.height(8.dp))
 
             SettingToggle(
                 title = "Backup automatico diario",
@@ -799,12 +1602,16 @@ fun SettingsScreen(onBack: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp)
             )
+                }
+            }
 
             SectionDivider()
+            }
 
             // ═══════════════════════════════════════════════════════════════
             // PATRONES (collapsible)
             // ═══════════════════════════════════════════════════════════════
+            if (section == SettingsSection.CAPTURE_MEMORY) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -837,6 +1644,59 @@ fun SettingsScreen(onBack: () -> Unit) {
                 Column {
                     Spacer(modifier = Modifier.height(8.dp))
 
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                        ),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                "Como funcionan",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "Las categorias no tienen que entender toda la frase. Sirven para detectar familias de intención cortas y estables, y solo entonces dejar pasar la captura a Whisper.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                "Base recomendada: Recordatorios, Tareas y Comunicación. Sí merece la pena cubrir variantes útiles como singular/plural (\"tengo que\" y \"tenemos que\"), pero evita frases temporales como \"mañana tengo que\": el tiempo se resuelve después.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        PatternLegendChip(
+                            text = "Base recomendada",
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                            contentColor = MaterialTheme.colorScheme.primary
+                        )
+                        PatternLegendChip(
+                            text = "Personalizable",
+                            color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.14f),
+                            contentColor = MaterialTheme.colorScheme.secondary
+                        )
+                        PatternLegendChip(
+                            text = "Tiempo fuera del gate",
+                            color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.14f),
+                            contentColor = MaterialTheme.colorScheme.tertiary
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
                     // Test + Add buttons
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(
@@ -855,7 +1715,18 @@ fun SettingsScreen(onBack: () -> Unit) {
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    intentPatterns.forEachIndexed { index, pattern ->
+                    val builtInPatterns = intentPatterns.filterNot { it.isCustom }
+                    val customPatterns = intentPatterns.filter { it.isCustom }
+
+                    Text(
+                        "Categorias base",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    builtInPatterns.forEachIndexed { index, pattern ->
                         IntentPatternCard(
                             pattern = pattern,
                             colorIndex = index,
@@ -867,10 +1738,36 @@ fun SettingsScreen(onBack: () -> Unit) {
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                     }
+
+                    if (customPatterns.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "Categorias personalizadas",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        customPatterns.forEachIndexed { index, pattern ->
+                            IntentPatternCard(
+                                pattern = pattern,
+                                colorIndex = builtInPatterns.size + index,
+                                onToggle = { enabled ->
+                                    scope.launch { settings.updatePattern(pattern.copy(enabled = enabled), intentPatterns) }
+                                },
+                                onEdit = { editingPattern = pattern },
+                                onDelete = { showDeletePatternDialog = pattern }
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                        }
+                    }
                 }
             }
 
             Spacer(modifier = Modifier.height(32.dp))
+            }
+            }
         }
     }
 
@@ -927,6 +1824,90 @@ fun SettingsScreen(onBack: () -> Unit) {
 // ── Section Components ──────────────────────────────────────────────────────
 
 @Composable
+private fun PatternLegendChip(
+    text: String,
+    color: Color,
+    contentColor: Color
+) {
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = color
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelMedium,
+            color = contentColor,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+        )
+    }
+}
+
+@Composable
+private fun SettingsNavigationCard(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    summary: String,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+        ),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+            ) {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    modifier = Modifier.padding(10.dp).size(20.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = subtitle.uppercase(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = summary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Icon(
+                Icons.Default.ExpandMore,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+            )
+        }
+    }
+}
+
+@Composable
 private fun SectionHeader(title: String) {
     Text(
         text = title,
@@ -934,6 +1915,40 @@ private fun SectionHeader(title: String) {
         fontWeight = FontWeight.Bold,
         modifier = Modifier.padding(bottom = 8.dp)
     )
+}
+
+@Composable
+private fun CollapsibleSectionHeader(
+    title: String,
+    subtitle: String,
+    expanded: Boolean,
+    onToggle: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Icon(
+            if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
 }
 
 @Composable
@@ -949,18 +1964,169 @@ private fun SettingToggle(
     title: String,
     subtitle: String,
     checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
+    onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.weight(1f)) {
+        val contentAlpha = if (enabled) 1f else 0.6f
+        Column(modifier = Modifier.weight(1f).alpha(contentAlpha)) {
             Text(title, style = MaterialTheme.typography.titleSmall)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TimelineColorPicker(
+    title: String,
+    subtitle: String,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+        ),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = timelineAccentColor(selectedIndex).copy(alpha = 0.14f)
+                ) {
+                    Text(
+                        TimelineAccentPalette[selectedIndex % TimelineAccentPalette.size].name,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = timelineAccentColor(selectedIndex),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                TimelineAccentPalette.forEachIndexed { index, option ->
+                    val selected = index == selectedIndex
+                    Surface(
+                        modifier = Modifier
+                            .size(width = 34.dp, height = 22.dp)
+                            .clickable { onSelect(index) },
+                        shape = RoundedCornerShape(999.dp),
+                        color = option.color.copy(alpha = if (selected) 0.95f else 0.22f),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (selected) option.color else option.color.copy(alpha = 0.28f)
+                        )
+                    ) {
+                        if (selected) {
+                            Row(
+                                modifier = Modifier.fillMaxSize(),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.Check,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = Color.White
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PromptEditorCard(
+    definition: PromptTemplateStore.PromptDefinition,
+    onSave: (String) -> Unit,
+    onReset: () -> Unit
+) {
+    val context = LocalContext.current
+    var value by remember(definition.id) {
+        mutableStateOf(PromptTemplateStore.get(context, definition.id))
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+        ),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text(
+                definition.title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                definition.subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            OutlinedTextField(
+                value = value,
+                onValueChange = { value = it },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 6,
+                maxLines = 16,
+                shape = RoundedCornerShape(12.dp)
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalButton(
+                    onClick = { onSave(value) },
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("Guardar")
+                }
+                OutlinedButton(
+                    onClick = {
+                        onReset()
+                        value = PromptTemplateStore.get(context, definition.id)
+                    },
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("Restablecer")
+                }
+            }
+        }
     }
 }
 
@@ -996,24 +2162,60 @@ private fun IntentPatternCard(
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = accentColor.copy(alpha = if (pattern.enabled) 0.15f else 0.06f)
-                ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = accentColor.copy(alpha = if (pattern.enabled) 0.15f else 0.06f)
+                        ) {
+                            Text(
+                                text = pattern.label,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (pattern.enabled) accentColor else accentColor.copy(alpha = 0.4f),
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = if (pattern.isCustom) {
+                                MaterialTheme.colorScheme.secondary.copy(alpha = 0.12f)
+                            } else {
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                            }
+                        ) {
+                            Text(
+                                text = if (pattern.isCustom) "Personalizada" else "Base",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (pattern.isCustom) {
+                                    MaterialTheme.colorScheme.secondary
+                                } else {
+                                    MaterialTheme.colorScheme.primary
+                                },
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
                     Text(
-                        text = pattern.label,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (pattern.enabled) accentColor else accentColor.copy(alpha = 0.4f),
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                        text = patternDescription(pattern),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
-
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("${pattern.triggers.size}", style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
-
-                Spacer(modifier = Modifier.weight(1f))
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    "${pattern.triggers.size}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                )
 
                 Icon(
                     if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
@@ -1058,6 +2260,19 @@ private fun IntentPatternCard(
                     }
                 }
             }
+        }
+    }
+}
+
+private fun patternDescription(pattern: IntentPattern): String {
+    return when (pattern.id) {
+        "recordatorios" -> "Frases explicitas para recordar algo."
+        "tareas" -> "Pendientes generales como hacer, deber o necesitar."
+        "comunicacion" -> "Acciones de llamar, escribir o mandar un mensaje."
+        else -> if (pattern.isCustom) {
+            "Categoria creada por ti para un caso concreto."
+        } else {
+            "Familia de activacion personalizada."
         }
     }
 }
@@ -1126,7 +2341,14 @@ private fun PatternEditDialog(
             }
         },
         confirmButton = {
-            Button(onClick = { onSave(pattern.copy(label = label.trim().ifBlank { pattern.label }, triggers = triggers)) },
+            Button(onClick = {
+                onSave(
+                    pattern.copy(
+                        label = label.trim().ifBlank { pattern.label },
+                        triggers = triggers
+                    )
+                )
+            },
                 enabled = triggers.isNotEmpty() && label.isNotBlank(), shape = RoundedCornerShape(10.dp)) {
                 Icon(Icons.Default.Check, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("Guardar")
             }

@@ -7,7 +7,12 @@ La app detecta automaticamente uno de estos conjuntos, por orden de preferencia:
 - small-decoder.int8.onnx
 - small-tokens.txt
 
-2. tiny
+2. medium
+- medium-encoder.int8.onnx
+- medium-decoder.int8.onnx
+- medium-tokens.txt
+
+3. tiny
 - tiny-encoder.int8.onnx
 - tiny-decoder.int8.onnx
 - tiny-tokens.txt

@@ -1,9 +1,12 @@
 package com.trama.shared.data
 
 import com.trama.shared.model.DiaryEntry
+import com.trama.shared.model.DwellDetectionState
+import com.trama.shared.model.Place
 import com.trama.shared.model.Recording
 import com.trama.shared.model.RecordingStatus
 import com.trama.shared.model.Source
+import com.trama.shared.model.TimelineEvent
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
@@ -206,6 +209,7 @@ private class FakeDiaryDao : DiaryDao {
     override suspend fun updateAIProcessing(id: Long, cleanText: String, actionType: String, dueDate: Long?, priority: String, confidence: Float) {}
     override fun getLatest(): Flow<DiaryEntry?> = flowOf(null)
     override fun getLatestPending(): Flow<DiaryEntry?> = flowOf(null)
+    override suspend fun getLatestPendingOnce(): DiaryEntry? = null
     override fun countAll(): Flow<Int> = flowOf(0)
     override fun countPending(): Flow<Int> = flowOf(0)
     override fun countCompletedToday(startOfDay: Long): Flow<Int> = flowOf(0)
@@ -237,4 +241,40 @@ private class FakeRecordingDao : RecordingDao {
     override suspend fun getUnsynced(): List<Recording> = emptyList()
     override suspend fun markSynced(ids: List<Long>) {}
     override suspend fun existsByCreatedAt(createdAt: Long): Boolean = recordings.any { it.createdAt == createdAt }
+}
+
+private class FakeTimelineEventDao : TimelineEventDao {
+    override fun getAll(): Flow<List<TimelineEvent>> = flowOf(emptyList())
+    override fun byDateRange(startTime: Long, endTime: Long): Flow<List<TimelineEvent>> = flowOf(emptyList())
+    override suspend fun byDateRangeOnce(startTime: Long, endTime: Long): List<TimelineEvent> = emptyList()
+    override suspend fun getByIdOnce(id: Long): TimelineEvent? = null
+    override fun getByPlaceId(placeId: Long): Flow<List<TimelineEvent>> = flowOf(emptyList())
+    override suspend fun insert(event: TimelineEvent): Long = 1L
+    override suspend fun insertAll(events: List<TimelineEvent>) {}
+    override suspend fun update(event: TimelineEvent) {}
+    override suspend fun updateTitleForPlace(placeId: Long, title: String) {}
+    override suspend fun deleteById(id: Long) {}
+}
+
+private class FakePlaceDao : PlaceDao {
+    override fun getAll(): Flow<List<Place>> = flowOf(emptyList())
+    override suspend fun getAllOnce(): List<Place> = emptyList()
+    override fun getById(id: Long): Flow<Place?> = flowOf(null)
+    override suspend fun getByIdOnce(id: Long): Place? = null
+    override suspend fun insert(place: Place): Long = 1L
+    override suspend fun update(place: Place) {}
+    override suspend fun rename(id: Long, name: String, updatedAt: Long) {}
+    override suspend fun incrementVisit(id: Long, visitedAt: Long, updatedAt: Long) {}
+    override suspend fun markHome(placeId: Long) {}
+    override suspend fun clearHome(placeId: Long) {}
+    override suspend fun markWork(placeId: Long) {}
+    override suspend fun clearWork(placeId: Long) {}
+    override suspend fun findInBoundingBox(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double): List<Place> = emptyList()
+}
+
+private class FakeDwellDetectionStateDao : DwellDetectionStateDao {
+    override fun observe(): Flow<DwellDetectionState?> = flowOf(null)
+    override suspend fun get(): DwellDetectionState? = null
+    override suspend fun save(state: DwellDetectionState) {}
+    override suspend fun clear() {}
 }

@@ -57,6 +57,13 @@ class IntentDetectorTest {
     }
 
     @Test
+    fun `detects me olvide without accent as recordatorios`() {
+        val result = detector.detect("me olvide estudiar mas")
+        assertNotNull(result)
+        assertEquals("recordatorios", result!!.pattern?.id)
+    }
+
+    @Test
     fun `detects se me fue la olla as recordatorios`() {
         val result = detector.detect("se me fue la olla comprar pan ayer")
         assertNotNull(result)
@@ -112,6 +119,13 @@ class IntentDetectorTest {
     fun `detectPartial detects intent in longer text`() {
         val result = detector.detectPartial("recordar comprar")
         assertNotNull(result)
+    }
+
+    @Test
+    fun `detects fuzzy typo for recordar`() {
+        val result = detector.detect("recorda llamar a casa")
+        assertNotNull(result)
+        assertEquals("recordatorios", result!!.pattern?.id)
     }
 
     @Test

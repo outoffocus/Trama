@@ -12,10 +12,6 @@ import androidx.work.WorkerParameters
 import com.trama.app.MainActivity
 import com.trama.app.NotificationConfig
 import com.trama.app.R
-import com.trama.shared.data.DatabaseProvider
-import kotlinx.coroutines.flow.first
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -34,18 +30,14 @@ class DailySummaryWorker(
         private const val TAG = "DailySummaryWorker"
         const val CHANNEL_ID = NotificationConfig.CHANNEL_DAILY_SUMMARY
         private const val NOTIFICATION_ID = NotificationConfig.ID_DAILY_SUMMARY
-        private const val PREFS = "daily_summary"
-        private const val KEY_LATEST = "latest_summary"
     }
 
     override suspend fun doWork(): Result {
         Log.i(TAG, "Starting daily summary generation")
 
         try {
-            val repository = DatabaseProvider.getRepository(applicationContext)
-            val generator = SummaryGenerator(applicationContext)
+            val generator = DailyPageGenerator(applicationContext)
 
-            // Get today's entries
             val cal = Calendar.getInstance()
             val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
             val dateStr = dateFormat.format(cal.time)
@@ -55,31 +47,15 @@ class DailySummaryWorker(
             cal.set(Calendar.SECOND, 0)
             cal.set(Calendar.MILLISECOND, 0)
             val startOfDay = cal.timeInMillis
+            val page = generator.generateAndPersist(
+                dayStartMillis = startOfDay,
+                status = com.trama.shared.model.DailyPageStatus.FINAL
+            )
 
-            cal.add(Calendar.DAY_OF_YEAR, 1)
-            val endOfDay = cal.timeInMillis
-
-            val entries = repository.byDateRange(startOfDay, endOfDay).first()
-
-            if (entries.isEmpty()) {
-                Log.i(TAG, "No entries today, skipping summary")
-                return Result.success()
-            }
-
-            // Generate summary
-            val summary = generator.generate(entries, dateStr)
-
-            // Save to SharedPreferences
-            val jsonStr = Json.encodeToString(summary)
-            applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit()
-                .putString(KEY_LATEST, jsonStr)
-                .apply()
-
-            Log.i(TAG, "Summary generated: ${summary.narrative}")
+            Log.i(TAG, "Daily page generated for $dateStr: ${page.briefSummary}")
 
             // Show notification
-            showNotification(summary)
+            showNotification(page.briefSummary.orEmpty())
 
             return Result.success()
         } catch (e: Exception) {
@@ -88,7 +64,7 @@ class DailySummaryWorker(
         }
     }
 
-    private fun showNotification(summary: DailySummary) {
+    private fun showNotification(briefSummary: String) {
         val manager = applicationContext.getSystemService(NotificationManager::class.java)
 
         // Create channel
@@ -103,24 +79,21 @@ class DailySummaryWorker(
         )
 
         val intent = Intent(applicationContext, MainActivity::class.java).apply {
-            putExtra("navigate_to", "summary")
+            putExtra("navigate_to", "calendar")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val pendingIntent = PendingIntent.getActivity(
             applicationContext, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        val actionCount = summary.actions.size
-        val subtitle = if (actionCount > 0) "$actionCount acciones sugeridas" else "Sin acciones pendientes"
-
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-            .setContentTitle("Resumen del dia")
-            .setContentText(summary.narrative)
-            .setSubText(subtitle)
+            .setContentTitle("Memoria del dia lista")
+            .setContentText(briefSummary.ifBlank { "Tu pagina diaria ya esta lista." })
+            .setSubText("Abre el calendario para revisar ese dia")
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(summary.narrative))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(briefSummary))
             .build()
 
         manager.notify(NOTIFICATION_ID, notification)

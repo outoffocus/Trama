@@ -1,7 +1,10 @@
 package com.trama.app.ui.components
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
@@ -30,6 +34,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -48,9 +54,11 @@ fun RecordingCard(
     modifier: Modifier = Modifier,
     isSelectionMode: Boolean = false,
     isSelected: Boolean = false,
-    onLongClick: (() -> Unit)? = null
+    onLongClick: (() -> Unit)? = null,
+    accentColor: Color? = null
 ) {
     val dateFormat = SimpleDateFormat("dd MMM · HH:mm", Locale("es"))
+    val eventAccent = accentColor ?: MaterialTheme.colorScheme.tertiary
 
     Card(
         modifier = modifier
@@ -64,10 +72,21 @@ fun RecordingCard(
             containerColor = if (isSelected)
                 MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
             else
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-        )
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)
+        ),
+        border = androidx.compose.foundation.BorderStroke(1.dp, eventAccent.copy(alpha = 0.14f))
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Box(modifier = Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 10.dp, end = 12.dp)
+                    .width(28.dp)
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(eventAccent.copy(alpha = 0.85f))
+            )
+            Column(modifier = Modifier.padding(14.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
@@ -85,13 +104,13 @@ fun RecordingCard(
                         RecordingStatus.COMPLETED -> Icon(
                             Icons.Default.CheckCircle,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
+                            tint = eventAccent,
                             modifier = Modifier.size(18.dp)
                         )
                         RecordingStatus.PROCESSING -> CircularProgressIndicator(
                             modifier = Modifier.size(16.dp),
                             strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.tertiary
+                            color = eventAccent
                         )
                         RecordingStatus.FAILED -> Icon(
                             Icons.Default.Error,
@@ -168,7 +187,7 @@ fun RecordingCard(
                     Text(
                         text = "· Procesando...",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.7f)
+                        color = eventAccent.copy(alpha = 0.8f)
                     )
                 } else if (recording.processingStatus == RecordingStatus.COMPLETED) {
                     val isCloud = recording.processedBy == "CLOUD"
@@ -181,12 +200,13 @@ fun RecordingCard(
                         },
                         modifier = Modifier.size(12.dp),
                         tint = if (isCloud)
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                            eventAccent.copy(alpha = 0.6f)
                         else
                             MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                     )
                 }
             }
+        }
         }
     }
 }

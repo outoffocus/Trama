@@ -165,40 +165,34 @@ class RecordingProcessor(private val context: Context) {
             .format(Calendar.getInstance().time)
 
         // Call 1: title + summary (plain text, no JSON needed)
-        val titlePrompt = """Escribe un titulo breve para esta nota.
-- Maximo 8 palabras
-- Debe describir el tema principal
-- Responde SOLO con el titulo, sin comillas ni texto extra
-
-$transcription"""
+        val titlePrompt = PromptTemplateStore.render(
+            context,
+            PromptTemplateStore.RECORDING_TITLE,
+            mapOf("transcription" to transcription)
+        )
         val title = GemmaClient.generate(context, titlePrompt, maxTokens = 32)
             ?.trim()?.removeSurrounding("\"")?.take(80)
             ?: "Nota de voz"
 
-        val summaryPrompt = """Resume esta nota en 2 o 3 frases.
-- Se fiel al contenido
-- No inventes informacion
-- Responde SOLO con el resumen, sin encabezados ni viñetas
-
-$transcription"""
+        val summaryPrompt = PromptTemplateStore.render(
+            context,
+            PromptTemplateStore.RECORDING_SUMMARY,
+            mapOf("transcription" to transcription)
+        )
         val summary = GemmaClient.generate(context, summaryPrompt, maxTokens = 256)
-            ?.trim() ?: transcription.take(200)
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: transcription.take(200)
 
         // Call 2: extract actions as simple JSON array
-        val actionsPrompt = """Extrae las tareas o cosas por hacer de este texto.
-Responde SOLO con un array JSON valido y nada mas.
-Ejemplo: [{"text":"Comprar leche","type":"BUY"}]
-Si no hay tareas, responde [].
-Tipos validos: CALL, BUY, SEND, EVENT, REVIEW, TALK_TO, GENERIC
-Reglas:
-- text debe ser breve, claro y accionable
-- corrige errores obvios de transcripcion
-- no inventes tareas
-- no incluyas contexto innecesario
-- si una fecha aparece de forma implicita o poco clara, ignorala
-Hoy es $today.
-
-Texto: "$transcription""""
+        val actionsPrompt = PromptTemplateStore.render(
+            context,
+            PromptTemplateStore.RECORDING_ACTIONS,
+            mapOf(
+                "transcription" to transcription,
+                "today" to today
+            )
+        )
 
         val actionsResponse = GemmaClient.generate(context, actionsPrompt, maxTokens = 512, responsePrefix = "[")
         val actionItems = parseSimpleActions(actionsResponse)
@@ -218,7 +212,10 @@ Texto: "$transcription""""
         return try {
             val cleaned = JsonRepair.extractAndRepair(response)
             val items = json.decodeFromString<List<SimpleAction>>(cleaned)
-            items.map { ActionItem(text = it.text, actionType = it.type ?: "GENERIC") }
+            items.mapNotNull {
+                val text = it.text.trim()
+                if (text.isBlank()) null else ActionItem(text = text, actionType = it.type ?: "GENERIC")
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Simple actions parse failed: ${e.message}")
             emptyList()
@@ -238,58 +235,32 @@ Texto: "$transcription""""
             .format(Calendar.getInstance().time)
         val tomorrow = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
             .format(Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 1) }.time)
-
-        return """Analiza esta transcripcion de una grabacion de voz y devuelve SOLO un objeto JSON valido.
-- No añadas explicaciones, markdown, backticks ni texto fuera del JSON.
-- No inventes hechos, fechas ni tareas.
-
-Formato exacto:
-{
-  "title": "Título breve y descriptivo (max 8 palabras)",
-  "summary": "Resumen de 2-3 párrafos del contenido principal",
-  "keyPoints": ["Punto clave 1", "Punto clave 2"],
-  "actionItems": [
-    {
-      "text": "Descripción de la tarea",
-      "actionType": "CALL|BUY|SEND|EVENT|REVIEW|TALK_TO|GENERIC",
-      "priority": "LOW|NORMAL|HIGH|URGENT",
-      "dueDate": "YYYY-MM-DD o null"
-    }
-  ]
-}
-
-Reglas:
-- title:
-  - resume el tema principal en pocas palabras
-  - maximo 8 palabras
-  - no uses comillas
-- summary:
-  - resume el contenido principal en 2 o 3 parrafos cortos
-  - tono neutro y fiel al contenido
-  - incluye contexto, decisiones o temas tratados solo si aparecen de verdad
-- keyPoints:
-  - maximo 7 puntos
-  - frases cortas con informacion realmente importante
-  - si hay poco contenido, usa menos puntos
-- actionItems:
-  - incluye TODAS las tareas, compromisos o cosas por hacer mencionadas claramente
-  - si no hay tareas, usa []
-  - text: acción limpia y concisa
-  - actionType: CALL=llamar, BUY=comprar, SEND=enviar, EVENT=cita/reunión, REVIEW=revisar, TALK_TO=hablar con, GENERIC=otro
-  - dueDate: SOLO si mencionan una fecha o momento temporal claro y explicito (hoy, mañana, lunes, 5 de abril, etc.), convertir a YYYY-MM-DD. Hoy=$today, mañana=$tomorrow. Si NO mencionan ninguna fecha concreta, devuelve null. "Recordar" o "no olvidar" NO implican fecha
-  - priority: URGENT si urgente/ya/ahora/cuanto antes. HIGH si importante. LOW si cuando pueda. NORMAL en el resto
-  - no crees dos tareas si en realidad es la misma accion expresada dos veces
-
-Transcripción:
-\"\"\"
-$transcription
-\"\"\""""
+        return PromptTemplateStore.render(
+            context,
+            PromptTemplateStore.RECORDING_ANALYSIS,
+            mapOf(
+                "transcription" to transcription,
+                "today" to today,
+                "tomorrow" to tomorrow
+            )
+        )
     }
 
 
     private fun parseResponse(responseText: String): RecordingAnalysis {
         val jsonStr = JsonRepair.extractAndRepair(responseText)
-        return json.decodeFromString<RecordingAnalysis>(jsonStr)
+        val parsed = json.decodeFromString<RecordingAnalysis>(jsonStr)
+        require(parsed.title.isNotBlank()) { "LLM returned blank title" }
+        require(parsed.summary.isNotBlank()) { "LLM returned blank summary" }
+        return parsed.copy(
+            title = parsed.title.trim(),
+            summary = parsed.summary.trim(),
+            keyPoints = parsed.keyPoints.map { it.trim() }.filter { it.isNotBlank() },
+            actionItems = parsed.actionItems.mapNotNull { action ->
+                val text = action.text.trim()
+                if (text.isBlank()) null else action.copy(text = text)
+            }
+        )
     }
 
     private suspend fun saveResult(
@@ -350,6 +321,17 @@ $transcription
 
             for (action in actions) {
                 val actionText = action.displayText
+
+                val heuristicDuplicate = DuplicateHeuristics.findLikelyDuplicate(
+                    text = actionText,
+                    existing = existing,
+                    ignoreId = action.id
+                )
+                if (heuristicDuplicate != null) {
+                    repository.markDuplicate(action.id, heuristicDuplicate.id)
+                    Log.i(TAG, "Heuristic duplicate: '$actionText' ≈ '${heuristicDuplicate.displayText}'")
+                    continue
+                }
 
                 // Try LLM dedup (Cloud or Gemma)
                 val duplicateId = tryLlmDedup(actionText, entriesList, existing)

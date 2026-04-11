@@ -27,16 +27,23 @@ class MainActivity : ComponentActivity() {
         if (results[Manifest.permission.RECORD_AUDIO] == true) {
             startListenerService()
         }
+        if (results[Manifest.permission.ACCESS_FINE_LOCATION] == true) {
+            maybeStartLocationService()
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        val shouldStartMicro = ServiceController.shouldBeRunning(this)
         if (hasAudioPermission()) {
-            startListenerService()
-        } else {
+            if (shouldStartMicro) {
+                startListenerService()
+            }
+        } else if (shouldStartMicro) {
             requestPermissions()
         }
+        maybeStartLocationService()
 
         // Sync keywords to watch on every app open
         syncSettingsToWatch()
@@ -60,6 +67,20 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun maybeStartLocationService() {
+        CoroutineScope(Dispatchers.IO).launch {
+            val settings = SettingsDataStore(applicationContext)
+            val enabled = settings.locationEnabled.first()
+            val hasPermission = ContextCompat.checkSelfPermission(
+                applicationContext,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+            if (enabled && hasPermission && !ServiceController.isLocationRunning.value) {
+                ServiceController.startLocationTracking(applicationContext)
+            }
+        }
+    }
+
     private fun syncSettingsToWatch() {
         CoroutineScope(Dispatchers.IO).launch {
             val settings = SettingsDataStore(applicationContext)
@@ -71,6 +92,7 @@ class MainActivity : ComponentActivity() {
     private fun requestPermissions() {
         val permissions = mutableListOf(
             Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.READ_CALENDAR,
             Manifest.permission.WRITE_CALENDAR
         )

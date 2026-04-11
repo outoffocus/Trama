@@ -2,12 +2,14 @@ package com.trama.wear.sync
 
 import android.content.Context
 import android.util.Log
+import com.google.android.gms.wearable.Asset
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import com.trama.shared.data.DiaryRepository
 import com.trama.shared.model.SyncEntry
 import com.trama.shared.model.SyncPayload
 import com.trama.shared.model.SyncRecording
+import com.trama.shared.model.WatchAudioSyncMetadata
 import kotlinx.coroutines.tasks.await
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -19,6 +21,7 @@ class WatchToPhoneSyncer(
     companion object {
         private const val TAG = "WatchToPhoneSyncer"
         private const val SYNC_PATH = "/trama/sync"
+        private const val AUDIO_RECORDING_PATH_PREFIX = "/trama/audio-recording"
     }
 
     suspend fun syncUnsentEntries() {
@@ -58,5 +61,21 @@ class WatchToPhoneSyncer(
         } catch (e: Exception) {
             Log.e(TAG, "Sync failed", e)
         }
+    }
+
+    suspend fun syncRecordingAudio(
+        pcmBytes: ByteArray,
+        metadata: WatchAudioSyncMetadata
+    ) {
+        if (pcmBytes.isEmpty()) return
+
+        val request = PutDataMapRequest.create("$AUDIO_RECORDING_PATH_PREFIX/${metadata.createdAt}").apply {
+            dataMap.putString("metadata", Json.encodeToString(metadata))
+            dataMap.putAsset("audio_pcm16", Asset.createFromBytes(pcmBytes))
+            dataMap.putLong("timestamp", System.currentTimeMillis())
+        }.asPutDataRequest()
+
+        Wearable.getDataClient(context).putDataItem(request).await()
+        Log.i(TAG, "Synced watch audio (${pcmBytes.size} bytes)")
     }
 }

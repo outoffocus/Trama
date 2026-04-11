@@ -69,7 +69,32 @@ object ActionExecutor {
             }
         }
 
-        // Method 1: ACTION_INSERT with CalendarContract (standard Android)
+        // Method 1: explicit Google Calendar
+        try {
+            val intent = Intent(Intent.ACTION_INSERT).apply {
+                data = CalendarContract.Events.CONTENT_URI
+                `package` = "com.google.android.calendar"
+                putExtra(CalendarContract.Events.TITLE, action.title)
+                if (action.description.isNotBlank()) {
+                    putExtra(CalendarContract.Events.DESCRIPTION, action.description)
+                }
+                beginTime?.let { bt ->
+                    putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, bt)
+                    putExtra(CalendarContract.EXTRA_EVENT_END_TIME, bt + 3600_000)
+                }
+            }
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+            if (intent.resolveActivity(context.packageManager) != null) {
+                context.startActivity(intent)
+                Log.i(TAG, "Calendar event launched via explicit Google Calendar intent")
+                return
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Explicit Google Calendar insert failed", e)
+        }
+
+        // Method 2: ACTION_INSERT with CalendarContract (standard Android)
         try {
             val intent = Intent(Intent.ACTION_INSERT).apply {
                 data = CalendarContract.Events.CONTENT_URI
@@ -94,7 +119,7 @@ object ActionExecutor {
             Log.w(TAG, "ACTION_INSERT failed", e)
         }
 
-        // Method 2: ACTION_EDIT (works on some Samsung devices)
+        // Method 3: ACTION_EDIT (works on some Samsung devices)
         try {
             val intent = Intent(Intent.ACTION_EDIT).apply {
                 type = "vnd.android.cursor.item/event"
@@ -115,7 +140,7 @@ object ActionExecutor {
             Log.w(TAG, "ACTION_EDIT failed", e)
         }
 
-        // Method 3: Google Calendar deep link
+        // Method 4: Google Calendar web deep link
         try {
             val sb = StringBuilder("https://calendar.google.com/calendar/render?action=TEMPLATE")
             sb.append("&text=${Uri.encode(action.title)}")
@@ -159,13 +184,7 @@ object ActionExecutor {
     }
 
     private fun createTodo(context: Context, action: SuggestedAction) {
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, action.title)
-            putExtra(Intent.EXTRA_TEXT, "${action.title}\n${action.description}".trim())
-        }
-        val chooser = Intent.createChooser(intent, "Crear tarea en...")
-        context.startActivity(chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        createCalendarEventViaIntent(context, action)
     }
 
     private fun sendMessage(context: Context, action: SuggestedAction) {

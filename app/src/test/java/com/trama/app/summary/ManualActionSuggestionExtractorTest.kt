@@ -37,6 +37,29 @@ class ManualActionSuggestionExtractorTest {
     }
 
     @Test
+    fun `extract splits comma separated actions automatically`() {
+        val suggestions = ManualActionSuggestionExtractor.extract(
+            "Recordar llamar al dentista, comprar leche y pagar el recibo"
+        )
+
+        assertEquals(3, suggestions.size)
+        assertEquals("Llamar al dentista", suggestions[0].text)
+        assertEquals("Comprar leche", suggestions[1].text)
+        assertEquals("Pagar el recibo", suggestions[2].text)
+    }
+
+    @Test
+    fun `extract splits actions joined by luego`() {
+        val suggestions = ManualActionSuggestionExtractor.extract(
+            "Tengo que revisar el presupuesto luego escribir a Marta"
+        )
+
+        assertEquals(2, suggestions.size)
+        assertEquals("Revisar el presupuesto", suggestions[0].text)
+        assertEquals("Escribir a Marta", suggestions[1].text)
+    }
+
+    @Test
     fun `extract returns empty for blank text`() {
         assertTrue(ManualActionSuggestionExtractor.extract("   ").isEmpty())
     }

@@ -41,6 +41,21 @@ class SherpaWhisperAsrEngine(
             ),
             WhisperBundle(
                 encoderAssets = listOf(
+                    "$MODEL_DIR/medium-encoder.int8.onnx",
+                    "$MODEL_DIR/medium-encoder.onnx"
+                ),
+                decoderAssets = listOf(
+                    "$MODEL_DIR/medium-decoder.int8.onnx",
+                    "$MODEL_DIR/medium-decoder.onnx"
+                ),
+                tokensAssets = listOf(
+                    "$MODEL_DIR/medium-tokens.txt"
+                ),
+                language = "es",
+                label = "whisper-medium-multilingual"
+            ),
+            WhisperBundle(
+                encoderAssets = listOf(
                     "$MODEL_DIR/base-encoder.int8.onnx",
                     "$MODEL_DIR/base-encoder.onnx"
                 ),

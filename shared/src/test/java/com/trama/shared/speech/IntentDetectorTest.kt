@@ -29,6 +29,20 @@ class IntentDetectorTest {
     }
 
     @Test
+    fun `detects reminders intent without accent`() {
+        val result = detector.detect("me olvide comprar el regalo")
+        assertNotNull(result)
+        assertEquals("recordatorios", result!!.pattern?.id)
+    }
+
+    @Test
+    fun `detects reminders intent with small asr typo`() {
+        val result = detector.detect("recorda llamar al dentista")
+        assertNotNull(result)
+        assertEquals("recordatorios", result!!.pattern?.id)
+    }
+
+    @Test
     fun `returns null for text without any intent`() {
         val result = detector.detect("el cielo esta azul hoy en la manana")
         assertNull(result)

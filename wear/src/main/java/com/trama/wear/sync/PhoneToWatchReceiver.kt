@@ -55,8 +55,7 @@ class PhoneToWatchReceiver : WearableListenerService() {
                     SETTINGS_PATH -> {
                         val patternsJson = dataMap.getString("intent_patterns_json")
                         val keywordsStr = dataMap.getString("keyword_mappings")
-                        val speakerProfileJson = dataMap.getString("speaker_profile_json")
-                        handleSettings(patternsJson, keywordsStr, speakerProfileJson)
+                        handleSettings(patternsJson, keywordsStr)
                     }
                     ENTRIES_PATH -> {
                         val json = dataMap.getString("payload") ?: return@forEach
@@ -71,7 +70,7 @@ class PhoneToWatchReceiver : WearableListenerService() {
         }
     }
 
-    private fun handleSettings(patternsJson: String?, keywordsStr: String?, speakerProfileJson: String?) {
+    private fun handleSettings(patternsJson: String?, keywordsStr: String?) {
         val prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
 
         if (!patternsJson.isNullOrBlank()) {
@@ -81,11 +80,6 @@ class PhoneToWatchReceiver : WearableListenerService() {
 
         if (!keywordsStr.isNullOrBlank()) {
             prefs.putString("keyword_mappings", keywordsStr)
-        }
-
-        if (!speakerProfileJson.isNullOrBlank()) {
-            prefs.putString("speaker_profile_json", speakerProfileJson)
-            Log.i(TAG, "Speaker profile received from phone")
         }
 
         prefs.apply()

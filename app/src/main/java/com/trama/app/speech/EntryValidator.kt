@@ -5,6 +5,7 @@ import android.util.Log
 import com.google.ai.client.generativeai.GenerativeModel
 import com.trama.app.GeminiConfig
 import com.google.ai.client.generativeai.type.generationConfig
+import com.trama.app.summary.PromptTemplateStore
 import com.trama.shared.speech.EntryValidatorHeuristics
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -111,14 +112,12 @@ class EntryValidator(private val context: Context) {
         )
     }
 
-    private fun buildValidationPrompt(text: String): String = """Analiza esta transcripción de voz y responde SOLO con JSON:
-{"es_nota_personal":true,"correccion":null,"confianza":0.9}
-
-es_nota_personal=true si parece nota/tarea/recordatorio personal. false si es radio/TV/ruido.
-correccion: texto corregido o null si está bien.
-Sé permisivo: en duda, true.
-
-Transcripción: "$text""""
+    private fun buildValidationPrompt(text: String): String =
+        PromptTemplateStore.render(
+            context,
+            PromptTemplateStore.ENTRY_VALIDATION,
+            mapOf("text" to text)
+        )
 
     private suspend fun callCloudGemini(prompt: String, apiKey: String): ValidationResult {
         val model = GenerativeModel(

@@ -28,10 +28,23 @@ import java.util.Locale
 class ActionItemProcessor(private val context: Context) {
 
     suspend fun process(entryId: Long, text: String, repository: DiaryRepository) {
-        val result = tryProcess(text)
-        val splitCleanTexts = maybeAutoSplitEntry(entryId, text, result, repository)
+        val existingEntry = repository.getByIdOnce(entryId)
+        val originalText = existingEntry?.text?.takeIf { it.isNotBlank() } ?: text
+        val normalizedInput = existingEntry?.correctedText?.takeIf { it.isNotBlank() } ?: text
+        val processingText = normalizedInput.ifBlank { originalText }
+
+        val result = tryProcess(
+            originalText = originalText,
+            normalizedInput = processingText
+        )
+        val splitCleanTexts = maybeAutoSplitEntry(entryId, processingText, result, repository)
+        val heuristicFallback = if (result == null && splitCleanTexts.isEmpty()) {
+            buildHeuristicFallback(originalText, processingText)
+        } else {
+            null
+        }
         val dedupTargets = splitCleanTexts.ifEmpty {
-            listOf(result?.cleanText ?: text)
+            listOf(result?.cleanText ?: heuristicFallback?.cleanText ?: processingText)
         }
 
         if (result != null && splitCleanTexts.isEmpty()) {
@@ -44,6 +57,16 @@ class ActionItemProcessor(private val context: Context) {
                 confidence = result.confidence
             )
             Log.i(TAG, "Processed entry $entryId: '${result.cleanText}' [${result.actionType}]")
+        } else if (heuristicFallback != null && splitCleanTexts.isEmpty()) {
+            repository.updateAIProcessing(
+                id = entryId,
+                cleanText = heuristicFallback.cleanText,
+                actionType = heuristicFallback.actionType,
+                dueDate = heuristicFallback.dueDate,
+                priority = heuristicFallback.priority,
+                confidence = heuristicFallback.confidence
+            )
+            Log.i(TAG, "Heuristic fallback for entry $entryId: '${heuristicFallback.cleanText}' [${heuristicFallback.actionType}]")
         } else {
             Log.w(TAG, "No LLM available for entry $entryId, leaving as-is")
         }
@@ -112,12 +135,15 @@ class ActionItemProcessor(private val context: Context) {
         return suggestions.map { it.text }
     }
 
-    private suspend fun tryProcess(text: String): ProcessingResult? {
+    private suspend fun tryProcess(
+        originalText: String,
+        normalizedInput: String
+    ): ProcessingResult? {
         // Try Cloud
         val apiKey = getApiKey()
         if (!apiKey.isNullOrBlank()) {
             try {
-                return processWithCloud(text, apiKey)
+                return processWithCloud(originalText, normalizedInput, apiKey)
             } catch (e: Exception) {
                 Log.w(TAG, "Cloud failed: ${e.javaClass.simpleName}", e)
             }
@@ -126,7 +152,7 @@ class ActionItemProcessor(private val context: Context) {
         // Try local on-device model
         if (GemmaClient.isModelAvailable(context)) {
             try {
-                return processWithLocalModel(text)
+                return processWithLocalModel(originalText, normalizedInput)
             } catch (e: Exception) {
                 Log.w(TAG, "Local model failed", e)
             }
@@ -135,8 +161,35 @@ class ActionItemProcessor(private val context: Context) {
         return null
     }
 
-    private suspend fun processWithCloud(text: String, apiKey: String): ProcessingResult {
-        val prompt = buildPrompt(text)
+    private fun buildHeuristicFallback(
+        originalText: String,
+        normalizedInput: String
+    ): ProcessingResult? {
+        val candidates = linkedSetOf<String>()
+        if (originalText.isNotBlank()) candidates += originalText
+        if (normalizedInput.isNotBlank()) candidates += normalizedInput
+
+        val suggestion = candidates
+            .asSequence()
+            .flatMap { ManualActionSuggestionExtractor.extract(it).asSequence() }
+            .firstOrNull()
+            ?: return null
+
+        return ProcessingResult(
+            cleanText = suggestion.text,
+            actionType = suggestion.actionType,
+            dueDate = suggestion.dueDate,
+            priority = suggestion.priority,
+            confidence = 0.65f
+        )
+    }
+
+    private suspend fun processWithCloud(
+        originalText: String,
+        normalizedInput: String,
+        apiKey: String
+    ): ProcessingResult {
+        val prompt = buildPrompt(originalText, normalizedInput)
 
         val model = GenerativeModel(
             modelName = GeminiConfig.MODEL_NAME,
@@ -152,25 +205,29 @@ class ActionItemProcessor(private val context: Context) {
             ?: throw Exception("Empty Gemini response")
 
         Log.d(TAG, "Cloud OK: $responseText")
-        return parseResult(JsonRepair.extractJson(responseText), 1.0f)
+        return parseResult(responseText, 1.0f)
     }
 
-    private suspend fun processWithLocalModel(text: String): ProcessingResult? {
+    private suspend fun processWithLocalModel(
+        originalText: String,
+        normalizedInput: String
+    ): ProcessingResult? {
         // Use the same structured prompt as Cloud
-        val prompt = buildPrompt(text)
+        val prompt = buildPrompt(originalText, normalizedInput)
         val responseText = GemmaClient.generate(context, prompt, maxTokens = 256, responsePrefix = "{") ?: return null
         Log.d(TAG, "Local model response: $responseText")
 
         return try {
             // Try parsing as JSON (same format as Cloud)
-            parseResult(JsonRepair.extractJson(responseText), 0.85f)
+            parseResult(responseText, 0.85f)
         } catch (e: Exception) {
             // Fallback: use response as clean text + keyword-based inference
             Log.d(TAG, "Local model JSON parse failed, using text fallback", e)
-            val cleanText = JsonRepair.extractJson(responseText).trim().removeSurrounding("\"")
+            val cleanText = JsonRepair.extractAndRepair(responseText).trim().removeSurrounding("\"")
+            val validatedCleanText = cleanText.takeIf { it.isNotBlank() } ?: return null
             ProcessingResult(
-                cleanText = cleanText.replaceFirstChar { it.uppercase() }.take(200),
-                actionType = inferActionType(text),
+                cleanText = validatedCleanText.take(200),
+                actionType = inferActionType(normalizedInput),
                 dueDate = null,
                 priority = "NORMAL",
                 confidence = 0.7f
@@ -192,58 +249,29 @@ class ActionItemProcessor(private val context: Context) {
         }
     }
 
-    private fun buildPrompt(text: String): String {
+    private fun buildPrompt(originalText: String, normalizedInput: String): String {
         val today = dateFormat.format(Calendar.getInstance().time)
         val tomorrow = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 1) }
         val tomorrowStr = dateFormat.format(tomorrow.time)
-
-        return """Analiza esta nota de voz capturada y devuelve SOLO un objeto JSON valido.
-- No añadas explicaciones, markdown, backticks ni texto extra.
-- Si dudas entre varias interpretaciones, elige la mas conservadora.
-
-Formato exacto:
-{
-  "cleanText": "texto limpio y corregido, sin el trigger inicial",
-  "actionType": "CALL|BUY|SEND|EVENT|REVIEW|TALK_TO|GENERIC",
-  "dueDate": "YYYY-MM-DD o null",
-  "priority": "LOW|NORMAL|HIGH|URGENT",
-  "confidence": 0.0-1.0
-}
-
-Reglas:
-- cleanText:
-  - elimina frases activadoras como "recordar", "tengo que", "hay que", "deberia", "acordarme de", "acordarnos de", "me olvide", "se me fue la olla"
-  - deja solo el contenido util de la nota
-  - corrige errores claros de transcripcion
-  - manten el mismo idioma
-  - escribe una frase breve, natural y capitalizada
-  - no inventes detalles que no aparecen en la nota
-- actionType: CALL=llamar, BUY=comprar, SEND=enviar, EVENT=cita/reunión, REVIEW=revisar, TALK_TO=hablar con, GENERIC=otro
-- dueDate:
-  - usa YYYY-MM-DD
-  - conviertela solo si la nota menciona una fecha o momento temporal claro
-  - hoy = $today
-  - mañana = $tomorrowStr
-  - si no hay fecha clara, devuelve null
-  - no inventes fechas
-- priority:
-  - URGENT si aparece urgencia explicita como "urgente", "ya", "ahora", "cuanto antes"
-  - HIGH si indica alta importancia
-  - LOW si transmite baja prioridad o "cuando pueda"
-  - NORMAL en el resto
-- confidence:
-  - entre 0.0 y 1.0
-  - alto si el contenido es claro y especifico
-  - bajo si la nota es ambigua o esta mal transcrita
-
-Nota de voz: "$text""""
+        return PromptTemplateStore.render(
+            context,
+            PromptTemplateStore.ACTION_ITEM,
+            mapOf(
+                "text" to normalizedInput,
+                "originalText" to originalText,
+                "normalizedInput" to normalizedInput,
+                "today" to today,
+                "tomorrow" to tomorrowStr
+            )
+        )
     }
 
 
     private fun parseResult(responseText: String, confidenceMultiplier: Float): ProcessingResult {
-        val parsed = json.decodeFromString<LLMResponse>(JsonRepair.repair(responseText))
+        val parsed = json.decodeFromString<LLMResponse>(JsonRepair.extractAndRepair(responseText))
+        require(parsed.cleanText.isNotBlank()) { "LLM returned blank cleanText" }
         return ProcessingResult(
-            cleanText = parsed.cleanText,
+            cleanText = parsed.cleanText.trim(),
             actionType = validateActionType(parsed.actionType),
             dueDate = parseDateString(parsed.dueDate),
             priority = validatePriority(parsed.priority),
@@ -258,6 +286,16 @@ Nota de voz: "$text""""
             .filter { it.id != entryId }
 
         if (existing.isEmpty()) return
+
+        DuplicateHeuristics.findLikelyDuplicate(
+            text = cleanText,
+            existing = existing,
+            ignoreId = entryId
+        )?.let { duplicate ->
+            repository.markDuplicate(entryId, duplicate.id)
+            Log.i(TAG, "Heuristic duplicate: entry $entryId ≈ '${duplicate.displayText}'")
+            return
+        }
 
         val entriesList = existing.take(20).joinToString("\n") { "${it.id}: ${it.displayText}" }
 

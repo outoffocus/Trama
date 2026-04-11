@@ -48,6 +48,7 @@ class RecordingService : LifecycleService() {
     private var currentPartial = ""
     private var startTimeMs = 0L
     private var timerJob: Job? = null
+    private var stopJob: Job? = null
     private var isActive = false
 
     override fun onCreate() {
@@ -106,7 +107,7 @@ class RecordingService : LifecycleService() {
     }
 
     private fun stopRecording() {
-        if (!isActive) return
+        if (!isActive || stopJob != null) return
         isActive = false
         timerJob?.cancel()
 
@@ -124,41 +125,45 @@ class RecordingService : LifecycleService() {
 
         val elapsed = ((System.currentTimeMillis() - startTimeMs) / 1000).toInt()
 
-        if (textToSave.isNotBlank()) {
-            // Save synchronously before stopping — must complete before service dies
-            kotlinx.coroutines.runBlocking(Dispatchers.IO) {
-                val repository = DatabaseProvider.getRepository(applicationContext)
-                val recordingId = repository.insertRecording(
-                    Recording(
-                        transcription = textToSave,
-                        durationSeconds = elapsed,
-                        source = Source.PHONE
+        stopJob = lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                if (textToSave.isNotBlank()) {
+                    val repository = DatabaseProvider.getRepository(applicationContext)
+                    val recordingId = repository.insertRecording(
+                        Recording(
+                            transcription = textToSave,
+                            durationSeconds = elapsed,
+                            source = Source.PHONE
+                        )
                     )
-                )
 
-                RecordingState.notifySaved(recordingId)
-                Log.i(TAG, "Recording saved (id=$recordingId, ${elapsed}s)")
+                    RecordingState.notifySaved(recordingId)
+                    Log.i(TAG, "Recording saved (id=$recordingId, ${elapsed}s)")
 
-                // Enqueue processing via WorkManager — survives service destruction
-                com.trama.app.summary.RecordingProcessorWorker.enqueue(applicationContext, recordingId)
+                    com.trama.app.summary.RecordingProcessorWorker.enqueue(applicationContext, recordingId)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to persist recording before stop", e)
+                RecordingState.notifyError("No se pudo guardar la grabación")
+            } finally {
+                RecordingState.reset()
+
+                if (ServiceController.shouldBeRunning(this@RecordingService)) {
+                    Log.i(TAG, "Resuming KeywordListenerService after recording")
+                    ServiceController.start(this@RecordingService)
+                }
+
+                stopJob = null
+                stopSelf()
+                Log.i(TAG, "Recording stopped")
             }
         }
-
-        RecordingState.reset()
-
-        // Resume keyword listener if user had it enabled
-        if (ServiceController.shouldBeRunning(this)) {
-            Log.i(TAG, "Resuming KeywordListenerService after recording")
-            ServiceController.start(this)
-        }
-
-        stopSelf()
-        Log.i(TAG, "Recording stopped")
     }
 
     override fun onDestroy() {
         isActive = false
         timerJob?.cancel()
+        stopJob?.cancel()
         recognizer?.destroy()
         RecordingState.reset()
         super.onDestroy()
