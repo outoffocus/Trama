@@ -1,4 +1,4 @@
-package com.trama.app.audio
+package com.trama.shared.audio
 
 import android.content.Context
 import android.content.res.AssetManager
@@ -31,14 +31,11 @@ class AssetFileCache(private val context: Context) {
         val outFile = File(context.filesDir, normalized)
         outFile.parentFile?.mkdirs()
 
-        if (outFile.exists()) {
-            val assetLength = assetManager.open(normalized).use { it.available() }
-            if (outFile.length() == assetLength.toLong()) {
+        assetManager.open(normalized).use { input ->
+            val assetLength = input.available().toLong()
+            if (outFile.exists() && outFile.length() == assetLength) {
                 return outFile.absolutePath
             }
-        }
-
-        assetManager.open(normalized).use { input ->
             FileOutputStream(outFile).use { output ->
                 input.copyTo(output)
             }
@@ -64,7 +61,13 @@ class AssetFileCache(private val context: Context) {
     private fun copyDirectoryRecursively(path: String) {
         val children = assetManager.list(path).orEmpty()
         if (children.isEmpty()) {
-            ensureCopied(path)
+            // It's a file or an empty dir
+            try {
+                ensureCopied(path)
+            } catch (_: Exception) {
+                // Not a file, probably just an empty dir
+                File(context.filesDir, path).mkdirs()
+            }
             return
         }
 

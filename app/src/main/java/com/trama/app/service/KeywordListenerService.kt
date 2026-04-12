@@ -29,14 +29,14 @@ import com.trama.app.MainActivity
 import com.trama.app.NotificationConfig
 import com.trama.app.R
 import com.trama.app.audio.ContextualAudioCaptureEngine
-import com.trama.app.audio.ContextualCaptureConfig
-import com.trama.app.audio.LightweightGateAsr
-import com.trama.app.audio.NoOpAsrEngine
-import com.trama.app.audio.NoOpLightweightGateAsr
-import com.trama.app.audio.OnDeviceAsrEngine
 import com.trama.app.audio.SherpaMoonshineGateAsr
 import com.trama.app.audio.SherpaWhisperAsrEngine
 import com.trama.app.audio.VoskGateAsr
+import com.trama.shared.audio.ContextualCaptureConfig
+import com.trama.shared.audio.LightweightGateAsr
+import com.trama.shared.audio.NoOpAsrEngine
+import com.trama.shared.audio.NoOpLightweightGateAsr
+import com.trama.shared.audio.OnDeviceAsrEngine
 import com.trama.app.speech.EntryValidator
 import com.trama.app.speech.IntentDetector
 import com.trama.app.speech.IntentPattern
@@ -131,6 +131,8 @@ class KeywordListenerService : LifecycleService() {
     private var contextPostRollSeconds: Int = SettingsDataStore.DEFAULT_CONTEXT_POST_ROLL
     private var asrDebugEnabled: Boolean = false
     private var selectedGateEngine: String = SettingsDataStore.GATE_ENGINE_MOONSHINE
+
+    @Volatile private var asrDebugEnabledVolatile = false
     @Volatile
     private var listening = false
 
@@ -335,6 +337,7 @@ class KeywordListenerService : LifecycleService() {
         lifecycleScope.launch {
             settings.asrDebugEnabled.collect { enabled ->
                 asrDebugEnabled = enabled
+                asrDebugEnabledVolatile = enabled
             }
         }
         lifecycleScope.launch {
@@ -857,7 +860,8 @@ class KeywordListenerService : LifecycleService() {
         lastWindowMs: Int? = null,
         lastDecodeMs: Int? = null
     ) {
-        if (!asrDebugEnabled && lastText == null) return
+        val hasDebugFields = gateText != null || triggerReason != null || lastText != null
+        if (!asrDebugEnabledVolatile && !hasDebugFields) return
         lifecycleScope.launch(Dispatchers.IO) {
             settings.updateAsrDebugSnapshot(
                 engine = engine,

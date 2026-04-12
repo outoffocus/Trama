@@ -1,5 +1,9 @@
 package com.trama.app.audio
 
+import com.trama.shared.audio.CircularAudioBuffer
+import com.trama.shared.audio.ContextualCaptureAssembler
+import com.trama.shared.audio.ContextualCaptureConfig
+import com.trama.shared.audio.CapturedAudioWindow
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Test

@@ -1,5 +1,6 @@
 package com.trama.app.audio
 
+import com.trama.shared.audio.CircularAudioBuffer
 import org.junit.Assert.assertArrayEquals
 import org.junit.Test
 

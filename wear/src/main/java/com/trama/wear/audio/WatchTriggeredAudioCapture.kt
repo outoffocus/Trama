@@ -16,6 +16,9 @@ class WatchTriggeredAudioCapture {
         private const val MIN_DURATION_MS = 1_200L
         private const val SILENCE_STOP_MS = 2_500L
         private const val SILENCE_RMS_THRESHOLD = 700.0
+        // Minimum RMS for the full capture to be considered real audio.
+        // Captures below this are likely mic-contention artifacts (all-zero PCM).
+        private const val MIN_CAPTURE_RMS = 200.0
     }
 
     suspend fun capture(): ShortArray = withContext(Dispatchers.IO) {
@@ -88,6 +91,13 @@ class WatchTriggeredAudioCapture {
             chunk.copyInto(merged, destinationOffset = offset)
             offset += chunk.size
         }
+
+        // Reject captures that are all-zero or near-silent — this happens when
+        // the mic was not fully released by SpeechRecognizer before AudioRecord opened it.
+        if (rms(merged) < MIN_CAPTURE_RMS) {
+            return@withContext shortArrayOf()
+        }
+
         merged
     }
 

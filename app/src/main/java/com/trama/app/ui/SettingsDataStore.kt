@@ -37,6 +37,8 @@ class SettingsDataStore(private val context: Context) {
         val ASR_DEBUG_LAST_DECODE_MS = intPreferencesKey("asr_debug_last_decode_ms")
         val ASR_DEBUG_GATE_TEXT = stringPreferencesKey("asr_debug_gate_text")
         val ASR_DEBUG_TRIGGER_REASON = stringPreferencesKey("asr_debug_trigger_reason")
+        val WATCH_DEBUG_STATUS = stringPreferencesKey("watch_debug_status")
+        val WATCH_DEBUG_TRIGGER = stringPreferencesKey("watch_debug_trigger")
         val LOCATION_ENABLED = booleanPreferencesKey("location_enabled")
         val LOCATION_INTERVAL_MINUTES = intPreferencesKey("location_interval_minutes")
         val LOCATION_DWELL_MINUTES = intPreferencesKey("location_dwell_minutes")
@@ -159,6 +161,14 @@ class SettingsDataStore(private val context: Context) {
 
     val asrDebugTriggerReason: Flow<String> = context.dataStore.data.map { prefs ->
         prefs[ASR_DEBUG_TRIGGER_REASON] ?: ""
+    }
+
+    val watchDebugStatus: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[WATCH_DEBUG_STATUS] ?: ""
+    }
+
+    val watchDebugTrigger: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[WATCH_DEBUG_TRIGGER] ?: ""
     }
 
     val locationEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
@@ -287,6 +297,13 @@ class SettingsDataStore(private val context: Context) {
 
     suspend fun setTimelineColorCalendar(index: Int) {
         context.dataStore.edit { it[TIMELINE_COLOR_CALENDAR] = index }
+    }
+
+    suspend fun updateWatchDebug(status: String, trigger: String? = null) {
+        context.dataStore.edit { prefs ->
+            prefs[WATCH_DEBUG_STATUS] = status
+            trigger?.let { prefs[WATCH_DEBUG_TRIGGER] = it }
+        }
     }
 
     suspend fun updateAsrDebugSnapshot(

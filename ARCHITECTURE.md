@@ -1,290 +1,429 @@
-# Trama — Arquitectura
+# Trama — Arquitectura y Handoff Técnico
 
-## Resumen
+## 1. Visión de producto actual
 
-Trama tiene hoy cuatro capas importantes:
+Trama ya no debe leerse como “una app de resumen diario” ni como “un recorder con IA”.
 
-- captura continua de recordatorios por voz
-- postproceso estructurado de cada entrada
-- archivo diario centrado en calendario
-- memoria técnica nocturna para futuro chat
-
-La app ya no gira alrededor de una pantalla separada de “daily review”. El producto actual se organiza así:
+El modelo de producto vigente es:
 
 - `Home`: flujo vivo y operativo de hoy
 - `Calendar`: archivo diario e histórico accionable
-- `.md` nocturno: memoria privada generada al cierre del día
+- `DailyPage + .md nocturno`: memoria técnica privada para futuro chat
 
-En voz, el móvil ya no depende solo de `SpeechRecognizer`: la ruta preferente es on-device con `Vosk` como gate temprano y `Whisper` como transcripción final.
+La app intenta capturar primero, estructurar después y recordar a largo plazo sin obligar al usuario a editar todo manualmente.
 
-## Módulos
+## 2. Estado actual a 2026-04-12
+
+### Móvil
+
+- escucha continua on-device con pipeline dedicado
+- gate preferente con `Vosk`
+- transcripción final con `Whisper` vía `sherpa-onnx`
+- fallback a `SpeechRecognizer`
+- speaker verification offline integrada después de Whisper
+- calendario como centro del histórico
+- `DailyPage` persistida por fecha + `.md` nocturno privado
+
+### Wear OS
+
+- app simplificada a tres acciones visibles
+  - `Escucha continua`
+  - `Grabadora`
+  - `Transferir al teléfono`
+- grabadora manual del reloj:
+  - captura PCM16 local
+  - transfiere audio al móvil
+  - el móvil transcribe y procesa
+- escucha continua del reloj:
+  - detector ligero con `SpeechRecognizer`
+  - captura corta post-trigger
+  - transferencia de audio al móvil
+  - fallback al `triggerText` si Whisper no devuelve texto
+
+### Estado de madurez
+
+- móvil: relativamente avanzado
+- reloj: funcional, pero todavía híbrido y con menor sofisticación contextual
+
+## 3. Módulos
 
 ```text
-app/     móvil: UI, servicios, ASR, postproceso, backup
-shared/  modelos, Room, detección, sync, utilidades comunes
-wear/    reloj: listener, sync y UI Wear
+app/
+  móvil: UI Compose, servicios, ASR, postproceso, sync, backup
+
+shared/
+  modelos, Room, utilidades de audio, sync, IntentDetector, contratos compartidos
+
+wear/
+  UI Wear, listener, grabadora, sync y captura ligera
 ```
 
-## Flujo principal en móvil
+## 4. Pipeline de voz en móvil
 
-```text
-Usuario habla
-  -> KeywordListenerService
-  -> ContextualAudioCaptureEngine
-  -> CircularAudioBuffer
-  -> VoskGateAsr
-  -> ventana de audio t0 + evento + t1
-  -> SherpaWhisperAsrEngine
-  -> IntentDetector
-  -> saveEntry()
-  -> ActionItemProcessor
-  -> Room
-  -> UI / sync / notificaciones / DailyPage
-```
+### Ruta principal
 
-## Rutas de escucha
+Archivos centrales:
 
-### 1. Ruta preferente: ASR dedicado
-
-Archivos clave:
-
-- [`app/src/main/java/com/trama/app/service/KeywordListenerService.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/service/KeywordListenerService.kt)
-- [`app/src/main/java/com/trama/app/audio/ContextualAudioCaptureEngine.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/audio/ContextualAudioCaptureEngine.kt)
-- [`app/src/main/java/com/trama/app/audio/CircularAudioBuffer.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/audio/CircularAudioBuffer.kt)
-- [`app/src/main/java/com/trama/app/audio/VoskGateAsr.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/audio/VoskGateAsr.kt)
-- [`app/src/main/java/com/trama/app/audio/SherpaWhisperAsrEngine.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/audio/SherpaWhisperAsrEngine.kt)
-
-Funcionamiento:
-
-1. `AudioRecord` captura PCM mono a 16 kHz
-2. `CircularAudioBuffer` conserva siempre los últimos segundos de audio
-3. `SimpleVAD` detecta inicio y fin de voz
-4. `VoskGateAsr` escucha el texto temprano y decide si merece abrir captura contextual
-5. Al cerrarse una ventana se construye un `CapturedAudioWindow`
-6. Whisper `small` en `sherpa-onnx` transcribe ese bloque completo
-7. `IntentDetector` clasifica la transcripción final
-
-Propiedades:
-
-- audio solo en RAM
-- `t0` y `t1` configurables
-- `Vosk` es el gate preferente en ajustes
-- fallback automático si el backend dedicado falla
-
-### 2. Ruta fallback: `SpeechRecognizer`
-
-Se mantiene como red de seguridad:
-
-1. se usa solo si el backend dedicado no puede arrancar
-2. intenta detectar y consolidar texto con el recognizer del sistema
-3. hoy ya no es la ruta de producto recomendada
-
-## Detección semántica
-
-Archivos clave:
-
-- [`shared/src/main/java/com/trama/shared/speech/IntentDetector.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/shared/src/main/java/com/trama/shared/speech/IntentDetector.kt)
-- [`shared/src/main/java/com/trama/shared/speech/IntentPattern.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/shared/src/main/java/com/trama/shared/speech/IntentPattern.kt)
-
-La app trabaja con categorías y frases activadoras. La configuración por defecto es mínima y el usuario puede crear las suyas.
-
-## Persistencia
-
-Archivos clave:
-
-- [`shared/src/main/java/com/trama/shared/model/DiaryEntry.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/shared/src/main/java/com/trama/shared/model/DiaryEntry.kt)
-- [`shared/src/main/java/com/trama/shared/data/DiaryDao.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/shared/src/main/java/com/trama/shared/data/DiaryDao.kt)
-- [`shared/src/main/java/com/trama/shared/data/DiaryRepository.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/shared/src/main/java/com/trama/shared/data/DiaryRepository.kt)
-
-`DiaryEntry` sigue siendo la unidad operativa principal y guarda:
-
-- texto original
-- categoría / keyword
-- estado
-- prioridad
-- `cleanText`
-- tipo de acción
-- `dueDate`
-- metadatos de revisión AI
-
-No se guarda audio crudo.
-
-También existe ya una capa diaria persistida:
-
-- [`shared/src/main/java/com/trama/shared/model/DailyPage.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/shared/src/main/java/com/trama/shared/model/DailyPage.kt)
-- [`shared/src/main/java/com/trama/shared/data/DailyPageDao.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/shared/src/main/java/com/trama/shared/data/DailyPageDao.kt)
-
-`DailyPage` guarda por fecha:
-
-- estado del dia (`DRAFT` / `FINAL`)
-- resumen breve
-- markdown generado
-- ruta del `.md`
-- timestamps de generacion / actualizacion
-- marca de revision manual
-
-## Archivo diario y markdown nocturno
-
-Archivos clave:
-
-- [`app/src/main/java/com/trama/app/summary/DailyPageGenerator.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/summary/DailyPageGenerator.kt)
-- [`app/src/main/java/com/trama/app/summary/DailyPageMarkdownStore.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/summary/DailyPageMarkdownStore.kt)
-- [`app/src/main/java/com/trama/app/ui/screens/CalendarScreen.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/ui/screens/CalendarScreen.kt)
-- [`app/src/main/java/com/trama/app/summary/DailySummaryWorker.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/summary/DailySummaryWorker.kt)
+- `app/service/KeywordListenerService.kt`
+- `app/audio/ContextualAudioCaptureEngine.kt`
+- `shared/audio/CircularAudioBuffer.kt`
+- `app/audio/VoskGateAsr.kt`
+- `app/audio/SherpaWhisperAsrEngine.kt`
+- `shared/speech/IntentDetector.kt`
 
 Flujo:
 
-1. durante el día, `CalendarScreen` usa entradas, lugares y `DailyPage` para enseñar el archivo del día seleccionado
-2. al cierre programado, `DailySummaryWorker` recopila entradas, tareas, lugares, grabaciones y eventos
-3. `DailyPageGenerator` genera resumen breve y markdown técnico
-4. `DailyPageMarkdownStore` escribe un `.md` privado en `filesDir/daily-pages/`
-5. se persiste o actualiza una `DailyPage`
+1. `KeywordListenerService` arranca la escucha
+2. `ContextualAudioCaptureEngine` mantiene captura PCM a 16 kHz
+3. `CircularAudioBuffer` conserva preroll
+4. `SimpleVAD` detecta actividad de voz
+5. `VoskGateAsr` decide si la ventana merece transcripción completa
+6. se construye un `CapturedAudioWindow`
+7. `SherpaWhisperAsrEngine` produce transcripción final
+8. `IntentDetector` clasifica
+9. si pasa speaker verification y validaciones, se inserta `DiaryEntry`
+10. `ActionItemProcessor` estructura y enriquece
 
-Separacion funcional:
+### Propiedades
 
-- `Home` es la vista cronológica y operativa de hoy
-- `CalendarScreen` es el archivo diario e histórico accionable
-- `DayTimelineScreen` sigue existiendo como vista profunda del día
-- el markdown queda oculto como memoria futura para chat
+- audio contextual en RAM
+- `t0/t1` configurables
+- degradación posible a recognizer del sistema
+- pipeline orientado a eficiencia: gate barato + transcripción cara solo al final
 
-Decisión de producto vigente:
+## 5. Speaker verification
 
-- no hay una pantalla visible principal de `Daily Review`
-- el valor de revisión se integra en el panel inferior del calendario
-- el `.md` diario no compite en UI y actúa como artefacto técnico
+Estado actual:
 
-## Postproceso de entradas
+- **sí está cableada**
+- ya no es solo una interfaz preparada
 
-Archivo clave:
+Archivos:
 
-- [`app/src/main/java/com/trama/app/summary/ActionItemProcessor.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/summary/ActionItemProcessor.kt)
+- `app/speech/speaker/SpeakerEmbeddingEngine.kt`
+- `app/speech/speaker/SherpaSpeakerEmbeddingEngine.kt`
+- `app/speech/speaker/SpeakerVerificationManager.kt`
+- `app/speech/speaker/SherpaSpeakerVerificationManager.kt`
+- `app/service/KeywordListenerService.kt`
+- `app/ui/screens/SettingsScreen.kt`
 
-Después de insertar una entrada:
+Flujo:
 
-1. se marca como “procesando” en UI
-2. se intenta enriquecer con IA
-3. se actualizan `cleanText`, `actionType`, `dueDate`, `priority`
-4. se comprueban duplicados
-5. se limpia el estado visual de procesamiento
+1. Whisper transcribe
+2. se calcula embedding del hablante sobre la misma ventana
+3. se compara contra el perfil enrolado del usuario
+4. si falla, la captura se rechaza
 
-## Estado compartido para UI
+Riesgo:
 
-Archivos clave:
+- la feature es ya real, pero debe considerarse sensible a tuning de umbral y calidad de muestras
 
-- [`app/src/main/java/com/trama/app/service/EntryProcessingState.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/service/EntryProcessingState.kt)
-- [`app/src/main/java/com/trama/app/service/RecordingState.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/service/RecordingState.kt)
+## 6. Persistencia
 
-Se usan `StateFlow` simples para exponer:
+### Base de datos
 
-- grabación en curso
-- errores recientes
-- entradas que siguen en procesamiento
+Base Room compartida en `shared/data`.
 
-La UI usa esto para pintar `Procesando...` en las tarjetas y en el panel de diagnóstico.
+Entidades principales:
 
-## UI actual
+- `DiaryEntry`
+- `Recording`
+- `Place`
+- `TimelineEvent`
+- `DailyPage`
 
-### Home
+El proyecto arrastra varias migraciones y la capa Room es una de las partes más sólidas del sistema.
 
-Archivo clave:
+### `DiaryEntry`
 
-- [`app/src/main/java/com/trama/app/ui/screens/HomeScreen.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/ui/screens/HomeScreen.kt)
+Unidad operativa principal:
 
-Responsabilidades:
+- texto original
+- `cleanText`
+- estado
+- prioridad
+- tipo de acción
+- `dueDate`
+- metadatos de origen y sincronización
 
-- mostrar `Hoy`, vencidas, arrastre de otros días y completadas
-- permitir completar o posponer con swipe
-- mostrar grabaciones y timeline del día
-- mantener foco en operación rápida
+### `Recording`
 
-### Calendar-first
+Se usa para:
 
-Archivo clave:
+- grabaciones manuales del móvil
+- grabaciones del reloj importadas al móvil
+- capturas de audio del reloj que necesitan pasar por el pipeline de procesado
 
-- [`app/src/main/java/com/trama/app/ui/screens/CalendarScreen.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/ui/screens/CalendarScreen.kt)
+### `DailyPage`
 
-Responsabilidades:
+Se usa como persistencia diaria de memoria:
 
-- seleccionar un día del mes
-- mostrar un resumen breve del día seleccionado
-- listar tareas activas, pospuestas, duplicadas y completadas de ese día
-- listar lugares visitados y permitir valorarlos rápidamente con estrellas
+- fecha
+- estado (`DRAFT` / `FINAL`)
+- resumen breve
+- markdown
+- timestamps
+- marca de revisión/manualidad
+
+## 7. Calendar-first
+
+La decisión actual de producto es clara:
+
+- no existe ya una pantalla visible principal separada de `Daily Review`
+- `CalendarScreen` es el punto de entrada al histórico diario
+
+Responsabilidades de `CalendarScreen`:
+
+- seleccionar día
+- mostrar contexto del día elegido
+- listar tareas activas, completadas, pospuestas, duplicadas
+- listar lugares visitados
+- permitir puntuación rápida con estrellas
 - abrir ficha del lugar o mapas externos
 
-Decisión importante reciente:
+El resumen diario visible se construye desde estado vivo, no desde un `briefSummary` estancado.
 
-- el mapa embebido dentro del calendario se ha retirado
-- `osmdroid MapView` provocaba ANRs en navegación
-- el acceso a mapas se resuelve ahora delegando a la app externa de mapas
+## 8. DailyPage y markdown nocturno
 
-## Diagnóstico ASR
+Archivos:
 
-Archivos clave:
+- `app/summary/DailyPageGenerator.kt`
+- `app/summary/DailyPageMarkdownStore.kt`
+- `app/summary/DailySummaryWorker.kt`
 
-- [`app/src/main/java/com/trama/app/ui/SettingsDataStore.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/ui/SettingsDataStore.kt)
-- [`app/src/main/java/com/trama/app/ui/screens/SettingsScreen.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/ui/screens/SettingsScreen.kt)
+Flujo:
 
-Se persisten y muestran:
+1. el worker nocturno recopila datos reales del día
+2. se fusiona revisión manual existente si la hubo
+3. se genera o actualiza `DailyPage`
+4. se escribe un `.md` privado en `filesDir/daily-pages/`
 
-- motor activo
-- estado
-- última transcripción
-- duración de ventana
-- tiempo de decodificación
+Objetivo:
 
-## Wear OS
+- no competir en UI
+- servir de memoria técnica para futuro chat
 
-El reloj sigue una arquitectura más clásica:
+## 9. Wear OS — diseño actual
 
-- escucha independiente
-- sincronización por Wearable Data Layer
-- coordinación de micrófono con el móvil
+### UI
 
-El pipeline contextual con `AudioRecord` todavía no está portado al reloj.
+Archivos:
 
-## Assets y nativo
+- `wear/ui/WatchMainActivity.kt`
+- `wear/ui/WatchNavGraph.kt`
+- `wear/ui/screens/WatchHomeScreen.kt`
 
-ASR dedicado móvil:
+La intención es una app muy simple. Hay restos de pantallas antiguas en el árbol, pero la ruta principal debe leerse como una UI de tres botones.
 
-- modelo Whisper `small` en [`app/src/main/assets/asr/whisper`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/assets/asr/whisper)
-- modelo Vosk en [`app/src/main/assets/asr/vosk/model`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/assets/asr/vosk/model)
-- JNI de `sherpa-onnx` en [`app/src/main/jniLibs/arm64-v8a`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/jniLibs/arm64-v8a)
-- API Java vendorizada en [`app/src/main/java/com/k2fsa/sherpa/onnx`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/k2fsa/sherpa/onnx)
+### Grabadora manual
 
-## Limitaciones conocidas
+Archivos:
 
-- La consistencia del ASR dedicado todavía está en ajuste fino
-- Solo está empaquetado `arm64-v8a`
-- El reloj no comparte aún la misma ruta de captura contextual
-- La ruta fallback con `SpeechRecognizer` sigue existiendo, pero no es la experiencia objetivo
-- `CalendarScreen` ya no embebe mapa propio; si vuelve una solución interna tendrá que estar mejor aislada
-- Hay fallos esporádicos del daemon de Kotlin que a veces muestran errores inconsistentes en compilaciones intermedias
+- `wear/service/WatchRecordingService.kt`
+- `wear/sync/WatchToPhoneSyncer.kt`
+- `app/sync/WatchDataReceiverService.kt`
 
-## Estado de "solo mi voz"
+Flujo:
 
-La heurística antigua basada en RMS ha sido eliminada del producto porque no era una
-verificación real de hablante.
+1. el reloj captura PCM16 con `AudioRecord`
+2. publica el audio como `Asset` en Wear Data Layer
+3. el móvil recibe el `DataItem`
+4. Whisper transcribe
+5. se crea `Recording`
+6. `RecordingProcessor` corre aguas abajo
 
-La dirección válida a partir de ahora es:
+### Escucha continua del reloj
 
-```text
-Vosk gate
-  -> ventana de audio
-  -> Whisper final
-  -> speaker embedding offline
-  -> comparación contra perfil enrolado
-  -> guardar o rechazar
-```
+Archivos:
 
-Principios:
+- `wear/service/WatchKeywordListenerService.kt`
+- `wear/audio/WatchTriggeredAudioCapture.kt`
+- `app/sync/WatchDataReceiverService.kt`
 
-- no verificar por volumen o proximidad
-- no bloquear la frase en el gate temprano
-- verificar al final sobre la misma ventana que ya usa Whisper
-- usar embeddings offline y similitud coseno
+Flujo:
 
-Preparación ya añadida en código:
+1. el reloj detecta trigger con `SpeechRecognizer`
+2. pausa y destruye temporalmente el recognizer
+3. captura una ventana corta de audio post-trigger
+4. envía audio al móvil
+5. si Whisper falla, usa `triggerText` como fallback
+6. recrea el recognizer y reanuda escucha
 
-- [`app/src/main/java/com/trama/app/speech/speaker/SpeakerEmbeddingEngine.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/speech/speaker/SpeakerEmbeddingEngine.kt)
-- [`app/src/main/java/com/trama/app/speech/speaker/SpeakerVerificationManager.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/speech/speaker/SpeakerVerificationManager.kt)
-- [`app/src/main/java/com/trama/app/speech/speaker/NoOpSpeakerVerificationManager.kt`](/Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/speech/speaker/NoOpSpeakerVerificationManager.kt)
+Limitación crítica:
+
+- esto **no tiene todavía preroll real**
+- es mejor que una simple sincronización de texto, pero no iguala aún la captura contextual del móvil
+
+### Piezas experimentales en Wear
+
+En `wear/audio/` existen archivos como:
+
+- `WatchContextualAudioCaptureEngine.kt`
+- `VoskGateAsr.kt`
+- `WatchWristRaiseDetector.kt`
+
+Estado:
+
+- deben considerarse experimentales o en preparación
+- no son aún el camino principal documentado del reloj
+
+## 10. Sync teléfono ↔ reloj
+
+### Canales actuales
+
+- `DataClient` para datos y audio
+- `MessageClient` para coordinación de micrófono
+
+Archivos:
+
+- `shared/sync/MicCoordinator.kt`
+- `wear/sync/WatchToPhoneSyncer.kt`
+- `wear/sync/PhoneToWatchReceiver.kt`
+- `app/sync/WatchDataReceiverService.kt`
+- `app/sync/PhoneToWatchSyncer.kt`
+
+Tipos de sync:
+
+- entradas
+- grabaciones
+- audio del reloj
+- ajustes y patrones
+- órdenes de pausa/reanudación del micrófono
+
+## 11. Mapa y ANRs
+
+Decisión cerrada:
+
+- `osmdroid MapView` se retiró del calendario
+
+Razón:
+
+- provocaba ANRs en navegación e interacción
+
+Estado actual:
+
+- el calendario delega en mapas externos
+
+Esto corrige el problema operativo, pero deja abierta una decisión de UX para una futura representación visual de lugares.
+
+## 12. Evaluación del feedback externo
+
+### Correcto y vigente
+
+1. **No DI**
+   - sigue siendo verdad
+   - el código depende demasiado de singletons/proveedores directos
+
+2. **No ViewModels**
+   - sigue siendo verdad
+   - la lógica de pantalla sigue metida en Compose o en accesos directos a repositorio
+
+3. **API key en SharedPreferences**
+   - sigue siendo verdad
+   - es una debilidad real
+
+4. **No onboarding**
+   - sigue siendo verdad
+
+5. **Sin CI**
+   - sigue siendo verdad
+
+6. **Sin UI tests ni integración end-to-end**
+   - sigue siendo esencialmente verdad
+   - hay dependencias `androidTest`, pero no una batería real mantenida
+
+7. **Performance / recomposition**
+   - sigue siendo un riesgo
+   - especialmente en `HomeScreen`
+
+8. **Settings demasiado complejos**
+   - sigue siendo bastante cierto
+
+### Parcialmente correcto
+
+1. **Wear second-class**
+   - sí, pero menos que antes
+   - ya existe transferencia de audio real al móvil
+   - sigue faltando paridad contextual
+
+2. **No empty states**
+   - hay algunos loading/empty states añadidos
+   - sigue faltando una capa más didáctica y de onboarding
+
+3. **No graceful degradation**
+   - hay degradación y fallbacks
+   - falta observabilidad clara y una superficie única de “salud del sistema”
+
+### Desactualizado
+
+1. **Speaker verification is half-implemented**
+   - ya no describe el estado actual
+   - existe implementación, entrenamiento y wiring en captura móvil
+
+2. **Calendar map issue without plan**
+   - el plan actual sí existe: mapas externos como solución robusta
+   - puede gustar más o menos, pero no está “sin resolver”
+
+3. **Vosk vs sherpa inconsistency**
+   - la dualidad es intencional, no accidental
+   - `Vosk` = gate
+   - `Whisper/sherpa-onnx` = transcripción final
+
+## 13. Deuda técnica priorizada
+
+### P0
+
+- introducir DI
+- introducir ViewModels
+- mover API key a almacenamiento seguro
+- cerrar contrato definitivo de Wear OS
+- mejorar observabilidad de estados degradados ASR
+
+### P1
+
+- onboarding
+- UI tests Compose
+- tests de integración del pipeline de captura
+- rate limiting / control de coste de Gemini
+- structured outputs más estrictos para LLM
+- separar responsabilidades dentro de `ActionItemProcessor`
+
+### P2
+
+- cifrado de Room
+- exportado y borrado total
+- paginación / reducción de recomposiciones
+- simplificación de ajustes
+- snapshots de mapa o alternativa ligera si se quiere volver a una vista visual
+
+## 14. Riesgos vigentes para otro equipo
+
+Si un segundo equipo entra a colaborar, estos son los riesgos reales a tener presentes:
+
+1. El árbol está en movimiento en la capa de audio:
+   - algunas abstracciones se están desplazando de `app/` a `shared/`
+
+2. Hay mezcla de estados maduros y experimentales:
+   - especialmente en `wear/audio/`
+
+3. El producto ha cambiado rápido:
+   - documentos viejos pueden seguir hablando de `Daily Review`
+   - hoy la verdad del producto es `Home + Calendar-first + DailyPage técnico`
+
+4. Hay mucha lógica en UI y servicios:
+   - difícil de testear sin refactor estructural
+
+## 15. Recomendación para colaboración externa
+
+La mejor forma de que otro equipo colabore sin romper el proyecto es dividir así:
+
+- Equipo A:
+  arquitectura base (`DI`, `ViewModels`, boundaries, testability)
+- Equipo B:
+  estabilidad y observabilidad del pipeline ASR
+- Equipo C:
+  UX/onboarding/empty states/settings
+- Equipo D:
+  Wear parity y consumo
+
+No recomendaría empezar por features nuevas antes de cerrar esas cuatro líneas.

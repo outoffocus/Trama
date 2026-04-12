@@ -1,4 +1,4 @@
-package com.trama.app.audio
+package com.trama.shared.audio
 
 import kotlin.math.max
 
@@ -18,6 +18,8 @@ class CircularAudioBuffer(
     @Synchronized
     fun append(chunk: ShortArray, length: Int = chunk.size) {
         val safeLength = length.coerceIn(0, chunk.size)
+        if (safeLength <= 0) return
+        
         for (i in 0 until safeLength) {
             data[writeIndex] = chunk[i]
             writeIndex = (writeIndex + 1) % capacitySamples

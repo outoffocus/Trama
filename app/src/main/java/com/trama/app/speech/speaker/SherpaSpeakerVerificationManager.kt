@@ -1,7 +1,7 @@
 package com.trama.app.speech.speaker
 
 import android.content.Context
-import com.trama.app.audio.CapturedAudioWindow
+import com.trama.shared.audio.CapturedAudioWindow
 import kotlin.math.sqrt
 
 class SherpaSpeakerVerificationManager(

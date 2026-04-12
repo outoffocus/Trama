@@ -77,6 +77,9 @@ Reglas:
   - NO elimines nombres propios, lugares, telefonos, numeros o fechas si ayudan a entender la accion
   - no la conviertas en una frase demasiado bonita ni demasiado general
   - es mejor una accion algo larga y fiel que una corta y ambigua
+  - NUNCA reduzcas cleanText a solo una expresion temporal, frecuencia o habito (ej: "Todos los dias", "Cada manana", "Todas las mananas" son INVALIDOS como cleanText)
+  - si el texto describe un habito recurrente (ej: "hacer ejercicios todas las mananas por mis problemas de espalda"), cleanText debe contener la accion concreta; puede incluir la frecuencia pero NO puede ser solo la frecuencia
+  - cuando el patron es "por [motivo] tengo que [accion]", cleanText debe preservar la accion y opcionalmente el motivo, NUNCA solo el patron temporal
 - actionType: CALL=llamar, BUY=comprar, SEND=enviar, EVENT=cita/reunión, REVIEW=revisar, TALK_TO=hablar con, GENERIC=otro
 - dueDate:
   - usa YYYY-MM-DD
@@ -284,10 +287,10 @@ Analiza esta transcripción de voz y responde SOLO con JSON:
 {"es_nota_personal":true,"correccion":null,"confianza":0.9}
 
 es_nota_personal=true si parece nota/tarea/recordatorio personal. false si es radio/TV/ruido.
-correccion: texto corregido o null si está bien.
+correccion: corrige SOLO errores claros de transcripcion ASR (palabras mal reconocidas, ortografia). NO resumas, NO simplifiques, NO extraigas la idea principal. Si el texto es correcto o simplemente informal, devuelve null. La correccion debe ser el texto COMPLETO con minimas correcciones, no una version mas corta.
 Sé permisivo: en duda, true.
 No rechaces una nota solo porque contenga nombres poco comunes, lugares, telefonos, numeros o frases fragmentarias.
-Si corriges el texto, preserva nombres propios, lugares, telefonos, numeros y fechas.
+Si corriges el texto, preserva TODA la informacion: nombres propios, lugares, telefonos, numeros, fechas, motivos y contexto.
 Mejor aceptar una nota ambigua que perder una nota personal real.
 
 Transcripción: "{{text}}"

@@ -93,6 +93,13 @@
                     android:host="*"
                     android:pathPrefix="/trama/request-full-sync" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data
+                    android:scheme="wear"
+                    android:host="*"
+                    android:pathPrefix="/trama/watch-debug" />
+            </intent-filter>
         </service>
 
         <!-- Restart listener on boot -->

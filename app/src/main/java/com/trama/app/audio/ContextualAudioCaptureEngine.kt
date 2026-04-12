@@ -8,9 +8,18 @@ import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.trama.shared.audio.CircularAudioBuffer
+import com.trama.shared.audio.CapturedAudioWindow
+import com.trama.shared.audio.ContextualCaptureAssembler
+import com.trama.shared.audio.ContextualCaptureConfig
+import com.trama.shared.audio.LightweightGateAsr
+import com.trama.shared.audio.NoOpLightweightGateAsr
 import com.trama.shared.speech.SimpleVAD
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.max
 
@@ -18,6 +27,7 @@ import kotlin.math.max
  * Captures continuous PCM audio in memory, keeping a rolling pre-roll buffer and emitting
  * bounded windows around detected voice activity.
  *
+ * Gate ASR runs in separate coroutines so the audio read loop is never blocked.
  * Audio is never persisted. Windows are assembled entirely in RAM and handed off to the ASR layer.
  */
 class ContextualAudioCaptureEngine(
@@ -45,9 +55,11 @@ class ContextualAudioCaptureEngine(
         val assembler: ContextualCaptureAssembler,
         val preRollWindow: CapturedAudioWindow,
         var triggerMatched: Boolean = false,
+        var triggerAlreadyDetected: Boolean = false,
         var lastGateTranscript: String = "",
         var firstTriggerAtSample: Int = -1,
         var lastGateCheckSample: Int = 0,
+        var gateJob: Job? = null,
         var postRollRemainingSamples: Int = -1,
         var capturedSamples: Int = 0
     )
@@ -74,6 +86,8 @@ class ContextualAudioCaptureEngine(
             Log.e(TAG, "RECORD_AUDIO permission not granted")
             return@withContext
         }
+
+        val scope = CoroutineScope(coroutineContext)
 
         val loopConfig = config
         val bufferSize = maxOf(
@@ -108,6 +122,30 @@ class ContextualAudioCaptureEngine(
         val vad = SimpleVAD()
         var activeCapture: ActiveCapture? = null
 
+        fun launchGateEval(capture: ActiveCapture, isFinal: Boolean) {
+            if (capture.gateJob?.isActive == true) return
+            val snapshot = capture.assembler.finalizeWindow(capture.preRollWindow)
+            capture.gateJob = scope.launch(Dispatchers.IO) {
+                try {
+                    val eval = evaluateGateWindows(snapshot)
+                    onGateEvaluated?.invoke(eval.bestTranscript, eval.matched, eval.debugSummary)
+                    capture.lastGateTranscript = eval.bestTranscript
+                    if (eval.matched && !capture.triggerAlreadyDetected) {
+                        capture.triggerAlreadyDetected = true
+                        if (!capture.triggerMatched) {
+                            capture.triggerMatched = true
+                            capture.firstTriggerAtSample = capture.capturedSamples
+                            onGateMatch?.invoke(eval.bestTranscript)
+                            onStatusChanged?.invoke("trigger_detected")
+                        }
+                    }
+                } catch (t: Throwable) {
+                    Log.w(TAG, "Gate eval failed", t)
+                    if (isFinal) onGateEvaluated?.invoke("(error: ${t.message})", false, "exception")
+                }
+            }
+        }
+
         fun startCapture() {
             val captureConfig = config
             val assembler = ContextualCaptureAssembler(captureConfig)
@@ -119,10 +157,11 @@ class ContextualAudioCaptureEngine(
             onStatusChanged?.invoke(if (gateAsr.isAvailable) "gating" else "capturing")
         }
 
-        suspend fun finalizeCapture(reason: String) {
+        fun finalizeCapture(reason: String) {
             val capture = activeCapture ?: return
-            val finalWindow = capture.assembler.finalizeWindow(capture.preRollWindow)
             activeCapture = null
+
+            val finalWindow = capture.assembler.finalizeWindow(capture.preRollWindow)
             if (finalWindow.mergedPcm().isEmpty()) {
                 onStatusChanged?.invoke("rearmed")
                 onStatusChanged?.invoke("listening")
@@ -137,22 +176,30 @@ class ContextualAudioCaptureEngine(
             )
 
             if (gateAsr.isAvailable) {
-                val evaluation = evaluateGateWindows(finalWindow, capture.config.gateEvalWindowsMs)
-                onGateEvaluated?.invoke(
-                    evaluation.bestTranscript,
-                    evaluation.matched,
-                    evaluation.debugSummary
-                )
-                if (evaluation.matched) {
-                    onGateMatch?.invoke(evaluation.bestTranscript)
-                    onStatusChanged?.invoke("trigger_detected")
-                    onWindowCaptured?.invoke(finalWindow)
+                // Cancel any in-flight periodic gate job and run a final eval
+                capture.gateJob?.cancel()
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        val eval = evaluateGateWindows(finalWindow)
+                        onGateEvaluated?.invoke(eval.bestTranscript, eval.matched, eval.debugSummary)
+                        if (eval.matched) {
+                            onGateMatch?.invoke(eval.bestTranscript)
+                            onStatusChanged?.invoke("trigger_detected")
+                            onWindowCaptured?.invoke(finalWindow)
+                        }
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "Final gate eval failed", t)
+                        onGateEvaluated?.invoke("(error: ${t.message})", false, "exception")
+                    } finally {
+                        onStatusChanged?.invoke("rearmed")
+                        onStatusChanged?.invoke("listening")
+                    }
                 }
             } else {
                 onWindowCaptured?.invoke(finalWindow)
+                onStatusChanged?.invoke("rearmed")
+                onStatusChanged?.invoke("listening")
             }
-            onStatusChanged?.invoke("rearmed")
-            onStatusChanged?.invoke("listening")
         }
 
         vad.onVoiceStart = {
@@ -215,23 +262,7 @@ class ContextualAudioCaptureEngine(
                             capture.capturedSamples - capture.lastGateCheckSample >= intervalSamples
                         ) {
                             capture.lastGateCheckSample = capture.capturedSamples
-                            val gateWindow = capture.assembler.finalizeWindow(capture.preRollWindow)
-                            val evaluation = evaluateGateWindows(gateWindow, capture.config.gateEvalWindowsMs)
-                            onGateEvaluated?.invoke(
-                                evaluation.bestTranscript,
-                                evaluation.matched,
-                                evaluation.debugSummary
-                            )
-                            capture.lastGateTranscript = evaluation.bestTranscript
-
-                            if (evaluation.matched) {
-                                if (!capture.triggerMatched) {
-                                    capture.triggerMatched = true
-                                    capture.firstTriggerAtSample = capture.capturedSamples
-                                    onGateMatch?.invoke(evaluation.bestTranscript)
-                                    onStatusChanged?.invoke("trigger_detected")
-                                }
-                            }
+                            launchGateEval(capture, isFinal = false)
                         }
                     }
 
@@ -274,56 +305,24 @@ class ContextualAudioCaptureEngine(
             sampleRateHz = raw.sampleRateHz.coerceAtLeast(8_000),
             silenceStopMs = raw.silenceStopMs.coerceAtLeast(250L),
             gateEvalWindowsMs = raw.gateEvalWindowsMs
-                .ifEmpty { listOf(0L, 15_000L, 12_000L, 8_000L, 5_000L, 3_000L) }
+                .ifEmpty { listOf(0L) }
                 .map { it.coerceAtLeast(0L) }
                 .distinct()
         )
     }
 
-    private suspend fun transcribeWithGate(window: CapturedAudioWindow): String? {
-        return gateAsr.transcribe(window, languageTag = "es")
-    }
+    private suspend fun evaluateGateWindows(window: CapturedAudioWindow): GateEvaluation {
+        val transcript = runCatching {
+            gateAsr.transcribe(window, languageTag = "es")
+        }.getOrNull()?.trim().orEmpty()
 
-    private suspend fun evaluateGateWindows(
-        window: CapturedAudioWindow,
-        gateEvalWindowsMs: List<Long>
-    ): GateEvaluation {
-        val attempts = mutableListOf<Pair<String, String>>()
-        var bestTranscript = ""
-
-        for (durationMs in gateEvalWindowsMs) {
-            val candidateWindow = if (durationMs == 0L) {
-                window
-            } else {
-                window.tailWindow(durationMs)
-            }
-
-            val label = if (durationMs == 0L) "completa" else "cola ${durationMs / 1000}s"
-            val transcript = runCatching { transcribeWithGate(candidateWindow) }
-                .getOrNull()
-                ?.trim()
-                .orEmpty()
-            attempts += label to transcript
-            if (transcript.length > bestTranscript.length) {
-                bestTranscript = transcript
-            }
-            if (transcript.isNotBlank() && triggerDetector(transcript)) {
-                return GateEvaluation(
-                    matched = true,
-                    bestTranscript = transcript,
-                    debugSummary = attempts.joinToString(" | ") { (name, text) ->
-                        "$name: ${text.ifBlank { "-" }}"
-                    }
-                )
-            }
-        }
+        val matched = transcript.isNotBlank() && triggerDetector(transcript)
+        val debug = "full(${window.durationMs()}ms): '${transcript.ifBlank { "-" }}'${if (matched) " [MATCH]" else ""}"
 
         return GateEvaluation(
-            matched = false,
-            bestTranscript = bestTranscript,
-            debugSummary = attempts.joinToString(" | ") { (name, text) ->
-                "$name: ${text.ifBlank { "-" }}"
-            }
+            matched = matched,
+            bestTranscript = transcript,
+            debugSummary = debug
         )
     }
 

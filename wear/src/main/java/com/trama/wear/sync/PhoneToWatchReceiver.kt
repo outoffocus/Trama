@@ -55,7 +55,8 @@ class PhoneToWatchReceiver : WearableListenerService() {
                     SETTINGS_PATH -> {
                         val patternsJson = dataMap.getString("intent_patterns_json")
                         val keywordsStr = dataMap.getString("keyword_mappings")
-                        handleSettings(patternsJson, keywordsStr)
+                        val accelGate = dataMap.getBoolean("wear_accelerometer_gate", false)
+                        handleSettings(patternsJson, keywordsStr, accelGate)
                     }
                     ENTRIES_PATH -> {
                         val json = dataMap.getString("payload") ?: return@forEach
@@ -70,7 +71,7 @@ class PhoneToWatchReceiver : WearableListenerService() {
         }
     }
 
-    private fun handleSettings(patternsJson: String?, keywordsStr: String?) {
+    private fun handleSettings(patternsJson: String?, keywordsStr: String?, accelGate: Boolean) {
         val prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
 
         if (!patternsJson.isNullOrBlank()) {
@@ -82,6 +83,7 @@ class PhoneToWatchReceiver : WearableListenerService() {
             prefs.putString("keyword_mappings", keywordsStr)
         }
 
+        prefs.putBoolean("wear_accelerometer_gate", accelGate)
         prefs.apply()
 
         sendBroadcast(android.content.Intent("com.trama.wear.SETTINGS_UPDATED"))

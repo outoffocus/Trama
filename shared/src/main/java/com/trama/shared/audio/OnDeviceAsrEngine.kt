@@ -1,4 +1,4 @@
-package com.trama.app.audio
+package com.trama.shared.audio
 
 interface OnDeviceAsrEngine {
     val name: String

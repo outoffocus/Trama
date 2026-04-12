@@ -8,8 +8,9 @@ import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
-import com.trama.app.audio.CapturedAudioWindow
 import com.trama.app.audio.SherpaWhisperAsrEngine
+import com.trama.app.ui.SettingsDataStore
+import com.trama.shared.audio.CapturedAudioWindow
 import com.trama.app.service.RecordingState
 import com.trama.app.service.ServiceController
 import com.trama.shared.sync.MicCoordinator
@@ -20,7 +21,9 @@ import com.trama.shared.model.RecordingStatus
 import com.trama.shared.model.Source
 import com.trama.shared.model.SyncPayload
 import com.trama.shared.model.WatchAudioSyncMetadata
+import com.trama.app.summary.ActionItemProcessor
 import com.trama.app.summary.RecordingProcessor
+import com.trama.shared.model.DiaryEntry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -41,6 +44,7 @@ class WatchDataReceiverService : WearableListenerService() {
         private const val AUDIO_RECORDING_PATH_PREFIX = "/trama/audio-recording"
         private const val MIC_PATH = "/trama/mic"
         private const val SYNC_REQUEST_PATH = "/trama/request-full-sync"
+    private const val WATCH_DEBUG_PATH = MicCoordinator.WATCH_DEBUG_PATH
         private const val CMD_PAUSE = MicCoordinator.CMD_PAUSE
         private const val CMD_RESUME = MicCoordinator.CMD_RESUME
         private const val CMD_START_KEYWORD = MicCoordinator.CMD_START_KEYWORD
@@ -109,6 +113,16 @@ class WatchDataReceiverService : WearableListenerService() {
                     syncer.syncAllToWatch()
                 }
             }
+            WATCH_DEBUG_PATH -> {
+                val payload = String(messageEvent.data)
+                val sep = payload.indexOf('|')
+                val status = if (sep >= 0) payload.substring(0, sep) else payload
+                val trigger = if (sep >= 0) payload.substring(sep + 1).takeIf { it.isNotBlank() } else null
+                Log.i(TAG, "Watch debug: $status${trigger?.let { " ('${it.take(40)}')" } ?: ""}")
+                scope.launch {
+                    SettingsDataStore(applicationContext).updateWatchDebug(status, trigger)
+                }
+            }
         }
     }
 
@@ -122,8 +136,14 @@ class WatchDataReceiverService : WearableListenerService() {
                 for (syncEntry in payload.entries) {
                     val entry = syncEntry.toDiaryEntry()
                     if (!repository.existsByCreatedAtAndText(entry.createdAt, entry.text)) {
-                        repository.insert(entry)
+                        val insertedId = repository.insert(entry)
                         insertedEntries++
+                        // Process with AI to generate cleanText / actionType / dueDate / priority
+                        try {
+                            ActionItemProcessor(applicationContext).process(insertedId, entry.text, repository)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to AI-process watch entry $insertedId", e)
+                        }
                     }
                 }
 

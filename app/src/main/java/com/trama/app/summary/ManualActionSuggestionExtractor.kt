@@ -68,6 +68,8 @@ object ManualActionSuggestionExtractor {
         option = RegexOption.IGNORE_CASE
     )
     private val explicitTimeRegex = Regex("""\ba\s+las\s+(\d{1,2})(?::(\d{2}))?\b""", RegexOption.IGNORE_CASE)
+    // Matches "mañana"/"manana" as standalone word — NOT "mañanas"/"mananas" plural (= recurring mornings)
+    private val tomorrowRegex = Regex("""\b(mañana|manana)\b""", RegexOption.IGNORE_CASE)
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
 
     fun extract(text: String): List<ManualActionSuggestion> {
@@ -134,6 +136,7 @@ object ManualActionSuggestionExtractor {
     private fun inferDueDate(text: String): Long? {
         val lower = text.lowercase(Locale.getDefault())
         val cal = Calendar.getInstance()
+        val hasTomorrow = tomorrowRegex.containsMatchIn(lower)
         return when {
             "pasado mañana" in lower || "pasado manana" in lower -> {
                 cal.add(Calendar.DAY_OF_YEAR, 2)
@@ -141,7 +144,7 @@ object ManualActionSuggestionExtractor {
                 startOfDayOrTime(cal, lower)
             }
             "hoy" in lower -> startOfDay(cal)
-            "mañana" in lower || "manana" in lower || "mañanas" in lower || "mananas" in lower -> {
+            hasTomorrow -> {
                 cal.add(Calendar.DAY_OF_YEAR, 1)
                 maybeApplyTimeOfDay(lower, cal)
                 startOfDayOrTime(cal, lower)

@@ -1,6 +1,6 @@
 package com.trama.app.speech.speaker
 
-import com.trama.app.audio.CapturedAudioWindow
+import com.trama.shared.audio.CapturedAudioWindow
 
 /**
  * Explicit placeholder until a real embedding backend is integrated.

@@ -1,4 +1,4 @@
-package com.trama.app.audio
+package com.trama.shared.audio
 
 /**
  * Collects a pre-roll snapshot from the ring buffer plus a bounded post-roll window.
@@ -26,7 +26,10 @@ class ContextualCaptureAssembler(
         val current = postRoll.size
         if (current >= maxSamples) return
 
-        val accepted = chunk.copyOf(minOf(chunk.size, maxSamples - current))
+        val acceptedSize = minOf(chunk.size, maxSamples - current)
+        if (acceptedSize <= 0) return
+        
+        val accepted = chunk.copyOf(acceptedSize)
         val merged = ShortArray(current + accepted.size)
         postRoll.copyInto(merged, 0)
         accepted.copyInto(merged, current)

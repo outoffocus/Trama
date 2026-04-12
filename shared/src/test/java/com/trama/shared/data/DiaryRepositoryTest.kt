@@ -222,6 +222,7 @@ private class FakeDiaryDao : DiaryDao {
     override fun getByRecordingId(recordingId: Long): Flow<List<DiaryEntry>> = flowOf(emptyList())
     override suspend fun getByRecordingIdOnce(recordingId: Long): List<DiaryEntry> = emptyList()
     override suspend fun deleteByRecordingId(recordingId: Long) {}
+    override suspend fun updateDueDate(id: Long, dueDate: Long?) {}
 }
 
 private class FakeRecordingDao : RecordingDao {
@@ -270,6 +271,8 @@ private class FakePlaceDao : PlaceDao {
     override suspend fun markWork(placeId: Long) {}
     override suspend fun clearWork(placeId: Long) {}
     override suspend fun findInBoundingBox(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double): List<Place> = emptyList()
+    override suspend fun updateOpinion(id: Long, rating: Int?, opinionText: String?, opinionSummary: String?, opinionUpdatedAt: Long?, updatedAt: Long) {}
+    override suspend fun updateOpinionSummary(id: Long, opinionSummary: String?, opinionUpdatedAt: Long?, updatedAt: Long) {}
 }
 
 private class FakeDwellDetectionStateDao : DwellDetectionStateDao {

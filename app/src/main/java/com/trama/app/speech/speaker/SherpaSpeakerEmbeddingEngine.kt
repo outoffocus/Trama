@@ -4,8 +4,8 @@ import android.content.Context
 import android.util.Log
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractor
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractorConfig
-import com.trama.app.audio.AssetFileCache
-import com.trama.app.audio.CapturedAudioWindow
+import com.trama.shared.audio.AssetFileCache
+import com.trama.shared.audio.CapturedAudioWindow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock

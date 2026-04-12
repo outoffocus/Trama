@@ -1,6 +1,6 @@
 package com.trama.app.speech.speaker
 
-import com.trama.app.audio.CapturedAudioWindow
+import com.trama.shared.audio.CapturedAudioWindow
 
 /**
  * Real speaker verification must operate on audio embeddings, not on RMS heuristics.

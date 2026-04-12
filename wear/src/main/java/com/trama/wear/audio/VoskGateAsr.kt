@@ -1,4 +1,4 @@
-package com.trama.app.audio
+package com.trama.wear.audio
 
 import android.content.Context
 import android.util.Log
@@ -42,6 +42,7 @@ class VoskGateAsr(
         return withContext(Dispatchers.IO) {
             recognizerMutex.withLock {
                 val model = model ?: createModel().also { model = it }
+                // Use the constructor that takes only Model and sample rate to avoid ambiguity
                 val recognizer = Recognizer(model, window.sampleRateHz.toFloat())
                 try {
                     recognizer.acceptWaveForm(pcm, pcm.size)
@@ -73,6 +74,4 @@ class VoskGateAsr(
                 ?.trim()
         }.getOrNull()?.takeIf { it.isNotBlank() }
     }
-
 }
-

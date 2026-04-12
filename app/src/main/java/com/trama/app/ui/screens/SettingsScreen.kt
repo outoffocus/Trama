@@ -170,6 +170,8 @@ fun SettingsScreen(
     val asrProcessingInFlight = remember(asrDebugStatus) {
         asrDebugStatus.contains("procesando", ignoreCase = true)
     }
+    val watchDebugStatus by settings.watchDebugStatus.collectAsState(initial = "")
+    val watchDebugTrigger by settings.watchDebugTrigger.collectAsState(initial = "")
     val locationEnabled by settings.locationEnabled.collectAsState(initial = false)
     val locationIntervalMinutes by settings.locationIntervalMinutes.collectAsState(
         initial = SettingsDataStore.DEFAULT_LOCATION_INTERVAL_MINUTES
@@ -684,23 +686,57 @@ fun SettingsScreen(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                                if (asrDebugGateText.isNotBlank()) {
-                                    Spacer(modifier = Modifier.height(8.dp))
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    "Texto del gate",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    asrDebugGateText.ifBlank { "—" },
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    "Transcripción Whisper",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    if (asrDebugLastText.isNotBlank()) asrDebugLastText else "—",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+
+                                // ── Sección reloj ──────────────────────────
+                                Spacer(modifier = Modifier.height(12.dp))
+                                HorizontalDivider(
+                                    color = MaterialTheme.colorScheme.outlineVariant,
+                                    thickness = 0.5.dp
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text(
+                                    "Reloj",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    "Estado: ${watchDebugStatus.ifBlank { "sin datos" }}",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                if (watchDebugTrigger.isNotBlank()) {
+                                    Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        "Texto del gate",
+                                        "Último trigger",
                                         style = MaterialTheme.typography.labelMedium,
                                         fontWeight = FontWeight.SemiBold
                                     )
                                     Text(
-                                        asrDebugGateText,
+                                        watchDebugTrigger,
                                         style = MaterialTheme.typography.bodyMedium
                                     )
                                 }
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    if (asrDebugLastText.isNotBlank()) asrDebugLastText else "Aun no hay transcripcion",
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
                             }
                         }
                     }

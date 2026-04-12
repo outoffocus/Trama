@@ -1,6 +1,6 @@
 package com.trama.app.speech.speaker
 
-import com.trama.app.audio.CapturedAudioWindow
+import com.trama.shared.audio.CapturedAudioWindow
 
 /**
  * High-level contract for a future "solo mi voz" feature.

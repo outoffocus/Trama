@@ -399,6 +399,9 @@ class WatchKeywordListenerService : LifecycleService() {
 
         val intentId = result.pattern?.id ?: result.customKeyword ?: "nota"
         Log.i(TAG, "Intent '$intentId' [${result.label}]: '${text.take(60)}'")
+        lifecycleScope.launch(Dispatchers.IO) {
+            MicCoordinator.sendWatchDebug(applicationContext, "trigger detectado", result.capturedText)
+        }
         transferTriggeredAudio(
             intentId = intentId,
             label = result.label,
@@ -420,9 +423,11 @@ class WatchKeywordListenerService : LifecycleService() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 pauseRecognizerForCapture()
+                MicCoordinator.sendWatchDebug(applicationContext, "capturando audio", capturedText)
                 val pcm = WatchTriggeredAudioCapture().capture()
                 if (pcm.isEmpty()) {
                     Log.w(TAG, "Triggered audio capture returned empty PCM, falling back to text entry")
+                    MicCoordinator.sendWatchDebug(applicationContext, "sin audio · guardando texto", capturedText)
                     saveEntry(intentId, label, capturedText, 0.9f)
                     return@launch
                 }
@@ -442,8 +447,10 @@ class WatchKeywordListenerService : LifecycleService() {
                     syncer?.syncRecordingAudio(shortsToBytes(pcm), metadata)
                 }.onSuccess {
                     Log.i(TAG, "Triggered audio transferred to phone")
+                    MicCoordinator.sendWatchDebug(applicationContext, "audio enviado al móvil", capturedText)
                 }.onFailure { error ->
                     Log.w(TAG, "Triggered audio transfer failed, falling back to text entry", error)
+                    MicCoordinator.sendWatchDebug(applicationContext, "fallo · guardando texto", capturedText)
                     saveEntry(intentId, label, capturedText, 0.9f)
                 }
             } finally {
@@ -490,7 +497,9 @@ class WatchKeywordListenerService : LifecycleService() {
             try { recognizer?.destroy() } catch (_: Exception) {}
             recognizer = null
         }
-        delay(150)
+        // Give Android time to fully release the mic before AudioRecord opens it.
+        // 150ms is too short — mic contention causes all-zero captures.
+        delay(450)
     }
 
     private suspend fun resumeRecognizerAfterCapture() {
