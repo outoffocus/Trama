@@ -48,7 +48,9 @@ import androidx.compose.ui.unit.dp
 import com.trama.app.chat.DiaryAssistant
 import com.trama.app.chat.DiaryContextBuilder
 import com.trama.shared.data.DatabaseProvider
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // ── Model ─────────────────────────────────────────────────────────────────────
 
@@ -88,7 +90,11 @@ fun ChatScreen(onBack: () -> Unit) {
         messages = messages + ChatMessage(msg, isUser = true)
         isThinking = true
         scope.launch {
-            val reply = assistant.send(msg)
+            val reply = try {
+                withContext(Dispatchers.IO) { assistant.send(msg) }
+            } catch (t: Throwable) {
+                "❌ Error inesperado: ${t.javaClass.simpleName}: ${t.message}"
+            }
             messages = messages + ChatMessage(reply, isUser = false)
             isThinking = false
         }

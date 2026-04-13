@@ -50,8 +50,8 @@ class DiaryAssistant(
         if (!apiKey.isNullOrBlank()) {
             try {
                 return sendWithCloud(userMessage, apiKey)
-            } catch (e: Exception) {
-                Log.w(TAG, "Cloud chat failed, trying local model: ${e.message}")
+            } catch (t: Throwable) {
+                Log.w(TAG, "Cloud chat failed, trying local model: ${t.javaClass.simpleName}: ${t.message}")
             }
         }
 
@@ -60,8 +60,9 @@ class DiaryAssistant(
             try {
                 val reply = sendWithLocalModel(userMessage)
                 if (reply != null) return reply
-            } catch (e: Exception) {
-                Log.w(TAG, "Local model failed: ${e.message}")
+            } catch (t: Throwable) {
+                // Catch Throwable (not just Exception) — LiteRT-LM can throw native errors
+                Log.w(TAG, "Local model failed: ${t.javaClass.simpleName}: ${t.message}")
             }
         }
 
@@ -109,7 +110,8 @@ class DiaryAssistant(
     // ── Gemma local (simulated multi-turn) ────────────────────────────────────
 
     private suspend fun sendWithLocalModel(userMessage: String): String? {
-        val compactContext = contextBuilder.getContext()
+        // Use size-limited context to avoid overflowing the LiteRT-LM KV cache
+        val compactContext = contextBuilder.getContextForLocalModel()
         val today = todayString()
 
         // System instruction: diary context + persona.

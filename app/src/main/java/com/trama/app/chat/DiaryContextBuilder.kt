@@ -7,6 +7,8 @@ import com.trama.shared.model.Place
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Builds the full diary context to inject into the AI assistant.
@@ -62,7 +64,7 @@ class DiaryContextBuilder(private val repository: DiaryRepository) {
 
     // ── Build ─────────────────────────────────────────────────────────────────
 
-    private suspend fun buildContext(now: Long): String {
+    private suspend fun buildContext(now: Long): String = withContext(Dispatchers.IO) {
         val pages = repository.getAllDailyPagesOnce()          // all history, newest first
         val places = repository.getAllPlacesOnce()
         val allCompleted = repository.getCompletedSince(0L)    // ALL time, no cutoff
@@ -70,13 +72,25 @@ class DiaryContextBuilder(private val repository: DiaryRepository) {
 
         val recentCutoff = now - RECENT_WINDOW_MS
 
-        return buildString {
+        buildString {
             appendLine("=== DIARIO PERSONAL ===")
             appendLine()
             appendPlacesSection(places)
             appendTasksSection(allCompleted, currentPending, recentCutoff)
             appendDailyPagesSection(pages, recentCutoff)
         }
+    }
+
+    /**
+     * Returns a version of the context safe for Gemma's KV cache.
+     * Gemma 4 E4B supports 128K tokens but maxNumTokens in the engine is capped at 32K
+     * for on-device RAM reasons. At ~4 chars/token, 28K tokens ≈ 112K chars — we leave
+     * ~4K tokens headroom for the conversation itself.
+     */
+    suspend fun getContextForLocalModel(): String {
+        val full = getContext()
+        return if (full.length <= MAX_LOCAL_CONTEXT_CHARS) full
+        else full.take(MAX_LOCAL_CONTEXT_CHARS) + "\n\n[...historial anterior omitido por límite de contexto del modelo local]"
     }
 
     // ── Sections ──────────────────────────────────────────────────────────────
@@ -189,5 +203,10 @@ class DiaryContextBuilder(private val repository: DiaryRepository) {
         private val RECENT_WINDOW_MS = 90L * 86_400_000L
         /** Context cache TTL — re-query DB after 5 minutes. */
         private val CONTEXT_TTL_MS = 5L * 60_000L
+        /**
+         * Max chars for Gemma local model system instruction.
+         * maxNumTokens=32768, leaving ~4K tokens for conversation → 28K tokens × 4 chars ≈ 112K chars.
+         */
+        const val MAX_LOCAL_CONTEXT_CHARS = 112_000
     }
 }
