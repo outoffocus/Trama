@@ -14,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.File
 
 /**
  * Whisper backend powered by sherpa-onnx.
@@ -106,10 +107,27 @@ class SherpaWhisperAsrEngine(
     private val assetCache = AssetFileCache(appContext)
     private val recognizerMutex = Mutex()
     private var recognizer: OfflineRecognizer? = null
+    private var activeHotwordsHash: Int = 0
     private var selectedBundle: WhisperBundle? = null
     private var selectedEncoderAsset: String? = null
     private var selectedDecoderAsset: String? = null
     private var selectedTokensAsset: String? = null
+
+    // Words to bias toward during decoding (proper nouns, acronyms, custom vocabulary).
+    // Changing this invalidates the cached recognizer.
+    @Volatile private var hotwords: List<String> = emptyList()
+
+    /**
+     * Update the hotwords list used to bias Whisper's decoder.
+     * Call with custom keywords, place names, acronyms, etc.
+     * The recognizer is rebuilt lazily on the next transcription call.
+     */
+    fun setHotwords(words: List<String>) {
+        val filtered = words.filter { it.isNotBlank() }.distinct()
+        if (filtered.toSet().hashCode() == activeHotwordsHash) return
+        hotwords = filtered
+        Log.i(TAG, "Hotwords updated: ${filtered.size} words")
+    }
 
     override val isAvailable: Boolean
         get() = locateBundle() != null
@@ -120,9 +138,13 @@ class SherpaWhisperAsrEngine(
 
         return withContext(Dispatchers.IO) {
             recognizerMutex.withLock {
-                val recognizer = recognizer ?: createRecognizer(languageTag).also {
-                    recognizer = it
+                val currentHotwords = hotwords
+                val newHash = currentHotwords.toSet().hashCode()
+                if (recognizer == null || newHash != activeHotwordsHash) {
+                    recognizer = createRecognizer(languageTag, currentHotwords)
+                    activeHotwordsHash = newHash
                 }
+                val recognizer = recognizer!!
 
                 val samples = FloatArray(pcm.size) { index ->
                     pcm[index] / 32768.0f
@@ -156,7 +178,7 @@ class SherpaWhisperAsrEngine(
         }?.also { selectedBundle = it }
     }
 
-    private fun createRecognizer(languageTag: String): OfflineRecognizer {
+    private fun createRecognizer(languageTag: String, currentHotwords: List<String> = emptyList()): OfflineRecognizer {
         val bundle = locateBundle()
             ?: error("Whisper assets not found in app/src/main/assets/$MODEL_DIR")
         val encoderAsset = selectedEncoderAsset ?: error("Missing whisper encoder asset")
@@ -178,12 +200,28 @@ class SherpaWhisperAsrEngine(
             .setDebug(false)
             .build()
 
+        val configBuilder = OfflineRecognizerConfig.builder()
+            .setOfflineModelConfig(modelConfig)
+            .setDecodingMethod("greedy_search")
+
+        if (currentHotwords.isNotEmpty()) {
+            try {
+                val hotwordsFile = writeHotwordsFile(currentHotwords)
+                configBuilder.setHotwordsFile(hotwordsFile)
+                configBuilder.setHotwordsScore(10.0f)
+                Log.i(TAG, "Whisper hotwords: ${currentHotwords.size} words injected")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to write hotwords file, proceeding without bias", e)
+            }
+        }
+
         Log.i(TAG, "Initializing sherpa-onnx bundle ${bundle.label}")
-        return OfflineRecognizer(
-            OfflineRecognizerConfig.builder()
-                .setOfflineModelConfig(modelConfig)
-                .setDecodingMethod("greedy_search")
-                .build()
-        )
+        return OfflineRecognizer(configBuilder.build())
+    }
+
+    private fun writeHotwordsFile(words: List<String>): String {
+        val file = File(appContext.cacheDir, "whisper_hotwords.txt")
+        file.writeText(words.joinToString("\n"))
+        return file.absolutePath
     }
 }

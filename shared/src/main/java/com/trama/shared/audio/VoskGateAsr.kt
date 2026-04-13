@@ -1,10 +1,7 @@
-package com.trama.wear.audio
+package com.trama.shared.audio
 
 import android.content.Context
 import android.util.Log
-import com.trama.shared.audio.AssetFileCache
-import com.trama.shared.audio.CapturedAudioWindow
-import com.trama.shared.audio.LightweightGateAsr
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -33,7 +30,11 @@ class VoskGateAsr(
         get() = if (isAvailable) "vosk-gate:model" else "vosk-gate:unavailable"
 
     override val isAvailable: Boolean
-        get() = assetCache.listAssets(MODEL_DIR).isNotEmpty()
+        // Check that the acoustic model file exists AND has real content.
+        // A non-empty directory listing alone is not enough — placeholder 0-byte files
+        // are committed to VCS and would make listAssets() return non-empty even when
+        // the real model hasn't been downloaded yet.
+        get() = assetCache.assetSize("$MODEL_DIR/am/final.mdl") > 0L
 
     override suspend fun transcribe(window: CapturedAudioWindow, languageTag: String): String? {
         val pcm = window.mergedPcm()
@@ -42,7 +43,6 @@ class VoskGateAsr(
         return withContext(Dispatchers.IO) {
             recognizerMutex.withLock {
                 val model = model ?: createModel().also { model = it }
-                // Use the constructor that takes only Model and sample rate to avoid ambiguity
                 val recognizer = Recognizer(model, window.sampleRateHz.toFloat())
                 try {
                     recognizer.acceptWaveForm(pcm, pcm.size)

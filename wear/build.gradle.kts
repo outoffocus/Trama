@@ -70,9 +70,6 @@ dependencies {
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.activity.compose)
 
-    // Vosk (for lightweight gate on watch)
-    implementation(libs.vosk.android)
-
     // Wearable Data Layer (for phone sync)
     implementation(libs.play.services.wearable)
 

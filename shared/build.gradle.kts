@@ -30,6 +30,9 @@ dependencies {
     implementation(libs.room.ktx)
     ksp(libs.room.compiler)
 
+    // Vosk — lightweight gate ASR (shared between phone and watch)
+    implementation(libs.vosk.android)
+
     // Coroutines
     implementation(libs.coroutines.core)
     implementation(libs.coroutines.play.services)

@@ -9,6 +9,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
@@ -19,8 +22,10 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
+import com.trama.shared.audio.VoskGateAsr
 import com.trama.wear.audio.WatchTriggeredAudioCapture
 import com.trama.wear.NotificationConfig
+import com.trama.shared.audio.CapturedAudioWindow
 import com.trama.wear.R
 import com.trama.wear.ui.WatchMainActivity
 import com.trama.shared.data.DiaryRepository
@@ -36,17 +41,19 @@ import com.trama.wear.sync.WatchToPhoneSyncer
 import com.trama.shared.data.DatabaseProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
- * Watch keyword listener — SpeechRecognizer with smart backoff.
+ * Watch keyword listener.
  *
- * No VAD (avoids mic contention that cuts phrases). Battery strategy:
- * 1. Smart backoff: speech without keyword → delay grows (1s→2s→4s→5s)
- *    Only keyword match resets backoff to fast mode (300ms)
- * 2. Silence backoff: ERROR_NO_MATCH/TIMEOUT → same progressive delay
- * 3. Battery receiver stops continuous listening immediately on low battery
- * 4. Sync per entry without setUrgent()
+ * Primary path: Vosk gate ASR (AudioRecord loop, same model as phone).
+ *   - Records 2-second windows continuously, transcribes with Vosk.
+ *   - When keyword detected → WatchTriggeredAudioCapture + send PCM to phone.
+ *
+ * Fallback path (when Vosk model not installed): Android SpeechRecognizer with
+ *   smart backoff (1s→2s→4s→5s) and battery guard.
  */
 class WatchKeywordListenerService : LifecycleService() {
 
@@ -71,13 +78,14 @@ class WatchKeywordListenerService : LifecycleService() {
     private var intentDetector: IntentDetector? = null
 
     @Volatile private var listening = false
-    private var consecutiveNoKeyword = 0   // counts silence + non-keyword results
-    private var restartCount = 0
-    private var consecutiveErrors = 0      // hard errors (not silence/no-match)
+    @Volatile private var captureInFlight = false
+    @Volatile private var voskAudioRecord: AudioRecord? = null
+    private var useVoskLoop = false
+    private var consecutiveNoKeyword = 0   // fallback SpeechRecognizer only
+    private var consecutiveErrors = 0      // fallback SpeechRecognizer only
     private var lastNotificationText = ""
     private var useSimpleIntent = false
     private var batteryPct = 100
-    @Volatile private var captureInFlight = false
 
     // Deduplication
     private var lastSavedText = ""
@@ -138,10 +146,19 @@ class WatchKeywordListenerService : LifecycleService() {
             if (intentDetector == null) intentDetector = IntentDetector()
             loadSettingsFromPrefs()
 
-            launch(Dispatchers.Main) {
-                registerSettingsReceiver()
-                registerBatteryReceiver()
-                initRecognizerAndStart()
+            val vosk = VoskGateAsr(applicationContext)
+            if (vosk.isAvailable) {
+                withContext(Dispatchers.Main) {
+                    registerSettingsReceiver()
+                    registerBatteryReceiver()
+                }
+                startVoskLoop(vosk)
+            } else {
+                withContext(Dispatchers.Main) {
+                    registerSettingsReceiver()
+                    registerBatteryReceiver()
+                    initRecognizerAndStart()
+                }
             }
 
             MicCoordinator.sendPause(applicationContext)
@@ -171,6 +188,9 @@ class WatchKeywordListenerService : LifecycleService() {
         listening = false
         try { unregisterReceiver(settingsReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(batteryReceiver) } catch (_: Exception) {}
+        runCatching { voskAudioRecord?.stop() }
+        runCatching { voskAudioRecord?.release() }
+        voskAudioRecord = null
         recognizer?.destroy()
         recognizer = null
 
@@ -491,26 +511,117 @@ class WatchKeywordListenerService : LifecycleService() {
         return bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) in 1 until LOW_BATTERY_THRESHOLD
     }
 
+    // ── Vosk AudioRecord loop ────────────────────────────────────────────────
+
+    private fun startVoskLoop(vosk: VoskGateAsr) {
+        useVoskLoop = true
+        listening = true
+        updateNotificationIfChanged("Escuchando...")
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            val sampleRate = 16_000
+            val windowSamples = sampleRate * 2 // 2-second windows
+            val minBuffer = AudioRecord.getMinBufferSize(
+                sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
+            ).coerceAtLeast(windowSamples * 2)
+
+            val record = try {
+                AudioRecord(
+                    MediaRecorder.AudioSource.MIC, sampleRate,
+                    AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, minBuffer
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Cannot open AudioRecord for Vosk", e)
+                return@launch
+            }
+
+            if (record.state != AudioRecord.STATE_INITIALIZED) {
+                record.release()
+                Log.e(TAG, "AudioRecord not initialized")
+                return@launch
+            }
+
+            voskAudioRecord = record
+            record.startRecording()
+            Log.i(TAG, "Vosk loop started")
+
+            try {
+                while (listening && isActive) {
+                    if (captureInFlight) {
+                        delay(200)
+                        continue
+                    }
+
+                    val pcm = ShortArray(windowSamples)
+                    var samplesRead = 0
+                    while (samplesRead < windowSamples && listening && !captureInFlight) {
+                        val n = record.read(pcm, samplesRead, windowSamples - samplesRead)
+                        if (n > 0) samplesRead += n else break
+                    }
+
+                    if (samplesRead == 0 || captureInFlight) continue
+
+                    val window = CapturedAudioWindow(
+                        preRollPcm = shortArrayOf(),
+                        livePcm = pcm.copyOf(samplesRead),
+                        sampleRateHz = sampleRate
+                    )
+
+                    val text = vosk.transcribe(window, "es") ?: continue
+                    if (text.isNotBlank()) {
+                        Log.d(TAG, "Vosk: '$text'")
+                        processText(text)
+                    }
+                }
+            } finally {
+                runCatching { record.stop() }
+                record.release()
+                voskAudioRecord = null
+                Log.i(TAG, "Vosk loop stopped")
+            }
+        }
+    }
+
+    // ── Mic handoff ──────────────────────────────────────────────────────────
+
     private suspend fun pauseRecognizerForCapture() {
-        kotlinx.coroutines.withContext(Dispatchers.Main) {
-            try { recognizer?.cancel() } catch (_: Exception) {}
-            try { recognizer?.destroy() } catch (_: Exception) {}
-            recognizer = null
+        if (useVoskLoop) {
+            // Stop the Vosk AudioRecord so WatchTriggeredAudioCapture can open the mic
+            withContext(Dispatchers.IO) {
+                runCatching { voskAudioRecord?.stop() }
+                runCatching { voskAudioRecord?.release() }
+                voskAudioRecord = null
+            }
+        } else {
+            withContext(Dispatchers.Main) {
+                try { recognizer?.cancel() } catch (_: Exception) {}
+                try { recognizer?.destroy() } catch (_: Exception) {}
+                recognizer = null
+            }
         }
         // Give Android time to fully release the mic before AudioRecord opens it.
-        // 150ms is too short — mic contention causes all-zero captures.
         delay(450)
     }
 
     private suspend fun resumeRecognizerAfterCapture() {
         if (!listening) return
         delay(RESTART_AFTER_KEYWORD_MS)
-        kotlinx.coroutines.withContext(Dispatchers.Main) {
-            try {
-                recognizer?.destroy()
-            } catch (_: Exception) {}
-            recognizer = SpeechRecognizer.createSpeechRecognizer(applicationContext)
-            startListening()
+        if (useVoskLoop) {
+            val vosk = VoskGateAsr(applicationContext)
+            if (vosk.isAvailable) {
+                startVoskLoop(vosk)
+            } else {
+                withContext(Dispatchers.Main) {
+                    recognizer = SpeechRecognizer.createSpeechRecognizer(applicationContext)
+                    startListening()
+                }
+            }
+        } else {
+            withContext(Dispatchers.Main) {
+                try { recognizer?.destroy() } catch (_: Exception) {}
+                recognizer = SpeechRecognizer.createSpeechRecognizer(applicationContext)
+                startListening()
+            }
         }
     }
 

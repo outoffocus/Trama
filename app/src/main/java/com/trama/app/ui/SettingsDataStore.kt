@@ -55,7 +55,6 @@ class SettingsDataStore(private val context: Context) {
         const val DEFAULT_BACKUP_HOUR = 3  // 3:00 AM
         const val DEFAULT_CONTEXT_PRE_ROLL = 3
         const val DEFAULT_CONTEXT_POST_ROLL = 5
-        const val GATE_ENGINE_MOONSHINE = "moonshine"
         const val GATE_ENGINE_VOSK = "vosk"
         const val DEFAULT_LOCATION_INTERVAL_MINUTES = 5
         const val DEFAULT_LOCATION_DWELL_MINUTES = 15
@@ -132,7 +131,7 @@ class SettingsDataStore(private val context: Context) {
     }
 
     val gateAsrEngine: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[GATE_ASR_ENGINE] ?: GATE_ENGINE_MOONSHINE
+        prefs[GATE_ASR_ENGINE] ?: GATE_ENGINE_VOSK
     }
 
     val asrDebugEngine: Flow<String> = context.dataStore.data.map { prefs ->

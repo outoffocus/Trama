@@ -77,9 +77,11 @@ Reglas:
   - NO elimines nombres propios, lugares, telefonos, numeros o fechas si ayudan a entender la accion
   - no la conviertas en una frase demasiado bonita ni demasiado general
   - es mejor una accion algo larga y fiel que una corta y ambigua
-  - NUNCA reduzcas cleanText a solo una expresion temporal, frecuencia o habito (ej: "Todos los dias", "Cada manana", "Todas las mananas" son INVALIDOS como cleanText)
+  - NUNCA reduzcas cleanText a solo una expresion temporal, frecuencia o habito (ej: "Todos los dias", "Cada manana", "Mañana", "manana" son INVALIDOS solos como cleanText)
   - si el texto describe un habito recurrente (ej: "hacer ejercicios todas las mananas por mis problemas de espalda"), cleanText debe contener la accion concreta; puede incluir la frecuencia pero NO puede ser solo la frecuencia
   - cuando el patron es "por [motivo] tengo que [accion]", cleanText debe preservar la accion y opcionalmente el motivo, NUNCA solo el patron temporal
+  - cuando el patron es "[temporal] tengo que [accion]" o "[temporal] hay que [accion]" (ej: "mañana tengo que ir a CTAG"), cleanText es la ACCION ("ir a CTAG"), la fecha va en dueDate — NUNCA devuelvas solo la expresion temporal como cleanText
+  - en general: si eliminas el trigger ("tengo que", "hay que", etc.) y lo que queda es solo una fecha o palabra temporal, ALGO FALTA — debes incluir el destino, la persona o el objeto de la accion
 - actionType: CALL=llamar, BUY=comprar, SEND=enviar, EVENT=cita/reunión, REVIEW=revisar, TALK_TO=hablar con, GENERIC=otro
 - dueDate:
   - usa YYYY-MM-DD
@@ -98,6 +100,7 @@ Reglas:
   - entre 0.0 y 1.0
   - alto si el contenido es claro y especifico
   - bajo si la nota es ambigua o esta mal transcrita
+  - 0.3 o menos si cleanText contiene un infinitivo español como destino, lugar o nombre propio (ej: "ir a aceptar", "en completar") — señal de error ASR donde un nombre fue sustituido por un verbo
 - people, places, phones, numbers:
   - incluye solo valores mencionados o claramente presentes en la nota
   - no inventes ninguno
@@ -292,6 +295,7 @@ Sé permisivo: en duda, true.
 No rechaces una nota solo porque contenga nombres poco comunes, lugares, telefonos, numeros o frases fragmentarias.
 Si corriges el texto, preserva TODA la informacion: nombres propios, lugares, telefonos, numeros, fechas, motivos y contexto.
 Mejor aceptar una nota ambigua que perder una nota personal real.
+Error ASR frecuente — infinitivo como sustantivo: si un infinitivo español común (aceptar, completar, cancelar, pagar, enviar, comprar, borrar, guardar, llamar, gestionar, revisar, firmar, entregar, recoger, actualizar, confirmar, etc.) aparece como destino de "ir a", nombre de lugar, nombre de persona o sigla (ej: "ir a aceptar", "en aceptar", "llegar a cancelar"), es casi seguro un error ASR donde el modelo sustituyó un nombre propio o acrónimo. En ese caso, sustituye esa palabra por "[inaudible]" en la correccion y baja confianza a 0.4.
 
 Transcripción: "{{text}}"
             """.trimIndent()

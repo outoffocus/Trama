@@ -37,15 +37,21 @@ google-services.json
 .DS_Store
 Thumbs.db
 
-# Vosk model files (large binary, download separately)
-app/src/main/assets/model-es/am/
-app/src/main/assets/model-es/graph/
-app/src/main/assets/model-es/ivector/
-app/src/main/assets/model-es/conf/
-wear/src/main/assets/model-es/am/
-wear/src/main/assets/model-es/graph/
-wear/src/main/assets/model-es/ivector/
-wear/src/main/assets/model-es/conf/
+# Vosk model files — download separately, place in shared/src/main/assets/asr/vosk/model/
+# The placeholder 0-byte files ARE committed so the directory structure exists in the repo.
+# Only the actual binary model content is ignored:
+shared/src/main/assets/asr/vosk/model/am/*.mdl
+shared/src/main/assets/asr/vosk/model/graph/*.fst
+shared/src/main/assets/asr/vosk/model/graph/*.int
+shared/src/main/assets/asr/vosk/model/graph/phones/*.int
+shared/src/main/assets/asr/vosk/model/ivector/final.*
+shared/src/main/assets/asr/vosk/model/ivector/*.stats
+shared/src/main/assets/asr/vosk/model/ivector/*.conf
+shared/src/main/assets/asr/vosk/model/conf/*.conf
+
+# Legacy paths (no longer used)
+app/src/main/assets/model-es/
+wear/src/main/assets/model-es/
 
 # sherpa-onnx / Whisper assets (keep local, do not commit large binaries)
 app/src/main/assets/asr/whisper/*.onnx

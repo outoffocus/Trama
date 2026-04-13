@@ -156,9 +156,6 @@ fun SettingsScreen(
     val contextPostRoll by settings.contextPostRollSeconds.collectAsState(
         initial = SettingsDataStore.DEFAULT_CONTEXT_POST_ROLL
     )
-    val gateAsrEngine by settings.gateAsrEngine.collectAsState(
-        initial = SettingsDataStore.GATE_ENGINE_MOONSHINE
-    )
     val asrDebugEnabled by settings.asrDebugEnabled.collectAsState(initial = false)
     val asrDebugEngine by settings.asrDebugEngine.collectAsState(initial = "-")
     val asrDebugStatus by settings.asrDebugStatus.collectAsState(initial = "sin datos")
@@ -522,58 +519,7 @@ fun SettingsScreen(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        "Moonshine hace de filtro ligero y, si detecta una frase relevante, Whisper transcribe la captura completa. Estos dos controles solo ajustan cuánto contexto se conserva antes y después.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    Text(
-                        "Motor del gate",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    SingleChoiceSegmentedButtonRow(
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        SegmentedButton(
-                            selected = gateAsrEngine == SettingsDataStore.GATE_ENGINE_MOONSHINE,
-                            onClick = {
-                                scope.launch {
-                                    settings.setGateAsrEngine(SettingsDataStore.GATE_ENGINE_MOONSHINE)
-                                }
-                            },
-                            shape = androidx.compose.material3.SegmentedButtonDefaults.itemShape(
-                                index = 0,
-                                count = 2
-                            )
-                        ) {
-                            Text("Moonshine")
-                        }
-                        SegmentedButton(
-                            selected = gateAsrEngine == SettingsDataStore.GATE_ENGINE_VOSK,
-                            onClick = {
-                                scope.launch {
-                                    settings.setGateAsrEngine(SettingsDataStore.GATE_ENGINE_VOSK)
-                                }
-                            },
-                            shape = androidx.compose.material3.SegmentedButtonDefaults.itemShape(
-                                index = 1,
-                                count = 2
-                            )
-                        ) {
-                            Text("Vosk")
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        if (gateAsrEngine == SettingsDataStore.GATE_ENGINE_VOSK) {
-                            "Vosk queda ya preparado como gate alternativo. Si no hay backend disponible, la app caerá al flujo sin gate."
-                        } else {
-                            "Moonshine sigue siendo el gate ligero actual antes de Whisper."
-                        },
+                        "Vosk hace de filtro ligero y, si detecta una frase relevante, Whisper transcribe la captura completa. Estos dos controles solo ajustan cuánto contexto se conserva antes y después.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

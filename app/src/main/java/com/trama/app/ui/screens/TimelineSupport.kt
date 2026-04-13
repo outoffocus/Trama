@@ -3,8 +3,10 @@ package com.trama.app.ui.screens
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,6 +30,7 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -43,6 +46,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.size
 import com.trama.app.summary.ActionExecutor
 import com.trama.app.summary.ActionType
 import com.trama.app.summary.CalendarHelper
@@ -139,6 +143,12 @@ internal fun TimelineList(
     selectedEntryIds: Set<Long> = emptySet(),
     onEntrySelectionChange: ((Long, Boolean) -> Unit)? = null,
     onEnterEntrySelectionMode: ((Long) -> Unit)? = null,
+    selectedRecordingIds: Set<Long> = emptySet(),
+    onRecordingSelectionChange: ((Long, Boolean) -> Unit)? = null,
+    onEnterRecordingSelectionMode: ((Long) -> Unit)? = null,
+    selectedEventIds: Set<Long> = emptySet(),
+    onEventSelectionChange: ((Long, Boolean) -> Unit)? = null,
+    onEnterEventSelectionMode: ((Long) -> Unit)? = null,
     keyPrefix: String = "",
     modifier: Modifier = Modifier,
     emptyTitle: String = "No hay eventos",
@@ -166,8 +176,8 @@ internal fun TimelineList(
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         timelineListContent(
             events = events,
@@ -184,7 +194,13 @@ internal fun TimelineList(
             isSelectionMode = isSelectionMode,
             selectedEntryIds = selectedEntryIds,
             onEntrySelectionChange = onEntrySelectionChange,
-            onEnterEntrySelectionMode = onEnterEntrySelectionMode
+            onEnterEntrySelectionMode = onEnterEntrySelectionMode,
+            selectedRecordingIds = selectedRecordingIds,
+            onRecordingSelectionChange = onRecordingSelectionChange,
+            onEnterRecordingSelectionMode = onEnterRecordingSelectionMode,
+            selectedEventIds = selectedEventIds,
+            onEventSelectionChange = onEventSelectionChange,
+            onEnterEventSelectionMode = onEnterEventSelectionMode
         )
     }
 }
@@ -205,6 +221,12 @@ internal fun LazyListScope.timelineListContent(
     selectedEntryIds: Set<Long> = emptySet(),
     onEntrySelectionChange: ((Long, Boolean) -> Unit)? = null,
     onEnterEntrySelectionMode: ((Long) -> Unit)? = null,
+    selectedRecordingIds: Set<Long> = emptySet(),
+    onRecordingSelectionChange: ((Long, Boolean) -> Unit)? = null,
+    onEnterRecordingSelectionMode: ((Long) -> Unit)? = null,
+    selectedEventIds: Set<Long> = emptySet(),
+    onEventSelectionChange: ((Long, Boolean) -> Unit)? = null,
+    onEnterEventSelectionMode: ((Long) -> Unit)? = null,
 ) {
     items(
         count = events.size,
@@ -325,6 +347,7 @@ internal fun LazyListScope.timelineListContent(
                 }
             }
             is TimelineEventUi.EntryCompleted -> {
+                val isSelected = event.entry.id in selectedEntryIds
                 TimelineStatusCard(
                     modifier = itemModifier,
                     eyebrow = "Completada",
@@ -332,6 +355,14 @@ internal fun LazyListScope.timelineListContent(
                     body = "Marcada como resuelta",
                     accent = accentConfig.completed,
                     meta = hourFormat.format(Date(event.timestamp)),
+                    isSelectionMode = isSelectionMode,
+                    isSelected = isSelected,
+                    onLongClick = if (onEnterEntrySelectionMode != null && !isSelectionMode) {
+                        { onEnterEntrySelectionMode(event.entry.id) }
+                    } else null,
+                    onClick = if (isSelectionMode && onEntrySelectionChange != null) {
+                        { onEntrySelectionChange(event.entry.id, !isSelected) }
+                    } else null,
                     icon = {
                         Icon(
                             Icons.Default.CheckCircle,
@@ -342,11 +373,23 @@ internal fun LazyListScope.timelineListContent(
                 )
             }
             is TimelineEventUi.RecordingCaptured -> {
+                val isSelected = event.recording.id in selectedRecordingIds
                 RecordingCard(
                     modifier = itemModifier,
                     recording = event.recording,
                     accentColor = accentConfig.recording,
-                    onClick = { onRecordingClick(event.recording.id) }
+                    isSelectionMode = isSelectionMode,
+                    isSelected = isSelected,
+                    onLongClick = if (onEnterRecordingSelectionMode != null && !isSelectionMode) {
+                        { onEnterRecordingSelectionMode(event.recording.id) }
+                    } else null,
+                    onClick = {
+                        if (isSelectionMode && onRecordingSelectionChange != null) {
+                            onRecordingSelectionChange(event.recording.id, !isSelected)
+                        } else {
+                            onRecordingClick(event.recording.id)
+                        }
+                    }
                 )
             }
             is TimelineEventUi.CalendarScheduled -> {
@@ -391,10 +434,10 @@ internal fun LazyListScope.timelineListContent(
             }
             is TimelineEventUi.StoredEvent -> {
                 val context = LocalContext.current
-                val title = when (event.event.type) {
-                    TimelineEventType.DWELL -> event.event.title
-                    else -> event.event.title
-                }
+                val title = event.event.title
+                val isSelected = event.event.id in selectedEventIds
+                val accent = if (event.event.isHighlight) accentConfig.place
+                             else accentConfig.place.copy(alpha = 0.82f)
                 TimelineStatusCard(
                     modifier = itemModifier,
                     eyebrow = when (event.event.type) {
@@ -403,15 +446,20 @@ internal fun LazyListScope.timelineListContent(
                     },
                     title = title,
                     body = event.event.subtitle ?: "Evento automático",
-                    accent = if (event.event.isHighlight) {
-                        accentConfig.place
-                    } else {
-                        accentConfig.place.copy(alpha = 0.82f)
-                    },
+                    accent = accent,
                     meta = hourFormat.format(Date(event.timestamp)),
-                    onClick = event.event.placeId?.let { { onPlaceClick(it) } },
-                    quickActionLabel = if (event.event.type == TimelineEventType.DWELL) "Maps" else null,
-                    onQuickActionClick = if (event.event.type == TimelineEventType.DWELL) {
+                    isSelectionMode = isSelectionMode,
+                    isSelected = isSelected,
+                    onLongClick = if (onEnterEventSelectionMode != null && !isSelectionMode) {
+                        { onEnterEventSelectionMode(event.event.id) }
+                    } else null,
+                    onClick = if (isSelectionMode && onEventSelectionChange != null) {
+                        { onEventSelectionChange(event.event.id, !isSelected) }
+                    } else {
+                        event.event.placeId?.let { placeId -> { onPlaceClick(placeId) } }
+                    },
+                    quickActionLabel = if (!isSelectionMode && event.event.type == TimelineEventType.DWELL) "Maps" else null,
+                    onQuickActionClick = if (!isSelectionMode && event.event.type == TimelineEventType.DWELL) {
                         {
                             val data = event.event.dataJson.orEmpty()
                             val lat = Regex("\"lat\"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)").find(data)
@@ -443,13 +491,13 @@ private fun TimelineCornerAccent(
 ) {
     Box(
         modifier = modifier
-            .height(6.dp)
-            .fillMaxWidth(0.18f)
-            .padding(top = 0.dp)
-            .background(color = color.copy(alpha = 0.85f), shape = androidx.compose.foundation.shape.RoundedCornerShape(999.dp))
+            .height(4.dp)
+            .width(20.dp)
+            .background(color = color.copy(alpha = 0.75f), shape = androidx.compose.foundation.shape.RoundedCornerShape(999.dp))
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TimelineStatusCard(
     modifier: Modifier = Modifier,
@@ -459,8 +507,11 @@ private fun TimelineStatusCard(
     accent: Color,
     meta: String? = null,
     onClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
     quickActionLabel: String? = null,
     onQuickActionClick: (() -> Unit)? = null,
+    isSelectionMode: Boolean = false,
+    isSelected: Boolean = false,
     icon: @Composable () -> Unit
 ) {
     val cardInteractionSource = remember { MutableInteractionSource() }
@@ -468,46 +519,60 @@ private fun TimelineStatusCard(
         modifier = modifier
             .fillMaxWidth()
             .then(
-                if (onClick != null) {
-                    Modifier.clickable(
+                if (onClick != null || onLongClick != null) {
+                    Modifier.combinedClickable(
                         interactionSource = cardInteractionSource,
                         indication = null,
-                        onClick = onClick
+                        onClick = onClick ?: {},
+                        onLongClick = onLongClick
                     )
                 } else Modifier
             ),
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
+            containerColor = if (isSelected)
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+            else
+                MaterialTheme.colorScheme.surface
         ),
-        border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.14f))
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+        border = androidx.compose.foundation.BorderStroke(0.5.dp, accent.copy(alpha = 0.12f))
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
-            TimelineCornerAccent(
-                color = accent,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 10.dp, end = 12.dp)
-            )
+            if (isSelectionMode) {
+                Checkbox(
+                    checked = isSelected,
+                    onCheckedChange = null,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 6.dp, end = 6.dp)
+                        .size(24.dp)
+                )
+            } else {
+                TimelineCornerAccent(
+                    color = accent,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 9.dp, end = 11.dp)
+                )
+            }
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(14.dp)
+                    .padding(horizontal = 11.dp, vertical = 10.dp)
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                // Header: eyebrow badge + timestamp
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     if (!eyebrow.isNullOrBlank()) {
                         Surface(
-                            shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
-                            color = accent.copy(alpha = 0.16f)
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(5.dp),
+                            color = accent.copy(alpha = 0.14f)
                         ) {
                             Text(
                                 text = eyebrow,
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Medium,
                                 color = accent,
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }
                     }
@@ -516,16 +581,17 @@ private fun TimelineStatusCard(
                         Text(
                             text = meta,
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.40f)
                         )
                     }
                 }
+                // Icon + title row
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.padding(top = 8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(top = 5.dp)
                 ) {
-                    Box(modifier = Modifier.width(18.dp), contentAlignment = Alignment.Center) {
+                    Box(modifier = Modifier.size(16.dp), contentAlignment = Alignment.Center) {
                         icon()
                     }
                     Text(
@@ -536,29 +602,31 @@ private fun TimelineStatusCard(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+                // Body
                 if (body.isNotBlank()) {
                     Text(
                         text = body,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f),
-                        modifier = Modifier.padding(top = 8.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                        modifier = Modifier.padding(top = 4.dp),
                         maxLines = 3,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+                // Quick action chip
                 if (!quickActionLabel.isNullOrBlank() && onQuickActionClick != null) {
                     Surface(
                         onClick = onQuickActionClick,
                         shape = androidx.compose.foundation.shape.RoundedCornerShape(999.dp),
                         color = accent.copy(alpha = 0.12f),
-                        modifier = Modifier.padding(top = 10.dp)
+                        modifier = Modifier.padding(top = 7.dp)
                     ) {
                         Text(
                             text = quickActionLabel,
                             style = MaterialTheme.typography.labelMedium,
                             color = accent,
                             fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                         )
                     }
                 }

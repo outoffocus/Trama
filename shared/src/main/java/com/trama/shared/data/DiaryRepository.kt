@@ -193,6 +193,9 @@ class DiaryRepository(
     suspend fun deleteTimelineEventById(id: Long) =
         timelineEventDao?.deleteById(id)
 
+    suspend fun deleteTimelineEventsByIds(ids: List<Long>) =
+        timelineEventDao?.deleteByIds(ids)
+
     suspend fun updateTimelineEventTitlesForPlace(placeId: Long, title: String) =
         timelineEventDao?.updateTitleForPlace(placeId, title)
 

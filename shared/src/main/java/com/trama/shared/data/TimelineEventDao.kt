@@ -40,4 +40,7 @@ interface TimelineEventDao {
 
     @Query("DELETE FROM timeline_events WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM timeline_events WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<Long>)
 }

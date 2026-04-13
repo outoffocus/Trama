@@ -21,17 +21,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -58,6 +56,7 @@ import com.trama.shared.model.EntryPriority
 import com.trama.shared.model.EntryStatus
 import com.trama.shared.model.Source
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -65,19 +64,12 @@ import java.util.concurrent.TimeUnit
 /**
  * Card for a single diary entry / action item.
  *
- * Layout (normal mode):
- * ┌────────────────────────────────────────────┬────┐
- * │ 📋 Pendiente  ⬆  🤖       📱 10:34       │ ☐  │
- * │                                            │    │
- * │ Llamar al dentista mañana                  │    │
- * │ ⏰ Miércoles                               │    │
- * └────────────────────────────────────────────┴────┘
- *
- * Layout (selection mode):
- * ┌────┬────────────────────────────────────────────┐
- * │ ☑  │ 📋 Pendiente            📱 10:34           │
- * │    │ Llamar al dentista mañana                  │
- * └────┴────────────────────────────────────────────┘
+ * Compact layout:
+ * ┌───────────────────────────────────────────┐
+ * │█ [Tarea] ⌚ ☁  ·············  10:34      │
+ * │  Llamar al dentista                        │
+ * │  ⏰ Mañana                            ☐   │
+ * └───────────────────────────────────────────┘
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -100,26 +92,31 @@ fun EntryCard(
     val isCompleted = entry.status == EntryStatus.COMPLETED
     val primaryText = entry.displayText.ifBlank { entry.text }
 
+    // Fix: compare against start of today, not current time.
+    // Without this, a task due "today at midnight" shows as "Vencida" all day.
+    val startOfToday = remember {
+        Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+    }
+
     val cardColor by animateColorAsState(
         targetValue = when {
-            isSelected -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+            isSelected  -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
             isCompleted -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-            else -> MaterialTheme.colorScheme.surface
+            else        -> MaterialTheme.colorScheme.surface
         },
         label = "cardColor"
     )
 
     val priorityColor = when (entry.priority) {
         EntryPriority.URGENT -> MaterialTheme.colorScheme.error
-        EntryPriority.HIGH -> MaterialTheme.colorScheme.tertiary
-        else -> MaterialTheme.colorScheme.primary
+        EntryPriority.HIGH   -> MaterialTheme.colorScheme.tertiary
+        else                 -> accentColor ?: MaterialTheme.colorScheme.primary
     }
     val eventAccent = accentColor ?: MaterialTheme.colorScheme.primary
     val processingBadge = rememberProcessingBadge(entry = entry, isProcessing = isProcessing)
-    val metaParts = buildList {
-        if (entry.source == Source.WATCH) add("Reloj")
-        if (entry.isManual) add("Manual")
-    }.joinToString(" · ")
     val cardInteractionSource = remember { MutableInteractionSource() }
 
     Card(
@@ -131,234 +128,201 @@ fun EntryCard(
                 onClick = onClick,
                 onLongClick = onLongClick
             ),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = cardColor),
         elevation = CardDefaults.cardElevation(defaultElevation = if (isCompleted) 0.dp else 1.dp),
         border = androidx.compose.foundation.BorderStroke(
-            width = 1.dp,
-            color = if (isSelected) {
-                MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
-            } else {
-                eventAccent.copy(alpha = 0.14f)
-            }
+            width = 0.5.dp,
+            color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.30f)
+                    else            eventAccent.copy(alpha = 0.12f)
         )
     ) {
-        Box(modifier = Modifier.fillMaxWidth()) {
-            if (!isSelectionMode) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 10.dp, end = 12.dp)
-                        .width(28.dp)
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(eventAccent.copy(alpha = if (isCompleted) 0.35f else 0.85f))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // ── Selection checkbox ──────────────────────────────────────────
+            AnimatedVisibility(
+                visible = isSelectionMode,
+                enter = fadeIn() + scaleIn(),
+                exit  = fadeOut() + scaleOut()
+            ) {
+                Checkbox(
+                    checked = isSelected,
+                    onCheckedChange = null,
+                    modifier = Modifier.padding(start = 8.dp),
+                    colors = CheckboxDefaults.colors(
+                        checkedColor   = MaterialTheme.colorScheme.primary,
+                        uncheckedColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                    )
                 )
             }
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(IntrinsicSize.Min),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                AnimatedVisibility(
-                    visible = isSelectionMode,
-                    enter = fadeIn() + scaleIn(),
-                    exit = fadeOut() + scaleOut()
-                ) {
-                    Checkbox(
-                        checked = isSelected,
-                        onCheckedChange = null,
-                        modifier = Modifier.padding(start = 8.dp),
-                        colors = CheckboxDefaults.colors(
-                            checkedColor = MaterialTheme.colorScheme.primary,
-                            uncheckedColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                        )
-                    )
-                }
-
-                if (!isSelectionMode) {
-                    Box(
-                        modifier = Modifier
-                            .width(4.dp)
-                            .fillMaxHeight()
-                            .clip(RoundedCornerShape(topStart = 14.dp, bottomStart = 14.dp))
-                            .background(
-                                if (isCompleted)
-                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f)
-                                else
-                                    priorityColor.copy(alpha = 0.7f)
-                            )
-                    )
-                }
-
-                Column(
+            // ── Left priority / accent border ───────────────────────────────
+            if (!isSelectionMode) {
+                Box(
                     modifier = Modifier
-                        .weight(1f)
-                        .padding(
-                            start = 14.dp,
-                            end = if (onToggleComplete != null && !isSelectionMode) 0.dp else 14.dp,
-                            top = 12.dp,
-                            bottom = 12.dp
+                        .width(3.dp)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp))
+                        .background(
+                            if (isCompleted) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.12f)
+                            else             priorityColor.copy(alpha = 0.70f)
                         )
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        val actionLabel = EntryActionType.label(entry.actionType)
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = eventAccent.copy(alpha = if (isCompleted) 0.12f else 0.18f)
-                        ) {
-                            Text(
-                                text = actionLabel,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = eventAccent,
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-                            )
-                        }
+                )
+            }
 
-                        Spacer(modifier = Modifier.weight(1f))
+            // ── Main content column ─────────────────────────────────────────
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(
+                        start  = 11.dp,
+                        end    = if (onToggleComplete != null || onQuickActionClick != null) 2.dp else 11.dp,
+                        top    = 9.dp,
+                        bottom = 9.dp
+                    )
+            ) {
+                // Header row: [action badge] [watch icon?] [processing icon?]  [timestamp]
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = RoundedCornerShape(5.dp),
+                        color = eventAccent.copy(alpha = if (isCompleted) 0.10f else 0.15f)
+                    ) {
                         Text(
-                            text = if (isCompleted) {
-                                timeFormat.format(Date(entry.createdAt))
-                            } else {
-                                dayTimeFormat.format(Date(entry.createdAt))
-                            },
+                            text  = EntryActionType.label(entry.actionType),
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                            color = if (isCompleted) eventAccent.copy(alpha = 0.55f) else eventAccent,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(6.dp))
+                    if (entry.source == Source.WATCH) {
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Icon(
+                            Icons.Default.Watch,
+                            contentDescription = "Reloj",
+                            modifier = Modifier.size(10.dp),
+                            tint     = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.40f)
+                        )
+                    }
+
+                    if (processingBadge != null) {
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Icon(
+                            processingBadge.icon,
+                            contentDescription = processingBadge.contentDescription,
+                            modifier = Modifier.size(10.dp),
+                            tint     = processingBadge.tint.copy(alpha = 0.65f)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.weight(1f))
 
                     Text(
-                        text = primaryText,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = if (isCompleted) FontWeight.Medium else FontWeight.SemiBold,
-                        color = if (isCompleted)
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        else
-                            MaterialTheme.colorScheme.onSurface,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis,
-                        textDecoration = if (isCompleted) TextDecoration.LineThrough else TextDecoration.None
+                        text  = if (isCompleted) timeFormat.format(Date(entry.createdAt))
+                                else             dayTimeFormat.format(Date(entry.createdAt)),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.40f)
                     )
-
-                    if (!isCompleted && (entry.priority == EntryPriority.URGENT || entry.priority == EntryPriority.HIGH) ||
-                        processingBadge != null ||
-                        metaParts.isNotBlank()
-                    ) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (!isCompleted && (entry.priority == EntryPriority.URGENT || entry.priority == EntryPriority.HIGH)) {
-                                Surface(
-                                    shape = CircleShape,
-                                    color = priorityColor.copy(alpha = 0.12f)
-                                ) {
-                                    Text(
-                                        text = if (entry.priority == EntryPriority.URGENT) "Urgente" else "Alta prioridad",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Medium,
-                                        color = priorityColor,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                    )
-                                }
-                            }
-
-                            if (processingBadge != null) {
-                                if (!isCompleted && (entry.priority == EntryPriority.URGENT || entry.priority == EntryPriority.HIGH)) {
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                }
-                                Icon(
-                                    processingBadge.icon,
-                                    contentDescription = processingBadge.contentDescription,
-                                    modifier = Modifier.size(14.dp),
-                                    tint = processingBadge.tint
-                                )
-                            }
-
-                            if (metaParts.isNotBlank()) {
-                                if (processingBadge != null || (!isCompleted && (entry.priority == EntryPriority.URGENT || entry.priority == EntryPriority.HIGH))) {
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                }
-                                Text(
-                                    text = metaParts,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-
-                    val due = entry.dueDate
-                    if (due != null) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        val now = System.currentTimeMillis()
-                        val isOverdue = due < now && !isCompleted
-                        val daysLeft = TimeUnit.MILLISECONDS.toDays(due - now)
-                        val dueDateText = when {
-                            isOverdue -> "Vencida"
-                            daysLeft == 0L -> "Hoy"
-                            daysLeft == 1L -> "Mañana"
-                            daysLeft < 7 -> {
-                                val dayFormat = SimpleDateFormat("EEEE", Locale("es"))
-                                dayFormat.format(Date(due)).replaceFirstChar { it.uppercase() }
-                            }
-                            else -> SimpleDateFormat("d MMM", Locale("es")).format(Date(due))
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Default.Schedule,
-                                contentDescription = null,
-                                modifier = Modifier.size(11.dp),
-                                tint = if (isOverdue) {
-                                    MaterialTheme.colorScheme.error
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                                }
-                            )
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text(
-                                text = dueDateText,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (isOverdue) {
-                                    MaterialTheme.colorScheme.error
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                                }
-                            )
-                        }
-                    }
-
                 }
 
-                if (!isSelectionMode && onQuickActionClick != null && quickActionIcon != null) {
+                // Title
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text           = primaryText,
+                    style          = MaterialTheme.typography.titleSmall,
+                    fontWeight     = if (isCompleted) FontWeight.Normal else FontWeight.SemiBold,
+                    color          = if (isCompleted)
+                                         MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                                     else
+                                         MaterialTheme.colorScheme.onSurface,
+                    maxLines       = 3,
+                    overflow       = TextOverflow.Ellipsis,
+                    textDecoration = if (isCompleted) TextDecoration.LineThrough else TextDecoration.None
+                )
+
+                // Priority badge (urgent / high only, compact)
+                if (!isCompleted && (entry.priority == EntryPriority.URGENT || entry.priority == EntryPriority.HIGH)) {
+                    Spacer(modifier = Modifier.height(3.dp))
                     Surface(
-                        onClick = onQuickActionClick,
-                        modifier = Modifier.padding(end = 10.dp),
-                        shape = CircleShape,
-                        color = eventAccent.copy(alpha = 0.12f)
+                        shape = RoundedCornerShape(4.dp),
+                        color = priorityColor.copy(alpha = 0.10f)
+                    ) {
+                        Text(
+                            text      = if (entry.priority == EntryPriority.URGENT) "Urgente" else "Alta",
+                            style     = MaterialTheme.typography.labelSmall,
+                            fontWeight= FontWeight.SemiBold,
+                            color     = priorityColor,
+                            modifier  = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+
+                // Due date (only shown on pending entries)
+                val due = entry.dueDate
+                if (due != null && !isCompleted) {
+                    Spacer(modifier = Modifier.height(3.dp))
+                    val isOverdue = due < startOfToday
+                    val daysLeft  = TimeUnit.MILLISECONDS.toDays(due - startOfToday)
+                    val dueDateText = when {
+                        isOverdue    -> "Vencida"
+                        daysLeft == 0L -> "Hoy"
+                        daysLeft == 1L -> "Mañana"
+                        daysLeft < 7   -> SimpleDateFormat("EEEE", Locale("es"))
+                            .format(Date(due)).replaceFirstChar { it.uppercase() }
+                        else           -> SimpleDateFormat("d MMM", Locale("es")).format(Date(due))
+                    }
+                    val dueTint = if (isOverdue) MaterialTheme.colorScheme.error
+                                  else          MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.48f)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.Schedule,
+                            contentDescription = null,
+                            modifier = Modifier.size(10.dp),
+                            tint     = dueTint
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(
+                            text  = dueDateText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = dueTint
+                        )
+                    }
+                }
+            }
+
+            // ── Right action: quick-action button or completion checkbox ────
+            if (!isSelectionMode) {
+                if (onQuickActionClick != null && quickActionIcon != null) {
+                    Surface(
+                        onClick  = onQuickActionClick,
+                        modifier = Modifier.padding(end = 8.dp),
+                        shape    = CircleShape,
+                        color    = eventAccent.copy(alpha = 0.10f)
                     ) {
                         Box(
-                            modifier = Modifier.size(48.dp),
+                            modifier        = Modifier.size(40.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = quickActionIcon,
+                                imageVector      = quickActionIcon,
                                 contentDescription = quickActionLabel,
-                                modifier = Modifier.size(20.dp),
-                                tint = eventAccent
+                                modifier         = Modifier.size(18.dp),
+                                tint             = eventAccent
                             )
                         }
                     }
-                } else if (!isSelectionMode && onToggleComplete != null) {
+                } else if (onToggleComplete != null) {
                     Checkbox(
-                        checked = isCompleted,
+                        checked        = isCompleted,
                         onCheckedChange = { onToggleComplete() },
-                        modifier = Modifier.padding(end = 8.dp),
-                        colors = CheckboxDefaults.colors(
-                            checkedColor = MaterialTheme.colorScheme.primary,
-                            uncheckedColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+                        modifier       = Modifier.padding(end = 6.dp),
+                        colors         = CheckboxDefaults.colors(
+                            checkedColor   = MaterialTheme.colorScheme.primary,
+                            uncheckedColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.28f),
                             checkmarkColor = MaterialTheme.colorScheme.onPrimary
                         )
                     )
@@ -367,6 +331,8 @@ fun EntryCard(
         }
     }
 }
+
+// ── Processing badge helpers ─────────────────────────────────────────────────
 
 private data class ProcessingBadge(
     val icon: ImageVector,
@@ -381,31 +347,30 @@ private fun rememberProcessingBadge(
 ): ProcessingBadge? {
     if (isProcessing) {
         return ProcessingBadge(
-            icon = Icons.Default.AutoAwesome,
-            tint = MaterialTheme.colorScheme.primary,
+            icon               = Icons.Default.AutoAwesome,
+            tint               = MaterialTheme.colorScheme.primary,
             contentDescription = "Procesando"
         )
     }
 
-    val isCloudProcessed = entry.wasReviewedByLLM &&
-        (entry.llmConfidence ?: 0f) >= 0.85f
+    val isCloudProcessed = entry.wasReviewedByLLM && (entry.llmConfidence ?: 0f) >= 0.85f
     val isLocalProcessed = (entry.wasReviewedByLLM && !isCloudProcessed) ||
         (!entry.wasReviewedByLLM && (entry.sourceRecordingId != null || entry.llmConfidence == 0.0f))
 
     return when {
-        entry.isManual -> ProcessingBadge(
-            icon = Icons.Default.CheckCircle,
-            tint = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.7f),
+        entry.isManual   -> ProcessingBadge(
+            icon               = Icons.Default.CheckCircle,
+            tint               = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.7f),
             contentDescription = "Entrada manual"
         )
         isCloudProcessed -> ProcessingBadge(
-            icon = Icons.Default.Cloud,
-            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+            icon               = Icons.Default.Cloud,
+            tint               = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
             contentDescription = "Procesado online"
         )
         isLocalProcessed -> ProcessingBadge(
-            icon = Icons.Default.CloudOff,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+            icon               = Icons.Default.CloudOff,
+            tint               = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
             contentDescription = "Procesado local"
         )
         else -> null

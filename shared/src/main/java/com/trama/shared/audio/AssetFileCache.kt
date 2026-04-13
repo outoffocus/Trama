@@ -16,6 +16,18 @@ class AssetFileCache(private val context: Context) {
         return assetManager.list(normalized)?.toList().orEmpty()
     }
 
+    /**
+     * Returns the size in bytes of an asset file, or 0 if it doesn't exist or is empty.
+     * Used to detect placeholder/stub files (0-byte) that look present but are unusable.
+     */
+    fun assetSize(path: String): Long {
+        return try {
+            assetManager.open(path.trim('/')).use { it.available().toLong() }
+        } catch (_: Exception) {
+            0L
+        }
+    }
+
     fun assetExists(path: String): Boolean {
         val normalized = path.trim('/').trim()
         if (normalized.isBlank()) return false

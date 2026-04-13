@@ -255,6 +255,7 @@ private class FakeTimelineEventDao : TimelineEventDao {
     override suspend fun update(event: TimelineEvent) {}
     override suspend fun updateTitleForPlace(placeId: Long, title: String) {}
     override suspend fun deleteById(id: Long) {}
+    override suspend fun deleteByIds(ids: List<Long>) {}
 }
 
 private class FakePlaceDao : PlaceDao {

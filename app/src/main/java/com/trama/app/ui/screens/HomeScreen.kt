@@ -37,6 +37,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
@@ -226,13 +227,18 @@ fun HomeScreen(
         }
     }
 
-    // Selection mode (entries)
+    // Unified selection mode
     var selectionMode by remember { mutableStateOf(false) }
-    var selectedIds by remember { mutableStateOf(setOf<Long>()) }
+    var selectedIds by remember { mutableStateOf(setOf<Long>()) }       // DiaryEntry ids
+    var selectedRecIds by remember { mutableStateOf(setOf<Long>()) }    // Recording ids
+    var selectedEventIds by remember { mutableStateOf(setOf<Long>()) }  // TimelineEvent ids
 
-    // Selection mode (recordings)
-    var recSelectionMode by remember { mutableStateOf(false) }
-    var selectedRecIds by remember { mutableStateOf(setOf<Long>()) }
+    fun exitSelectionMode() {
+        selectionMode = false
+        selectedIds = emptySet()
+        selectedRecIds = emptySet()
+        selectedEventIds = emptySet()
+    }
 
     // Add manual entry dialog
     var showAddDialog by remember { mutableStateOf(false) }
@@ -386,20 +392,25 @@ fun HomeScreen(
         }
     }
 
-    // Delete selected
+    // Delete all selected (entries + recordings + timeline events)
     fun deleteSelected() {
-        val idsToDelete = selectedIds.toList()
-        val entriesToDelete = (pendingEntries + completedEntries).filter { it.id in idsToDelete }
-        val count = idsToDelete.size
+        val entryIds = selectedIds.toList()
+        val recIds = selectedRecIds.toList()
+        val eventIds = selectedEventIds.toList()
+        val entriesToDelete = (pendingEntries + completedEntries).filter { it.id in selectedIds }
+        val total = entryIds.size + recIds.size + eventIds.size
         scope.launch {
-            repository.deleteByIds(idsToDelete)
-            watchSyncer.syncStatusChange(
-                deleted = entriesToDelete.map { StatusSyncEntry(it.createdAt, it.text) }
-            )
-            selectionMode = false
-            selectedIds = emptySet()
+            if (entryIds.isNotEmpty()) {
+                repository.deleteByIds(entryIds)
+                watchSyncer.syncStatusChange(
+                    deleted = entriesToDelete.map { StatusSyncEntry(it.createdAt, it.text) }
+                )
+            }
+            if (recIds.isNotEmpty()) repository.deleteRecordingsByIds(recIds)
+            if (eventIds.isNotEmpty()) repository.deleteTimelineEventsByIds(eventIds)
+            exitSelectionMode()
             snackbarHostState.showSnackbar(
-                "$count ${if (count == 1) "entrada borrada" else "entradas borradas"}"
+                "$total ${if (total == 1) "elemento borrado" else "elementos borrados"}"
             )
         }
     }
@@ -412,8 +423,7 @@ fun HomeScreen(
             watchSyncer.syncStatusChange(
                 completed = entriesToComplete.map { StatusSyncEntry(it.createdAt, it.text) }
             )
-            selectionMode = false
-            selectedIds = emptySet()
+            exitSelectionMode()
             snackbarHostState.showSnackbar("${ids.size} completadas")
         }
     }
@@ -449,18 +459,6 @@ fun HomeScreen(
         }
     }
 
-    // Delete selected recordings
-    fun deleteSelectedRecordings() {
-        val idsToDelete = selectedRecIds.toList()
-        val count = idsToDelete.size
-        scope.launch {
-            repository.deleteRecordingsByIds(idsToDelete)
-            recSelectionMode = false; selectedRecIds = emptySet()
-            snackbarHostState.showSnackbar(
-                "$count ${if (count == 1) "grabación borrada" else "grabaciones borradas"}"
-            )
-        }
-    }
 
     // Add manual entry dialog
     if (showAddDialog) {
@@ -489,59 +487,42 @@ fun HomeScreen(
 
     Scaffold(
         topBar = {
+            val totalSelected = selectedIds.size + selectedRecIds.size + selectedEventIds.size
             if (selectionMode) {
                 TopAppBar(
-                    title = { Text("${selectedIds.size} seleccionadas") },
+                    title = {
+                        Text(
+                            if (totalSelected == 0) "Selecciona elementos"
+                            else "$totalSelected ${if (totalSelected == 1) "seleccionado" else "seleccionados"}"
+                        )
+                    },
                     navigationIcon = {
-                        IconButton(onClick = { selectionMode = false; selectedIds = emptySet() }) {
+                        IconButton(onClick = { exitSelectionMode() }) {
                             Icon(Icons.Default.Close, contentDescription = "Cancelar")
                         }
                     },
                     actions = {
-                        TextButton(onClick = {
-                            selectedIds = pendingEntries.map { it.id }.toSet()
-                        }) { Text("Todo") }
-                        IconButton(onClick = { completeSelected() }, enabled = selectedIds.isNotEmpty()) {
-                            Icon(
-                                Icons.Default.CheckCircle,
-                                contentDescription = "Completar",
-                                tint = if (selectedIds.isNotEmpty()) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                        if (selectedIds.isNotEmpty() && selectedRecIds.isEmpty() && selectedEventIds.isEmpty()) {
+                            // Only entries selected — allow "complete"
+                            IconButton(onClick = { completeSelected() }) {
+                                Icon(
+                                    Icons.Default.CheckCircle,
+                                    contentDescription = "Completar",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
                         }
-                        IconButton(onClick = { deleteSelected() }, enabled = selectedIds.isNotEmpty()) {
+                        IconButton(onClick = { deleteSelected() }, enabled = totalSelected > 0) {
                             Icon(
                                 Icons.Default.Delete,
                                 contentDescription = "Borrar",
-                                tint = if (selectedIds.isNotEmpty()) MaterialTheme.colorScheme.error
+                                tint = if (totalSelected > 0) MaterialTheme.colorScheme.error
                                 else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = MaterialTheme.colorScheme.primaryContainer
-                    )
-                )
-            } else if (recSelectionMode) {
-                TopAppBar(
-                    title = { Text("${selectedRecIds.size} grabaciones") },
-                    navigationIcon = {
-                        IconButton(onClick = { recSelectionMode = false; selectedRecIds = emptySet() }) {
-                            Icon(Icons.Default.Close, contentDescription = "Cancelar")
-                        }
-                    },
-                    actions = {
-                        TextButton(onClick = {
-                            selectedRecIds = recordings.map { it.id }.toSet()
-                        }) { Text("Todas") }
-                        IconButton(onClick = { deleteSelectedRecordings() }, enabled = selectedRecIds.isNotEmpty()) {
-                            Icon(Icons.Default.Delete, contentDescription = "Borrar",
-                                tint = if (selectedRecIds.isNotEmpty()) MaterialTheme.colorScheme.error
-                                else MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer
                     )
                 )
             } else {
@@ -581,7 +562,7 @@ fun HomeScreen(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
-            if (!selectionMode && !recSelectionMode) {
+            if (!selectionMode) {
                 MicControlFabGroup(
                     serviceRunning = serviceRunning,
                     isRecording = isRecording,
@@ -650,7 +631,7 @@ fun HomeScreen(
                 )
             }
 
-            if (!selectionMode && !recSelectionMode && (locationRunning || serviceRunning || isRecording || watchActive)) {
+            if (!selectionMode && (locationRunning || serviceRunning || isRecording || watchActive)) {
                 StatusOverviewRow(
                     serviceRunning = serviceRunning,
                     isRecording = isRecording,
@@ -741,8 +722,8 @@ fun HomeScreen(
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    contentPadding = PaddingValues(vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     if (duplicateEntries.isNotEmpty()) {
                         item(key = "header_duplicates") {
@@ -862,17 +843,35 @@ fun HomeScreen(
                             onEntryClick = onEntryClick,
                             onRecordingClick = onRecordingClick,
                             onPlaceClick = onPlaceClick,
-                            onToggleComplete = { entry -> markEntryDoneWithUndo(entry) },
-                            onPostponeEntry = { entry, dueDate, label -> postponeEntryWithUndo(entry, dueDate, label) },
+                            onToggleComplete = if (!selectionMode) { entry -> markEntryDoneWithUndo(entry) } else null,
+                            onPostponeEntry = if (!selectionMode) { entry, dueDate, label -> postponeEntryWithUndo(entry, dueDate, label) } else null,
                             isSelectionMode = selectionMode,
                             selectedEntryIds = selectedIds,
                             onEntrySelectionChange = { id, sel ->
                                 selectedIds = if (sel) selectedIds + id else selectedIds - id
-                                if (selectedIds.isEmpty()) selectionMode = false
+                                if (selectedIds.isEmpty() && selectedRecIds.isEmpty() && selectedEventIds.isEmpty()) selectionMode = false
                             },
                             onEnterEntrySelectionMode = { entryId ->
                                 selectionMode = true
                                 selectedIds = setOf(entryId)
+                            },
+                            selectedRecordingIds = selectedRecIds,
+                            onRecordingSelectionChange = { id, sel ->
+                                selectedRecIds = if (sel) selectedRecIds + id else selectedRecIds - id
+                                if (selectedIds.isEmpty() && selectedRecIds.isEmpty() && selectedEventIds.isEmpty()) selectionMode = false
+                            },
+                            onEnterRecordingSelectionMode = { recId ->
+                                selectionMode = true
+                                selectedRecIds = setOf(recId)
+                            },
+                            selectedEventIds = selectedEventIds,
+                            onEventSelectionChange = { id, sel ->
+                                selectedEventIds = if (sel) selectedEventIds + id else selectedEventIds - id
+                                if (selectedIds.isEmpty() && selectedRecIds.isEmpty() && selectedEventIds.isEmpty()) selectionMode = false
+                            },
+                            onEnterEventSelectionMode = { eventId ->
+                                selectionMode = true
+                                selectedEventIds = setOf(eventId)
                             }
                         )
                     }
@@ -895,11 +894,18 @@ fun HomeScreen(
                                     entry = entry,
                                     accentColor = timelineAccentConfig.completed,
                                     isProcessing = entry.id in processingEntryIds,
-                                    onClick = { onEntryClick(entry.id) },
-                                    onLongClick = {
-                                        selectionMode = true
-                                        selectedIds = setOf(entry.id)
+                                    onClick = {
+                                        if (selectionMode) {
+                                            val sel = entry.id !in selectedIds
+                                            selectedIds = if (sel) selectedIds + entry.id else selectedIds - entry.id
+                                            if (selectedIds.isEmpty() && selectedRecIds.isEmpty() && selectedEventIds.isEmpty()) selectionMode = false
+                                        } else {
+                                            onEntryClick(entry.id)
+                                        }
                                     },
+                                    onLongClick = if (!selectionMode) {
+                                        { selectionMode = true; selectedIds = setOf(entry.id) }
+                                    } else null,
                                     isSelectionMode = selectionMode,
                                     isSelected = entry.id in selectedIds
                                 )
@@ -1037,42 +1043,44 @@ private fun SectionHeader(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(onClick = onToggle)
-                .padding(horizontal = 2.dp, vertical = 4.dp),
+                .padding(horizontal = 2.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // Colored dot accent
+            Box(
+                modifier = Modifier
+                    .size(5.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(color)
+            )
+            Spacer(modifier = Modifier.width(7.dp))
             Text(
                 title,
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontWeight = FontWeight.Medium,
+                fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.weight(1f)
             )
-            Surface(
-                shape = RoundedCornerShape(999.dp),
-                color = color.copy(alpha = 0.08f)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(3.dp)
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        "$count",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = color,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Icon(
-                        imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                        contentDescription = null,
-                        modifier = Modifier.size(14.dp),
-                        tint = color.copy(alpha = 0.9f)
-                    )
-                }
+                Text(
+                    "$count",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = color.copy(alpha = 0.85f),
+                    fontWeight = FontWeight.SemiBold
+                )
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = null,
+                    modifier = Modifier.size(13.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                )
             }
         }
         HorizontalDivider(
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.18f)
         )
     }
 }

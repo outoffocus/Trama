@@ -29,9 +29,8 @@ import com.trama.app.MainActivity
 import com.trama.app.NotificationConfig
 import com.trama.app.R
 import com.trama.app.audio.ContextualAudioCaptureEngine
-import com.trama.app.audio.SherpaMoonshineGateAsr
 import com.trama.app.audio.SherpaWhisperAsrEngine
-import com.trama.app.audio.VoskGateAsr
+import com.trama.shared.audio.VoskGateAsr
 import com.trama.shared.audio.ContextualCaptureConfig
 import com.trama.shared.audio.LightweightGateAsr
 import com.trama.shared.audio.NoOpAsrEngine
@@ -130,8 +129,6 @@ class KeywordListenerService : LifecycleService() {
     private var contextPreRollSeconds: Int = SettingsDataStore.DEFAULT_CONTEXT_PRE_ROLL
     private var contextPostRollSeconds: Int = SettingsDataStore.DEFAULT_CONTEXT_POST_ROLL
     private var asrDebugEnabled: Boolean = false
-    private var selectedGateEngine: String = SettingsDataStore.GATE_ENGINE_MOONSHINE
-
     @Volatile private var asrDebugEnabledVolatile = false
     @Volatile
     private var listening = false
@@ -310,6 +307,7 @@ class KeywordListenerService : LifecycleService() {
                 Log.i(TAG, "Intent patterns updated: ${patterns.count { it.enabled }} enabled")
 
                 val keywords = settings.customKeywords.first()
+                updateWhisperHotwords(keywords, patterns)
                 launch(Dispatchers.IO) { settingsSyncer.syncPatterns(patterns, keywords) }
             }
         }
@@ -319,6 +317,7 @@ class KeywordListenerService : LifecycleService() {
                 Log.i(TAG, "Custom keywords updated: ${keywords.size} keywords")
 
                 val patterns = settings.intentPatterns.first()
+                updateWhisperHotwords(keywords, patterns)
                 launch(Dispatchers.IO) { settingsSyncer.syncPatterns(patterns, keywords) }
             }
         }
@@ -340,22 +339,25 @@ class KeywordListenerService : LifecycleService() {
                 asrDebugEnabledVolatile = enabled
             }
         }
-        lifecycleScope.launch {
-            settings.gateAsrEngine.collect { engine ->
-                val normalized = when (engine) {
-                    SettingsDataStore.GATE_ENGINE_VOSK -> SettingsDataStore.GATE_ENGINE_VOSK
-                    else -> SettingsDataStore.GATE_ENGINE_MOONSHINE
-                }
-                if (selectedGateEngine == normalized) return@collect
-                selectedGateEngine = normalized
-                if (listening && asrEngine.isAvailable && !dedicatedAsrFailedOver) {
-                    Log.i(TAG, "Gate engine changed to $normalized, restarting contextual capture")
-                    gateAsr = createGateAsr()
-                    stopContextualCapture()
-                    initContextualCaptureAndStart()
-                }
-            }
-        }
+    }
+
+    /**
+     * Feed custom keywords + pattern trigger words to Whisper as hotwords.
+     * This biases the decoder toward proper nouns and acronyms the user cares about,
+     * reducing substitution errors like "CTAG" → "aceptar".
+     */
+    private fun updateWhisperHotwords(
+        customKeywords: List<String>,
+        patterns: List<IntentPattern>
+    ) {
+        val whisper = asrEngine as? SherpaWhisperAsrEngine ?: return
+        // Collect pattern label words (e.g. "reunión", place names from triggers)
+        val patternWords = patterns
+            .filter { it.enabled }
+            .flatMap { p -> p.label.split(" ") }
+            .filter { it.length >= 3 }
+        val all = (customKeywords + patternWords).distinct()
+        whisper.setHotwords(all)
     }
 
     private fun initDatabase() {
@@ -374,16 +376,9 @@ class KeywordListenerService : LifecycleService() {
 
     private fun createGateAsr(): LightweightGateAsr {
         return try {
-            when (selectedGateEngine) {
-                SettingsDataStore.GATE_ENGINE_VOSK -> {
-                    VoskGateAsr(applicationContext).takeIf { it.isAvailable } ?: NoOpLightweightGateAsr
-                }
-                else -> {
-                    SherpaMoonshineGateAsr(applicationContext).takeIf { it.isAvailable } ?: NoOpLightweightGateAsr
-                }
-            }
+            VoskGateAsr(applicationContext).takeIf { it.isAvailable } ?: NoOpLightweightGateAsr
         } catch (e: Throwable) {
-            Log.w(TAG, "Selected gate backend unavailable, will use Whisper directly", e)
+            Log.w(TAG, "Vosk gate unavailable, will use Whisper directly", e)
             NoOpLightweightGateAsr
         }
     }
@@ -391,7 +386,7 @@ class KeywordListenerService : LifecycleService() {
     private fun initRecognizerAndStart() {
         if (asrEngine.isAvailable) {
             val status = if (gateAsr.isAvailable) {
-                "vad + moonshine + whisper"
+                "vosk + whisper"
             } else {
                 "asr dedicado"
             }
