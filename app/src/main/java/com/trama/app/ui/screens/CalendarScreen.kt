@@ -25,7 +25,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
@@ -263,17 +262,18 @@ fun CalendarScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(0.44f)
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                shape = RoundedCornerShape(24.dp),
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surface
-                )
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
                 Column(modifier = Modifier.fillMaxSize()) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
@@ -283,20 +283,11 @@ fun CalendarScreen(
                             Icon(Icons.Default.ChevronLeft, contentDescription = "Mes anterior")
                         }
 
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Default.CalendarMonth,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = monthFormat.format(displayMonth.time).replaceFirstChar { it.uppercase() },
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
+                        Text(
+                            text = monthFormat.format(displayMonth.time).replaceFirstChar { it.uppercase() },
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
 
                         IconButton(onClick = {
                             displayMonth = (displayMonth.clone() as Calendar).apply { add(Calendar.MONTH, 1) }
@@ -309,30 +300,30 @@ fun CalendarScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp),
+                            .padding(horizontal = 10.dp),
                         horizontalArrangement = Arrangement.SpaceEvenly
                     ) {
                         weekdays.forEach { day ->
                             Text(
                                 text = day,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                                 modifier = Modifier.weight(1f),
                                 textAlign = TextAlign.Center
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(2.dp))
 
                     val calDays = remember(displayMonth) { buildCalendarDays(displayMonth) }
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(7),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                            .padding(horizontal = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(1.dp),
+                        horizontalArrangement = Arrangement.spacedBy(1.dp)
                     ) {
                         items(calDays) { calDay ->
                             CalendarDay(
@@ -376,23 +367,24 @@ fun CalendarScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(0.56f)
-                    .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
-                shape = RoundedCornerShape(24.dp),
+                    .padding(start = 14.dp, end = 14.dp, bottom = 12.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surface
-                )
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
                 Column(modifier = Modifier.fillMaxSize()) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = selectedDayLabel,
-                                style = MaterialTheme.typography.titleMedium,
+                                style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
@@ -401,25 +393,25 @@ fun CalendarScreen(
                                     if (completedTasks.isNotEmpty()) append(" · ${completedTasks.size} hechas")
                                     if (selectedPlaces.isNotEmpty()) append(" · ${selectedPlaces.size} lugares")
                                 },
-                                style = MaterialTheme.typography.bodySmall,
+                                style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         TextButton(onClick = { onDayClick(selectedDayStart) }) {
-                            Text("Abrir timeline")
+                            Text("Abrir timeline", style = MaterialTheme.typography.labelMedium)
                         }
                     }
 
                     HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
+                        modifier = Modifier.padding(horizontal = 14.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
                     )
 
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         item("summary") {
                             DaySummaryCard(
@@ -588,28 +580,28 @@ fun CalendarScreen(
 private fun DaySummaryCard(summary: String, isFinal: Boolean) {
     Card(
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
         ),
-        shape = RoundedCornerShape(18.dp)
+        shape = RoundedCornerShape(12.dp)
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             Text(
                 text = "Resumen breve",
-                style = MaterialTheme.typography.titleSmall,
+                style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold
             )
             Text(
                 text = summary,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             if (isFinal) {
                 Text(
-                    text = "La memoria técnica de este día ya quedó consolidada para el chat.",
-                    style = MaterialTheme.typography.labelMedium,
+                    text = "Memoria técnica consolidada para el chat.",
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary
                 )
             }
@@ -619,15 +611,15 @@ private fun DaySummaryCard(summary: String, isFinal: Boolean) {
 
 @Composable
 private fun CalendarHistoryHeader(title: String, subtitle: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(
             text = title,
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold
         )
         Text(
             text = subtitle,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
@@ -637,16 +629,16 @@ private fun CalendarHistoryHeader(title: String, subtitle: String) {
 private fun CalendarEmptyCard(title: String, body: String) {
     Card(
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f)
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f)
         ),
-        shape = RoundedCornerShape(16.dp)
+        shape = RoundedCornerShape(10.dp)
     ) {
         Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            modifier = Modifier.padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp)
         ) {
-            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+            Text(body, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -660,44 +652,53 @@ private fun CalendarTaskCard(
     onDone: () -> Unit,
     onPostpone: () -> Unit
 ) {
-    Card(shape = RoundedCornerShape(18.dp)) {
+    Card(
+        shape = RoundedCornerShape(12.dp),
+        border = androidx.compose.foundation.BorderStroke(
+            0.5.dp,
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+        )
+    ) {
         Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp)
         ) {
             Text(
                 text = entry.displayText,
                 style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
             Text(
                 text = buildTaskMeta(entry, label),
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 OutlinedButton(onClick = onEdit) {
-                    Icon(Icons.Default.Edit, contentDescription = null)
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Editar")
+                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Editar", style = MaterialTheme.typography.labelMedium)
                 }
                 FilledTonalButton(onClick = onDone) {
-                    Icon(Icons.Default.CheckCircle, contentDescription = null)
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Hecha")
+                    Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Hecha", style = MaterialTheme.typography.labelMedium)
+                }
+                if (canPostpone) {
+                    TextButton(onClick = onPostpone) {
+                        Icon(Icons.Default.Schedule, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Posponer", style = MaterialTheme.typography.labelMedium)
+                    }
                 }
             }
-            if (canPostpone) {
-                TextButton(onClick = onPostpone) {
-                    Icon(Icons.Default.Schedule, contentDescription = null)
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Posponer")
-                }
-            } else {
+            if (!canPostpone) {
                 Text(
-                    text = "Las tareas de días pasados se consultan aquí, pero no se posponen desde el histórico.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    text = "Solo consulta — no se pospone desde el histórico.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                 )
             }
         }
@@ -711,32 +712,32 @@ private fun CalendarCompletedTaskCard(
 ) {
     Card(
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f)
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.35f)
         ),
-        shape = RoundedCornerShape(16.dp)
+        shape = RoundedCornerShape(10.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
+                .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = entry.displayText,
-                    style = MaterialTheme.typography.titleSmall,
+                    style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.Medium,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = buildCompletedMeta(entry),
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             TextButton(onClick = onOpen) {
-                Text("Abrir")
+                Text("Abrir", style = MaterialTheme.typography.labelMedium)
             }
         }
     }
@@ -752,17 +753,23 @@ private fun CalendarPlaceCard(
     val scope = rememberCoroutineScope()
     var rating by remember(place.id, place.rating) { mutableStateOf(place.rating ?: 0) }
 
-    Card(shape = RoundedCornerShape(18.dp)) {
+    Card(
+        shape = RoundedCornerShape(12.dp),
+        border = androidx.compose.foundation.BorderStroke(
+            0.5.dp,
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+        )
+    ) {
         Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     Icons.Default.Place,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
@@ -798,7 +805,7 @@ private fun CalendarPlaceCard(
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     (1..5).forEach { star ->
                         val selected = star <= rating
                         Surface(
@@ -814,8 +821,7 @@ private fun CalendarPlaceCard(
                             } else {
                                 MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
                             },
-                            modifier = Modifier
-                                .size(40.dp)
+                            modifier = Modifier.size(32.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
@@ -826,7 +832,7 @@ private fun CalendarPlaceCard(
                                     } else {
                                         MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
                                     },
-                                    modifier = Modifier.size(22.dp)
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                         }

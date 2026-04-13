@@ -50,6 +50,7 @@ class SettingsDataStore(private val context: Context) {
         val TIMELINE_COLOR_RECORDING = intPreferencesKey("timeline_color_recording")
         val TIMELINE_COLOR_PLACE = intPreferencesKey("timeline_color_place")
         val TIMELINE_COLOR_CALENDAR = intPreferencesKey("timeline_color_calendar")
+        val THEME_MODE = intPreferencesKey("theme_mode") // 0=system, 1=light, 2=dark
         const val DEFAULT_DURATION = 30
         const val DEFAULT_SUMMARY_HOUR = 21
         const val DEFAULT_BACKUP_HOUR = 3  // 3:00 AM
@@ -212,6 +213,14 @@ class SettingsDataStore(private val context: Context) {
 
     val timelineColorCalendar: Flow<Int> = context.dataStore.data.map { prefs ->
         prefs[TIMELINE_COLOR_CALENDAR] ?: DEFAULT_TIMELINE_COLOR_CALENDAR
+    }
+
+    val themeMode: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[THEME_MODE] ?: 0
+    }
+
+    suspend fun setThemeMode(mode: Int) {
+        context.dataStore.edit { it[THEME_MODE] = mode }
     }
 
     suspend fun setRecordingDuration(seconds: Int) {

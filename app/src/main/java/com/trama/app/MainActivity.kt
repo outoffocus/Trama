@@ -8,6 +8,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import com.trama.app.service.ServiceController
 import com.trama.app.sync.SettingsSyncer
 import com.trama.app.ui.NavGraph
@@ -49,7 +53,14 @@ class MainActivity : ComponentActivity() {
         syncSettingsToWatch()
 
         setContent {
-            TramaTheme {
+            val settings = remember { SettingsDataStore(applicationContext) }
+            val themeMode by settings.themeMode.collectAsState(initial = 0)
+            val darkTheme = when (themeMode) {
+                1 -> false
+                2 -> true
+                else -> isSystemInDarkTheme()
+            }
+            TramaTheme(darkTheme = darkTheme) {
                 NavGraph()
             }
         }

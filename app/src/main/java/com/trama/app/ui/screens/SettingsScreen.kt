@@ -198,6 +198,7 @@ fun SettingsScreen(
     val timelineCalendarColorIndex by settings.timelineColorCalendar.collectAsState(
         initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_CALENDAR
     )
+    val themeMode by settings.themeMode.collectAsState(initial = 0)
     val locationDebugStatus by LocationDebugState.status.collectAsState()
     val locationDebugLastSample by LocationDebugState.lastSample.collectAsState()
     val locationDebugCandidate by LocationDebugState.candidate.collectAsState()
@@ -693,6 +694,35 @@ fun SettingsScreen(
             }
 
             if (section == SettingsSection.APPEARANCE) {
+            SectionHeader("Tema")
+
+            Text(
+                "Elige entre modo claro, oscuro o déjalo sincronizado con el sistema.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            val themeOptions = listOf("Sistema", "Claro", "Oscuro")
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                themeOptions.forEachIndexed { index, label ->
+                    SegmentedButton(
+                        selected = themeMode == index,
+                        onClick = { scope.launch { settings.setThemeMode(index) } },
+                        shape = when (index) {
+                            0 -> RoundedCornerShape(topStart = 10.dp, bottomStart = 10.dp)
+                            themeOptions.lastIndex -> RoundedCornerShape(topEnd = 10.dp, bottomEnd = 10.dp)
+                            else -> RoundedCornerShape(0.dp)
+                        }
+                    ) {
+                        Text(label, style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+
+            SectionDivider()
+
             SectionHeader("Timeline")
 
             Text(
