@@ -153,7 +153,8 @@ fun CalendarScreen(
     val selectedDayEntriesState by repository.byDateRange(selectedDayStart, selectedDayEnd).collectAsState(initial = null)
     val selectedDayEventsState by repository.getTimelineEventsByDateRange(selectedDayStart, selectedDayEnd).collectAsState(initial = null)
     val selectedDailyPageState by repository.getDailyPage(selectedDayStart).collectAsState(initial = null)
-    val overdueEntriesState by repository.getOverdue().collectAsState(initial = emptyList())
+    val pendingFromOtherDaysState by repository.getPendingFromOtherDays(selectedDayStart, selectedDayEnd)
+        .collectAsState(initial = emptyList())
 
     val monthEntries = monthEntriesState ?: emptyList()
     val monthStoredEvents = monthStoredEventsState ?: emptyList()
@@ -213,11 +214,8 @@ fun CalendarScreen(
             .sortedByDescending { it.completedAt ?: it.createdAt }
     }
 
-    // Tasks from other days that are overdue (not created on selected day)
-    val overdueFromOtherDays = remember(overdueEntriesState, selectedDayStart, selectedDayEnd) {
-        overdueEntriesState.filter { it.createdAt < selectedDayStart || it.createdAt > selectedDayEnd }
-            .sortedWith(compareByDescending<DiaryEntry> { it.priority }.thenBy { it.dueDate ?: Long.MAX_VALUE })
-    }
+    // Pending tasks from other days: created before this day, not postponed to the future
+    val overdueFromOtherDays = pendingFromOtherDaysState
 
     val monthFormat = remember { SimpleDateFormat("MMMM yyyy", Locale("es")) }
     val monthShortFormat = remember { SimpleDateFormat("MMMM yyyy", Locale("es")) }

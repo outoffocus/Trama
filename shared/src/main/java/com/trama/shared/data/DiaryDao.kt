@@ -35,6 +35,22 @@ interface DiaryDao {
     @Query("SELECT * FROM diary_entries WHERE status = 'PENDING' AND dueDate IS NOT NULL AND dueDate < :now ORDER BY dueDate ASC")
     fun getOverdue(now: Long = System.currentTimeMillis()): Flow<List<DiaryEntry>>
 
+    /**
+     * Pending tasks from other days visible on [dayEnd]:
+     * created before [beforeDayStart] AND (no dueDate OR dueDate <= [dayEnd]).
+     * Tasks explicitly postponed to the future (dueDate > dayEnd) are excluded.
+     */
+    @Query("""SELECT * FROM diary_entries
+              WHERE status = 'PENDING'
+              AND duplicateOfId IS NULL
+              AND createdAt < :beforeDayStart
+              AND (dueDate IS NULL OR dueDate <= :dayEnd)
+              ORDER BY CASE priority
+                WHEN 'URGENT' THEN 0 WHEN 'HIGH' THEN 1
+                WHEN 'NORMAL' THEN 2 WHEN 'LOW' THEN 3 ELSE 4 END,
+              CASE WHEN dueDate IS NOT NULL THEN dueDate ELSE createdAt END ASC""")
+    fun getPendingFromOtherDays(beforeDayStart: Long, dayEnd: Long): Flow<List<DiaryEntry>>
+
     @Query("SELECT * FROM diary_entries WHERE createdAt BETWEEN :startTime AND :endTime ORDER BY createdAt DESC")
     fun byDateRange(startTime: Long, endTime: Long): Flow<List<DiaryEntry>>
 

@@ -34,6 +34,9 @@ class DiaryRepository(
 
     fun getOverdue(): Flow<List<DiaryEntry>> = dao.getOverdue().distinctUntilChanged()
 
+    fun getPendingFromOtherDays(beforeDayStart: Long, dayEnd: Long): Flow<List<DiaryEntry>> =
+        dao.getPendingFromOtherDays(beforeDayStart, dayEnd).distinctUntilChanged()
+
     fun byDateRange(startTime: Long, endTime: Long): Flow<List<DiaryEntry>> =
         dao.byDateRange(startTime, endTime).distinctUntilChanged()
 
