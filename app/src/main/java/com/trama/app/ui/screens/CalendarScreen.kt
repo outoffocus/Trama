@@ -1,6 +1,5 @@
 package com.trama.app.ui.screens
 
-import android.app.DatePickerDialog
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.expandVertically
@@ -30,24 +29,21 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -66,6 +62,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.trama.app.location.PlaceMapsLauncher
@@ -73,6 +70,7 @@ import com.trama.shared.data.DatabaseProvider
 import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.EntryStatus
 import com.trama.shared.model.Place
+import com.trama.shared.model.Recording
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -83,8 +81,8 @@ import java.util.Locale
 @Composable
 fun CalendarScreen(
     initialSelectedDayStart: Long? = null,
-    onDayClick: (Long) -> Unit,
     onEntryClick: (Long) -> Unit,
+    onRecordingClick: (Long) -> Unit = {},
     onBack: () -> Unit,
     onPlaceClick: (Long) -> Unit = {}
 ) {
@@ -93,22 +91,19 @@ fun CalendarScreen(
     val scope = rememberCoroutineScope()
 
     val today = remember { Calendar.getInstance() }
+
+    // Today start = max selectable day
     val todayStart = remember {
         Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
         }.timeInMillis
     }
-    val initialDayStart = remember(initialSelectedDayStart) {
-        initialSelectedDayStart ?: Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }.timeInMillis
+
+    val initialDayStart = remember(initialSelectedDayStart, todayStart) {
+        (initialSelectedDayStart ?: todayStart).coerceAtMost(todayStart)
     }
+
     var selectedDayStart by remember { mutableStateOf(initialDayStart) }
     var displayMonth by remember {
         mutableStateOf(
@@ -118,49 +113,53 @@ fun CalendarScreen(
             }
         )
     }
-    var postponeEntry by remember { mutableStateOf<DiaryEntry?>(null) }
     var calendarExpanded by remember { mutableStateOf(false) }
 
     val monthStart = remember(displayMonth) {
         (displayMonth.clone() as Calendar).apply {
             set(Calendar.DAY_OF_MONTH, 1)
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
         }.timeInMillis
     }
     val monthEnd = remember(displayMonth) {
         (displayMonth.clone() as Calendar).apply {
             set(Calendar.DAY_OF_MONTH, getActualMaximum(Calendar.DAY_OF_MONTH))
-            set(Calendar.HOUR_OF_DAY, 23)
-            set(Calendar.MINUTE, 59)
-            set(Calendar.SECOND, 59)
-            set(Calendar.MILLISECOND, 999)
+            set(Calendar.HOUR_OF_DAY, 23); set(Calendar.MINUTE, 59)
+            set(Calendar.SECOND, 59); set(Calendar.MILLISECOND, 999)
         }.timeInMillis
     }
     val selectedDayEnd = remember(selectedDayStart) { selectedDayStart + 86_400_000L - 1L }
 
+    // Data
     val monthEntriesState by repository.byDateRange(monthStart, monthEnd).collectAsState(initial = null)
     val monthStoredEventsState by repository.getTimelineEventsByDateRange(monthStart, monthEnd).collectAsState(initial = null)
     val placesState by repository.getPlaces().collectAsState(initial = null)
-    val selectedDayEntriesState by repository.byDateRange(selectedDayStart, selectedDayEnd).collectAsState(initial = null)
     val selectedDayEventsState by repository.getTimelineEventsByDateRange(selectedDayStart, selectedDayEnd).collectAsState(initial = null)
-    val pendingFromOtherDaysState by repository.getPendingFromOtherDays(selectedDayStart, selectedDayEnd)
-        .collectAsState(initial = emptyList())
+    val pendingOnDayState by repository.getPendingAsOf(selectedDayEnd).collectAsState(initial = null)
+    val completedOnDayState by repository.getCompletedByCompletedAt(selectedDayStart, selectedDayEnd).collectAsState(initial = null)
+    val recordingsState by repository.getAllRecordings().collectAsState(initial = null)
 
     val monthEntries = monthEntriesState ?: emptyList()
     val monthStoredEvents = monthStoredEventsState ?: emptyList()
     val places = placesState ?: emptyList()
-    val selectedDayEntries = selectedDayEntriesState ?: emptyList()
     val selectedDayEvents = selectedDayEventsState ?: emptyList()
+    val pendingOnDay = pendingOnDayState ?: emptyList()
+    val completedTasks = completedOnDayState ?: emptyList()
+    val dayRecordings = recordingsState
+        ?.filter { it.createdAt in selectedDayStart..selectedDayEnd }
+        ?.sortedBy { it.createdAt }
+        ?: emptyList()
 
     val isLoading = monthEntriesState == null ||
         monthStoredEventsState == null ||
         placesState == null ||
-        selectedDayEntriesState == null ||
-        selectedDayEventsState == null
+        selectedDayEventsState == null ||
+        pendingOnDayState == null ||
+        completedOnDayState == null ||
+        recordingsState == null
 
+    // Month grid dot data
     val entriesByDay = remember(monthEntries) {
         monthEntries.groupBy {
             Calendar.getInstance().apply { timeInMillis = it.createdAt }.get(Calendar.DAY_OF_MONTH)
@@ -185,56 +184,38 @@ fun CalendarScreen(
         val placeIds = selectedDayEvents.mapNotNull { it.placeId }.toSet()
         places.filter { it.id in placeIds }.sortedBy { it.name.lowercase(Locale.getDefault()) }
     }
-    val openTasks = remember(selectedDayEntries, selectedDayEnd) {
-        selectedDayEntries
-            .filter { it.status == EntryStatus.PENDING && it.duplicateOfId == null && ((it.dueDate ?: Long.MIN_VALUE) <= selectedDayEnd) }
-            .sortedByDescending { it.createdAt }
-    }
-    val postponedTasks = remember(selectedDayEntries, selectedDayEnd) {
-        selectedDayEntries
-            .filter { it.status == EntryStatus.PENDING && (it.dueDate ?: Long.MIN_VALUE) > selectedDayEnd }
-            .sortedBy { it.dueDate ?: Long.MAX_VALUE }
-    }
-    val duplicateTasks = remember(selectedDayEntries) {
-        selectedDayEntries
-            .filter { it.status == EntryStatus.PENDING && it.duplicateOfId != null }
-            .sortedByDescending { it.createdAt }
-    }
-    val completedTasks = remember(selectedDayEntries) {
-        selectedDayEntries
-            .filter { it.status == EntryStatus.COMPLETED }
-            .sortedByDescending { it.completedAt ?: it.createdAt }
-    }
-
-    // Pending tasks from other days: created before this day, not postponed to the future
-    val overdueFromOtherDays = pendingFromOtherDaysState
 
     val monthFormat = remember { SimpleDateFormat("MMMM yyyy", Locale("es")) }
-    val monthShortFormat = remember { SimpleDateFormat("MMMM yyyy", Locale("es")) }
     val selectedDayLabel = remember(selectedDayStart) {
         SimpleDateFormat("EEEE d 'de' MMMM", Locale("es")).format(selectedDayStart)
             .replaceFirstChar { it.uppercase() }
     }
-    val isSelectedDayToday = selectedDayStart == todayStart
-    val canPostponeSelectedDay = selectedDayStart >= todayStart
+
+    // Can only go forward up to today
+    val atMaxDay = selectedDayStart >= todayStart
+    val isSelectedToday = selectedDayStart == todayStart
 
     fun navigateDay(offset: Int) {
         val cal = Calendar.getInstance().apply { timeInMillis = selectedDayStart }
         cal.add(Calendar.DAY_OF_YEAR, offset)
-        selectedDayStart = cal.apply {
+        val newStart = cal.apply {
             set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
         }.timeInMillis
-        if (cal.get(Calendar.MONTH) != displayMonth.get(Calendar.MONTH) ||
-            cal.get(Calendar.YEAR) != displayMonth.get(Calendar.YEAR)) {
-            displayMonth = (cal.clone() as Calendar).apply { set(Calendar.DAY_OF_MONTH, 1) }
+        if (newStart <= todayStart) {
+            selectedDayStart = newStart
+            if (cal.get(Calendar.MONTH) != displayMonth.get(Calendar.MONTH) ||
+                cal.get(Calendar.YEAR) != displayMonth.get(Calendar.YEAR)
+            ) {
+                displayMonth = (cal.clone() as Calendar).apply { set(Calendar.DAY_OF_MONTH, 1) }
+            }
         }
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Calendario") },
+                title = { Text("Historial") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
@@ -245,162 +226,130 @@ fun CalendarScreen(
                 )
             )
         }
-    ) { padding ->
-        if (isLoading) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator()
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = "Cargando calendario...",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-            return@Scaffold
-        }
-
+    ) { paddingValues ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
+                .padding(paddingValues)
         ) {
             // ── Day navigation header ──────────────────────────────────────
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = { navigateDay(-1) }) {
                     Icon(Icons.Default.ChevronLeft, contentDescription = "Día anterior")
                 }
                 Column(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { calendarExpanded = !calendarExpanded },
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
                         text = selectedDayLabel,
                         style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center
                     )
                     Row(
-                        modifier = Modifier.clickable { calendarExpanded = !calendarExpanded },
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         Text(
-                            text = monthShortFormat.format(displayMonth.time).replaceFirstChar { it.uppercase() },
+                            text = monthFormat.format(Date(selectedDayStart))
+                                .replaceFirstChar { it.uppercase() },
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Icon(
-                            imageVector = if (calendarExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            if (calendarExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(14.dp)
+                            modifier = Modifier.size(12.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
-                IconButton(onClick = { navigateDay(1) }) {
-                    Icon(Icons.Default.ChevronRight, contentDescription = "Día siguiente")
+                IconButton(
+                    onClick = { navigateDay(1) },
+                    enabled = !atMaxDay
+                ) {
+                    Icon(
+                        Icons.Default.ChevronRight,
+                        contentDescription = "Día siguiente",
+                        tint = if (atMaxDay)
+                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f)
+                        else
+                            MaterialTheme.colorScheme.onSurface
+                    )
                 }
             }
 
-            // ── Collapsible calendar grid ──────────────────────────────────
+            // ── Collapsible month grid ─────────────────────────────────────
             AnimatedVisibility(
                 visible = calendarExpanded,
                 enter = expandVertically(),
                 exit = shrinkVertically()
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 4.dp)
-                ) {
-                    // Month navigation inside expanded grid
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        IconButton(onClick = {
-                            displayMonth = (displayMonth.clone() as Calendar).apply { add(Calendar.MONTH, -1) }
-                        }) {
-                            Icon(Icons.Default.ChevronLeft, contentDescription = "Mes anterior")
-                        }
-                        Text(
-                            text = monthFormat.format(displayMonth.time).replaceFirstChar { it.uppercase() },
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        IconButton(onClick = {
-                            displayMonth = (displayMonth.clone() as Calendar).apply { add(Calendar.MONTH, 1) }
-                        }) {
-                            Icon(Icons.Default.ChevronRight, contentDescription = "Mes siguiente")
-                        }
-                    }
-
-                    val weekdays = listOf("L", "M", "X", "J", "V", "S", "D")
+                Column(modifier = Modifier.padding(horizontal = 12.dp)) {
+                    // Weekday headers
                     Row(modifier = Modifier.fillMaxWidth()) {
-                        weekdays.forEach { day ->
+                        listOf("L", "M", "X", "J", "V", "S", "D").forEach { d ->
                             Text(
-                                text = day,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                text = d,
                                 modifier = Modifier.weight(1f),
-                                textAlign = TextAlign.Center
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
-
-                    Spacer(modifier = Modifier.height(2.dp))
-
+                    Spacer(modifier = Modifier.height(4.dp))
                     val calDays = remember(displayMonth) { buildCalendarDays(displayMonth) }
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(7),
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = 280.dp),
-                        verticalArrangement = Arrangement.spacedBy(1.dp),
-                        horizontalArrangement = Arrangement.spacedBy(1.dp)
+                        userScrollEnabled = false,
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        items(calDays) { calDay ->
+                        items(calDays) { day ->
+                            val todayCal = today
+                            val isToday = day.isCurrentMonth &&
+                                day.dayOfMonth == todayCal.get(Calendar.DAY_OF_MONTH) &&
+                                displayMonth.get(Calendar.MONTH) == todayCal.get(Calendar.MONTH) &&
+                                displayMonth.get(Calendar.YEAR) == todayCal.get(Calendar.YEAR)
+                            val isSelected = day.isCurrentMonth && run {
+                                val sel = Calendar.getInstance().apply { timeInMillis = selectedDayStart }
+                                day.dayOfMonth == sel.get(Calendar.DAY_OF_MONTH) &&
+                                    displayMonth.get(Calendar.MONTH) == sel.get(Calendar.MONTH) &&
+                                    displayMonth.get(Calendar.YEAR) == sel.get(Calendar.YEAR)
+                            }
+                            val hasEntries = (entriesByDay[day.dayOfMonth]?.isNotEmpty() == true) ||
+                                (eventEntriesByDay[day.dayOfMonth]?.isNotEmpty() == true)
+                            val hasCompleted = completedByDay[day.dayOfMonth]?.isNotEmpty() == true
+                            val entryCount = entriesByDay[day.dayOfMonth]?.size ?: 0
                             CalendarDay(
-                                day = calDay,
-                                isToday = calDay.isCurrentMonth &&
-                                    calDay.dayOfMonth == today.get(Calendar.DAY_OF_MONTH) &&
-                                    displayMonth.get(Calendar.MONTH) == today.get(Calendar.MONTH) &&
-                                    displayMonth.get(Calendar.YEAR) == today.get(Calendar.YEAR),
-                                isSelected = calDay.isCurrentMonth &&
-                                    selectedDayStart == (displayMonth.clone() as Calendar).apply {
-                                        set(Calendar.DAY_OF_MONTH, calDay.dayOfMonth.coerceAtLeast(1))
-                                        set(Calendar.HOUR_OF_DAY, 0)
-                                        set(Calendar.MINUTE, 0)
-                                        set(Calendar.SECOND, 0)
-                                        set(Calendar.MILLISECOND, 0)
-                                    }.timeInMillis,
-                                hasEntries = calDay.isCurrentMonth &&
-                                    (entriesByDay.containsKey(calDay.dayOfMonth) || eventEntriesByDay.containsKey(calDay.dayOfMonth)),
-                                hasCompleted = calDay.isCurrentMonth && completedByDay.containsKey(calDay.dayOfMonth),
-                                entryCount = if (calDay.isCurrentMonth) {
-                                    (entriesByDay[calDay.dayOfMonth]?.size ?: 0) +
-                                        (eventEntriesByDay[calDay.dayOfMonth]?.size ?: 0)
-                                } else 0,
+                                day = day,
+                                isToday = isToday,
+                                isSelected = isSelected,
+                                hasEntries = hasEntries,
+                                hasCompleted = hasCompleted,
+                                entryCount = entryCount,
                                 onClick = {
-                                    if (!calDay.isCurrentMonth) return@CalendarDay
-                                    selectedDayStart = (displayMonth.clone() as Calendar).apply {
-                                        set(Calendar.DAY_OF_MONTH, calDay.dayOfMonth)
-                                        set(Calendar.HOUR_OF_DAY, 0)
-                                        set(Calendar.MINUTE, 0)
-                                        set(Calendar.SECOND, 0)
-                                        set(Calendar.MILLISECOND, 0)
-                                    }.timeInMillis
+                                    val clickedCal = (displayMonth.clone() as Calendar).apply {
+                                        set(Calendar.DAY_OF_MONTH, day.dayOfMonth)
+                                        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+                                        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+                                    }
+                                    val clickedMs = clickedCal.timeInMillis
+                                    if (clickedMs <= todayStart) {
+                                        selectedDayStart = clickedMs
+                                    }
                                 }
                             )
                         }
@@ -410,28 +359,25 @@ fun CalendarScreen(
                 }
             }
 
-            // ── Day detail ─────────────────────────────────────────────────
+            // ── Stats bar ─────────────────────────────────────────────────
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = buildString {
-                        val total = overdueFromOtherDays.size + openTasks.size
-                        if (total > 0) append("$total pendiente${if (total != 1) "s" else ""}")
+                        if (pendingOnDay.isNotEmpty()) append("${pendingOnDay.size} pendiente${if (pendingOnDay.size != 1) "s" else ""}")
                         else append("Sin pendientes")
-                        if (completedTasks.isNotEmpty()) append(" · ${completedTasks.size} hechas")
+                        if (completedTasks.isNotEmpty()) append(" · ${completedTasks.size} cerradas")
+                        if (dayRecordings.isNotEmpty()) append(" · ${dayRecordings.size} grab.")
                         if (selectedPlaces.isNotEmpty()) append(" · ${selectedPlaces.size} lugares")
                     },
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
                 )
-                TextButton(onClick = { onDayClick(selectedDayStart) }) {
-                    Text("Ver timeline", style = MaterialTheme.typography.labelMedium)
-                }
             }
 
             HorizontalDivider(
@@ -439,215 +385,154 @@ fun CalendarScreen(
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
             )
 
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .weight(1f),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // ── Overdue from other days ─────────────────────────────
-                if (overdueFromOtherDays.isNotEmpty()) {
-                    item("overdue_header") {
-                        CalendarHistoryHeader(
-                            title = "De otros días",
-                            subtitle = "(${overdueFromOtherDays.size})"
-                        )
-                    }
-                    items(overdueFromOtherDays, key = { "overdue_${it.id}" }) { entry ->
-                        CalendarTaskCard(
-                            entry = entry,
-                            label = entry.dueDate?.let {
-                                "Vence ${SimpleDateFormat("d MMM", Locale("es")).format(Date(it))}"
-                            } ?: SimpleDateFormat("d MMM", Locale("es")).format(Date(entry.createdAt)),
-                            canPostpone = true,
-                            onEdit = { onEntryClick(entry.id) },
-                            onDone = {
-                                scope.launch {
-                                    repository.markCompleted(entry.id)
-                                }
-                            },
-                            onPostpone = { postponeEntry = entry }
-                        )
-                    }
+            // ── Today banner ──────────────────────────────────────────────
+            if (isSelectedToday) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                    ),
+                    border = androidx.compose.foundation.BorderStroke(
+                        0.5.dp,
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                    )
+                ) {
+                    Text(
+                        text = "Hoy se va completando a lo largo del día. Todo lo que capture desde las 00:00 ya aparece aquí.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+                    )
                 }
+            }
 
-                // ── Tasks created/due this day ──────────────────────────
-                if (openTasks.isNotEmpty() || postponedTasks.isNotEmpty() || duplicateTasks.isNotEmpty()) {
-                    item("tasks_header") {
-                        CalendarHistoryHeader(
-                            title = if (isSelectedDayToday) "Hoy" else "Este día",
-                            subtitle = buildString {
-                                append("${openTasks.size} activas")
-                                if (postponedTasks.isNotEmpty()) append(" · ${postponedTasks.size} pospuestas")
-                                if (duplicateTasks.isNotEmpty()) append(" · ${duplicateTasks.size} duplicadas")
-                            }
-                        )
-                    }
-                    items(openTasks, key = { "open_${it.id}" }) { entry ->
-                        CalendarTaskCard(
-                            entry = entry,
-                            label = "Activa",
-                            canPostpone = canPostponeSelectedDay,
-                            onEdit = { onEntryClick(entry.id) },
-                            onDone = {
-                                scope.launch {
-                                    repository.markCompleted(entry.id)
-                                    repository.markDailyPageReviewed(selectedDayStart)
-                                }
-                            },
-                            onPostpone = { postponeEntry = entry }
-                        )
-                    }
-                    items(postponedTasks, key = { "postponed_${it.id}" }) { entry ->
-                        CalendarTaskCard(
-                            entry = entry,
-                            label = entry.dueDate?.let { "Pospuesta a ${SimpleDateFormat("d MMM", Locale("es")).format(Date(it))}" }
-                                ?: "Pospuesta",
-                            canPostpone = canPostponeSelectedDay,
-                            onEdit = { onEntryClick(entry.id) },
-                            onDone = {
-                                scope.launch {
-                                    repository.markCompleted(entry.id)
-                                    repository.markDailyPageReviewed(selectedDayStart)
-                                }
-                            },
-                            onPostpone = { postponeEntry = entry }
-                        )
-                    }
-                    items(duplicateTasks, key = { "dup_${it.id}" }) { entry ->
-                        CalendarTaskCard(
-                            entry = entry,
-                            label = "Posible duplicado",
-                            canPostpone = canPostponeSelectedDay,
-                            onEdit = { onEntryClick(entry.id) },
-                            onDone = {
-                                scope.launch {
-                                    repository.clearDuplicate(entry.id)
-                                    repository.markCompleted(entry.id)
-                                    repository.markDailyPageReviewed(selectedDayStart)
-                                }
-                            },
-                            onPostpone = { postponeEntry = entry }
-                        )
-                    }
-                } else if (overdueFromOtherDays.isEmpty()) {
-                    item("tasks_empty") {
-                        CalendarEmptyHint(
-                            if (isSelectedDayToday) "Al día — sin tareas pendientes."
-                            else "Sin tareas sin cerrar este día."
-                        )
-                    }
+            // ── Content ───────────────────────────────────────────────────
+            if (isLoading) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(modifier = Modifier.size(32.dp))
                 }
-
-                // ── Places ──────────────────────────────────────────────
-                if (selectedPlaces.isNotEmpty()) {
-                    item("places_header") {
-                        CalendarHistoryHeader(title = "Lugares")
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .weight(1f),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // ── Pendientes ese día ──────────────────────────────────
+                    if (pendingOnDay.isNotEmpty()) {
+                        item("pending_header") {
+                            CalendarHistoryHeader(
+                                title = "Pendientes ese día",
+                                subtitle = "(${pendingOnDay.size})"
+                            )
+                        }
+                        items(pendingOnDay, key = { "pending_${it.id}" }) { entry ->
+                            CalendarHistoryCard(
+                                entry = entry,
+                                isCompleted = false,
+                                onClick = { onEntryClick(entry.id) }
+                            )
+                        }
+                    } else {
+                        item("pending_empty") {
+                            CalendarEmptyHint("Sin tareas pendientes ese día.")
+                        }
                     }
-                    items(selectedPlaces, key = { "place_${it.id}" }) { place ->
-                        CalendarPlaceCard(
-                            place = place,
-                            onRate = { rating ->
-                                scope.launch {
-                                    repository.updatePlaceOpinion(
-                                        id = place.id,
-                                        rating = rating,
-                                        opinionText = place.opinionText,
-                                        opinionSummary = place.opinionSummary,
-                                        opinionUpdatedAt = System.currentTimeMillis()
+
+                    // ── Cerradas ese día ────────────────────────────────────
+                    if (completedTasks.isNotEmpty()) {
+                        item("completed_header") {
+                            CalendarHistoryHeader(
+                                title = "Cerradas ese día",
+                                subtitle = "(${completedTasks.size})"
+                            )
+                        }
+                        items(completedTasks, key = { "done_${it.id}" }) { entry ->
+                            CalendarHistoryCard(
+                                entry = entry,
+                                isCompleted = true,
+                                onClick = { onEntryClick(entry.id) }
+                            )
+                        }
+                    }
+
+                    // ── Grabaciones ─────────────────────────────────────────
+                    if (dayRecordings.isNotEmpty()) {
+                        item("recordings_header") {
+                            CalendarHistoryHeader(
+                                title = "Grabaciones",
+                                subtitle = "(${dayRecordings.size})"
+                            )
+                        }
+                        items(dayRecordings, key = { "rec_${it.id}" }) { recording ->
+                            CalendarRecordingCard(
+                                recording = recording,
+                                onClick = { onRecordingClick(recording.id) }
+                            )
+                        }
+                    }
+
+                    // ── Lugares ─────────────────────────────────────────────
+                    if (selectedPlaces.isNotEmpty()) {
+                        item("places_header") {
+                            CalendarHistoryHeader(title = "Lugares")
+                        }
+                        items(selectedPlaces, key = { "place_${it.id}" }) { place ->
+                            CalendarPlaceCard(
+                                place = place,
+                                onRate = { rating ->
+                                    scope.launch {
+                                        repository.updatePlaceOpinion(
+                                            id = place.id,
+                                            rating = rating,
+                                            opinionText = place.opinionText,
+                                            opinionSummary = place.opinionSummary,
+                                            opinionUpdatedAt = System.currentTimeMillis()
+                                        )
+                                    }
+                                },
+                                onOpenDetail = { onPlaceClick(place.id) },
+                                onOpenMap = {
+                                    PlaceMapsLauncher.openInGoogleMaps(
+                                        context = context,
+                                        latitude = place.latitude,
+                                        longitude = place.longitude,
+                                        label = place.name
                                     )
-                                    repository.markDailyPageReviewed(selectedDayStart)
                                 }
-                            },
-                            onOpenDetail = { onPlaceClick(place.id) },
-                            onOpenMap = {
-                                PlaceMapsLauncher.openInGoogleMaps(
-                                    context = context,
-                                    latitude = place.latitude,
-                                    longitude = place.longitude,
-                                    label = place.name
-                                )
-                            }
-                        )
-                    }
-                }
-
-                // ── Completed ───────────────────────────────────────────
-                if (completedTasks.isNotEmpty()) {
-                    item("completed_header") {
-                        CalendarHistoryHeader(title = "Completadas", subtitle = "(${completedTasks.size})")
-                    }
-                    items(completedTasks, key = { "done_${it.id}" }) { entry ->
-                        CalendarCompletedTaskCard(
-                            entry = entry,
-                            onOpen = { onEntryClick(entry.id) }
-                        )
+                            )
+                        }
                     }
                 }
             }
         }
     }
-
-    postponeEntry?.let { entry ->
-        CalendarPostponeDialog(
-            entry = entry,
-            onDismiss = { postponeEntry = null },
-            onPostpone = { dueDate ->
-                scope.launch {
-                    repository.updateDueDate(entry.id, dueDate)
-                    repository.markDailyPageReviewed(selectedDayStart)
-                    postponeEntry = null
-                }
-            }
-        )
-    }
 }
 
-@Composable
-private fun CalendarHistoryHeader(title: String, subtitle: String = "") {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-        if (subtitle.isNotBlank()) {
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
+// ── History card (pending or completed) ─────────────────────────────────────
 
 @Composable
-private fun CalendarEmptyHint(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-        modifier = Modifier.padding(horizontal = 2.dp, vertical = 4.dp)
-    )
-}
-
-@Composable
-private fun CalendarTaskCard(
+private fun CalendarHistoryCard(
     entry: DiaryEntry,
-    label: String,
-    canPostpone: Boolean,
-    onEdit: () -> Unit,
-    onDone: () -> Unit,
-    onPostpone: () -> Unit
+    isCompleted: Boolean,
+    onClick: () -> Unit
 ) {
+    val timeFormat = remember { SimpleDateFormat("d MMM · HH:mm", Locale("es")) }
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() },
         shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isCompleted)
+                MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.30f)
+            else
+                MaterialTheme.colorScheme.surface
+        ),
         border = androidx.compose.foundation.BorderStroke(
             0.5.dp,
             MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
@@ -657,83 +542,84 @@ private fun CalendarTaskCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Text(
-                text = entry.displayText,
+                text = entry.displayText.ifBlank { entry.text },
                 style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 2,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
+                textDecoration = if (isCompleted) TextDecoration.LineThrough else TextDecoration.None,
+                color = if (isCompleted)
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                else
+                    MaterialTheme.colorScheme.onSurface
             )
             Text(
-                text = buildTaskMeta(entry, label),
+                text = if (isCompleted) {
+                    val closedAt = entry.completedAt ?: entry.createdAt
+                    "Cerrada ${timeFormat.format(Date(closedAt))}"
+                } else {
+                    "Creada ${timeFormat.format(Date(entry.createdAt))}"
+                },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                FilledTonalButton(
-                    onClick = onDone,
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 6.dp)
-                ) {
-                    Text("Hecha", style = MaterialTheme.typography.labelMedium)
-                }
-                Row {
-                    TextButton(onClick = onEdit) {
-                        Text("Editar", style = MaterialTheme.typography.labelMedium)
-                    }
-                    if (canPostpone) {
-                        TextButton(onClick = onPostpone) {
-                            Text("Posponer", style = MaterialTheme.typography.labelMedium)
-                        }
-                    }
-                }
+        }
+    }
+}
+
+// ── Recording card ───────────────────────────────────────────────────────────
+
+@Composable
+private fun CalendarRecordingCard(
+    recording: Recording,
+    onClick: () -> Unit
+) {
+    val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() },
+        shape = RoundedCornerShape(12.dp),
+        border = androidx.compose.foundation.BorderStroke(
+            0.5.dp,
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(
+                Icons.Default.Mic,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                modifier = Modifier.size(16.dp)
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = recording.title?.ifBlank { null } ?: "Grabación",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = timeFormat.format(Date(recording.createdAt)),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
 }
 
-@Composable
-private fun CalendarCompletedTaskCard(
-    entry: DiaryEntry,
-    onOpen: () -> Unit
-) {
-    Card(
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.35f)
-        ),
-        shape = RoundedCornerShape(10.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = entry.displayText,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = buildCompletedMeta(entry),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            TextButton(onClick = onOpen) {
-                Text("Abrir", style = MaterialTheme.typography.labelMedium)
-            }
-        }
-    }
-}
+// ── Place card ───────────────────────────────────────────────────────────────
 
 @Composable
 private fun CalendarPlaceCard(
@@ -759,7 +645,6 @@ private fun CalendarPlaceCard(
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            // Header row: name + Ficha button
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -783,14 +668,11 @@ private fun CalendarPlaceCard(
                     Text("Ficha", style = MaterialTheme.typography.labelMedium)
                 }
             }
-
-            // Stars row
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // 5 tappable stars
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     (1..5).forEach { star ->
                         val selected = star <= rating
@@ -828,85 +710,41 @@ private fun CalendarPlaceCard(
     }
 }
 
+// ── Section header ───────────────────────────────────────────────────────────
+
 @Composable
-private fun CalendarPostponeDialog(
-    entry: DiaryEntry,
-    onDismiss: () -> Unit,
-    onPostpone: (Long) -> Unit
-) {
-    val context = LocalContext.current
-    androidx.compose.material3.AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Posponer tarea") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    text = entry.displayText,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AssistChip(
-                        onClick = { onPostpone(resolveTomorrow(entry.dueDate)) },
-                        label = { Text("Mañana") }
-                    )
-                    AssistChip(
-                        onClick = { onPostpone(resolveNextWeek(entry.dueDate)) },
-                        label = { Text("Semana que viene") }
-                    )
-                }
-                TextButton(
-                    onClick = {
-                        val today = Calendar.getInstance()
-                        DatePickerDialog(
-                            context,
-                            { _, year, month, dayOfMonth ->
-                                onPostpone(resolveCustomDate(year, month, dayOfMonth, entry.dueDate))
-                            },
-                            today.get(Calendar.YEAR),
-                            today.get(Calendar.MONTH),
-                            today.get(Calendar.DAY_OF_MONTH)
-                        ).show()
-                    }
-                ) {
-                    Text("Elegir fecha")
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancelar")
-            }
+private fun CalendarHistoryHeader(title: String, subtitle: String = "") {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        if (subtitle.isNotBlank()) {
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
+    }
+}
+
+@Composable
+private fun CalendarEmptyHint(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+        modifier = Modifier.padding(horizontal = 2.dp, vertical = 4.dp)
     )
 }
 
-private fun buildTaskMeta(entry: DiaryEntry, label: String): String {
-    val dateFormat = SimpleDateFormat("d MMM · HH:mm", Locale("es"))
-    val created = dateFormat.format(Date(entry.createdAt))
-    val due = entry.dueDate?.let { " · vence ${dateFormat.format(Date(it))}" }.orEmpty()
-    return "$label · creada $created$due"
-}
-
-private fun buildCompletedMeta(entry: DiaryEntry): String {
-    val completedAt = entry.completedAt ?: entry.createdAt
-    val dateFormat = SimpleDateFormat("d MMM · HH:mm", Locale("es"))
-    return "Cerrada ${dateFormat.format(Date(completedAt))}"
-}
-
-private fun buildPlaceMeta(place: Place): String =
-    buildString {
-        if (!place.type.isNullOrBlank()) append(place.type)
-        if (place.visitCount > 0) {
-            if (isNotEmpty()) append(" · ")
-            append("${place.visitCount} visitas")
-        }
-        if (place.rating != null) {
-            if (isNotEmpty()) append(" · ")
-            append("${place.rating}/5")
-        }
-    }.ifBlank { "Lugar detectado" }
+// ── Calendar day cell ────────────────────────────────────────────────────────
 
 private data class CalDay(
     val dayOfMonth: Int,
@@ -925,17 +763,19 @@ private fun CalendarDay(
 ) {
     val bgColor by animateColorAsState(
         targetValue = when {
-            isSelected -> MaterialTheme.colorScheme.secondaryContainer
-            isToday -> MaterialTheme.colorScheme.primaryContainer
-            else -> MaterialTheme.colorScheme.surface
+            isSelected && isToday -> MaterialTheme.colorScheme.primaryContainer
+            isSelected            -> MaterialTheme.colorScheme.secondaryContainer
+            isToday               -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+            else                  -> MaterialTheme.colorScheme.surface
         },
         label = "dayBg"
     )
     val textColor = when {
         !day.isCurrentMonth -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f)
-        isSelected -> MaterialTheme.colorScheme.secondary
-        isToday -> MaterialTheme.colorScheme.primary
-        else -> MaterialTheme.colorScheme.onSurface
+        isSelected && isToday -> MaterialTheme.colorScheme.primary
+        isSelected          -> MaterialTheme.colorScheme.secondary
+        isToday             -> MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+        else                -> MaterialTheme.colorScheme.onSurface
     }
 
     Box(
@@ -950,7 +790,7 @@ private fun CalendarDay(
             Text(
                 text = if (day.isCurrentMonth) "${day.dayOfMonth}" else "",
                 style = MaterialTheme.typography.bodySmall,
-                fontWeight = if (isToday || isSelected) FontWeight.Bold else FontWeight.Normal,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                 color = textColor
             )
             if (day.isCurrentMonth && hasEntries) {
@@ -980,20 +820,17 @@ private fun CalendarDay(
     }
 }
 
+// ── Grid builder ─────────────────────────────────────────────────────────────
+
 private fun buildCalendarDays(displayMonth: Calendar): List<CalDay> {
     val cal = displayMonth.clone() as Calendar
     cal.set(Calendar.DAY_OF_MONTH, 1)
 
     val firstDayOfWeek = cal.get(Calendar.DAY_OF_WEEK)
     val offset = when (firstDayOfWeek) {
-        Calendar.MONDAY -> 0
-        Calendar.TUESDAY -> 1
-        Calendar.WEDNESDAY -> 2
-        Calendar.THURSDAY -> 3
-        Calendar.FRIDAY -> 4
-        Calendar.SATURDAY -> 5
-        Calendar.SUNDAY -> 6
-        else -> 0
+        Calendar.MONDAY -> 0; Calendar.TUESDAY -> 1; Calendar.WEDNESDAY -> 2
+        Calendar.THURSDAY -> 3; Calendar.FRIDAY -> 4; Calendar.SATURDAY -> 5
+        Calendar.SUNDAY -> 6; else -> 0
     }
 
     val daysInMonth = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
@@ -1007,48 +844,3 @@ private fun buildCalendarDays(displayMonth: Calendar): List<CalDay> {
         )
     }
 }
-
-private fun preferredHour(previousDueDate: Long?): Int =
-    previousDueDate?.let {
-        Calendar.getInstance().apply { timeInMillis = it }.get(Calendar.HOUR_OF_DAY)
-    } ?: 9
-
-private fun preferredMinute(previousDueDate: Long?): Int =
-    previousDueDate?.let {
-        Calendar.getInstance().apply { timeInMillis = it }.get(Calendar.MINUTE)
-    } ?: 0
-
-private fun resolveTomorrow(previousDueDate: Long?): Long =
-    Calendar.getInstance().apply {
-        add(Calendar.DAY_OF_YEAR, 1)
-        set(Calendar.HOUR_OF_DAY, preferredHour(previousDueDate))
-        set(Calendar.MINUTE, preferredMinute(previousDueDate))
-        set(Calendar.SECOND, 0)
-        set(Calendar.MILLISECOND, 0)
-    }.timeInMillis
-
-private fun resolveNextWeek(previousDueDate: Long?): Long =
-    Calendar.getInstance().apply {
-        add(Calendar.WEEK_OF_YEAR, 1)
-        set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
-        set(Calendar.HOUR_OF_DAY, preferredHour(previousDueDate))
-        set(Calendar.MINUTE, preferredMinute(previousDueDate))
-        set(Calendar.SECOND, 0)
-        set(Calendar.MILLISECOND, 0)
-    }.timeInMillis
-
-private fun resolveCustomDate(
-    year: Int,
-    month: Int,
-    dayOfMonth: Int,
-    previousDueDate: Long?
-): Long =
-    Calendar.getInstance().apply {
-        set(Calendar.YEAR, year)
-        set(Calendar.MONTH, month)
-        set(Calendar.DAY_OF_MONTH, dayOfMonth)
-        set(Calendar.HOUR_OF_DAY, preferredHour(previousDueDate))
-        set(Calendar.MINUTE, preferredMinute(previousDueDate))
-        set(Calendar.SECOND, 0)
-        set(Calendar.MILLISECOND, 0)
-    }.timeInMillis

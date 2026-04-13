@@ -41,6 +41,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -148,6 +149,7 @@ fun HomeScreen(
     onSettingsClick: () -> Unit,
     onSearchClick: () -> Unit,
     onCalendarClick: () -> Unit = {},
+    onChatClick: () -> Unit = {},
     onRecordingClick: (Long) -> Unit = {},
     onPlaceClick: (Long) -> Unit = {},
     onRecordingsListClick: () -> Unit = {}
@@ -190,6 +192,7 @@ fun HomeScreen(
     val calendarColorIndex by settings.timelineColorCalendar.collectAsState(
         initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_CALENDAR
     )
+    val showOldEntriesExpanded by settings.showOldEntriesExpanded.collectAsState(initial = false)
     val timelineAccentConfig = remember(
         pendingColorIndex,
         completedColorIndex,
@@ -245,7 +248,7 @@ fun HomeScreen(
 
     var duplicatesExpanded by remember { mutableStateOf(true) }
     var overdueExpanded by remember { mutableStateOf(true) }
-    var olderExpanded by remember { mutableStateOf(false) }
+    var olderExpanded by remember(showOldEntriesExpanded) { mutableStateOf(showOldEntriesExpanded) }
     var todayExpanded by remember { mutableStateOf(true) }
     var completedExpanded by remember { mutableStateOf(false) }
     var quickActionsVisible by remember { mutableStateOf(false) }
@@ -545,6 +548,9 @@ fun HomeScreen(
                         // Add note
                         IconButton(onClick = { showAddDialog = true }) {
                             Icon(Icons.Default.Add, contentDescription = "Añadir nota")
+                        }
+                        IconButton(onClick = onChatClick) {
+                            Icon(Icons.Default.Chat, contentDescription = "Asistente")
                         }
                         IconButton(onClick = onSearchClick) {
                             Icon(Icons.Default.Search, contentDescription = "Buscar")

@@ -92,14 +92,10 @@ fun EntryCard(
     val isCompleted = entry.status == EntryStatus.COMPLETED
     val primaryText = entry.displayText.ifBlank { entry.text }
 
-    // Fix: compare against start of today, not current time.
-    // Without this, a task due "today at midnight" shows as "Vencida" all day.
-    val startOfToday = remember {
-        Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-        }.timeInMillis
-    }
+    val startOfToday = Calendar.getInstance().apply {
+        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
 
     val cardColor by animateColorAsState(
         targetValue = when {

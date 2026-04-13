@@ -401,6 +401,8 @@ internal fun LazyListScope.timelineListContent(
                 }
                 val body = buildString {
                     if (!calendarEvent.allDay) {
+                        append(hourFormat.format(Date(calendarEvent.startMillis)))
+                        append(" – ")
                         append(hourFormat.format(Date(calendarEvent.endMillis)))
                     }
                     calendarEvent.location

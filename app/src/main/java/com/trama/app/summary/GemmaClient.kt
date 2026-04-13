@@ -100,7 +100,7 @@ object GemmaClient {
         val config = com.google.ai.edge.litertlm.EngineConfig(
             modelPath = modelPath,
             backend = com.google.ai.edge.litertlm.Backend.CPU(),
-            maxNumTokens = 4096,
+            maxNumTokens = 32768, // Gemma 4 E4B supports 128K; 32K is practical for on-device RAM
             cacheDir = context.cacheDir.absolutePath
         )
         val engine = com.google.ai.edge.litertlm.Engine(config)
@@ -115,14 +115,17 @@ object GemmaClient {
     /**
      * Generate text with the local model. Returns null if model not downloaded or fails.
      *
-     * @param responsePrefix Optional prefix to force the model's output format (e.g. "{" for JSON).
-     *                       The prefix is prepended to the returned response.
+     * @param responsePrefix    Optional prefix to force the model's output format (e.g. "{" for JSON).
+     *                          The prefix is prepended to the returned response.
+     * @param systemInstruction Optional system instruction injected before the user turn.
+     *                          When null, a generic instruction is used.
      */
     suspend fun generate(
         context: Context,
         prompt: String,
         maxTokens: Int = 1024,
-        responsePrefix: String? = null
+        responsePrefix: String? = null,
+        systemInstruction: String? = null
     ): String? {
         if (!isModelDownloaded(context)) return null
 
@@ -133,9 +136,9 @@ object GemmaClient {
                         ensureLoaded(context)
 
                         if (litertEngine != null) {
-                            generateLiteRtLm(prompt, responsePrefix)
+                            generateLiteRtLm(prompt, responsePrefix, systemInstruction)
                         } else {
-                            generateMediaPipe(prompt, responsePrefix)
+                            generateMediaPipe(prompt, responsePrefix, systemInstruction)
                         }
                     }
 
@@ -150,13 +153,17 @@ object GemmaClient {
         }
     }
 
-    private fun generateMediaPipe(prompt: String, responsePrefix: String?): String? {
+    private fun generateMediaPipe(
+        prompt: String,
+        responsePrefix: String?,
+        systemInstruction: String?
+    ): String? {
         val sessionOptions = LlmInferenceSession.LlmInferenceSessionOptions.builder()
             .setTemperature(0.3f)
             .setTopK(20)
             .build()
         val session = LlmInferenceSession.createFromOptions(mediaPipeInference!!, sessionOptions)
-        val formattedPrompt = formatMediaPipePrompt(prompt, responsePrefix)
+        val formattedPrompt = formatMediaPipePrompt(prompt, responsePrefix, systemInstruction)
         session.addQueryChunk(formattedPrompt)
         val response = session.generateResponse()
         session.close()
@@ -168,7 +175,11 @@ object GemmaClient {
         }
     }
 
-    private fun generateLiteRtLm(prompt: String, responsePrefix: String?): String? {
+    private fun generateLiteRtLm(
+        prompt: String,
+        responsePrefix: String?,
+        systemInstruction: String?
+    ): String? {
         val engine = litertEngine!!
         val samplerConfig = com.google.ai.edge.litertlm.SamplerConfig(
             topK = 10,
@@ -177,8 +188,8 @@ object GemmaClient {
             seed = 0
         )
 
-        // System instruction: always set for better output quality
-        val systemText = if (responsePrefix != null) {
+        // Prefer caller-supplied instruction; fall back to sensible defaults
+        val systemText = systemInstruction ?: if (responsePrefix != null) {
             "Eres un asistente que SIEMPRE responde con JSON valido. " +
             "Sin markdown, sin explicaciones, sin bloques de codigo. Solo JSON puro."
         } else {
@@ -199,9 +210,17 @@ object GemmaClient {
         return message.toString()
     }
 
-    private fun formatMediaPipePrompt(prompt: String, responsePrefix: String?): String {
+    private fun formatMediaPipePrompt(
+        prompt: String,
+        responsePrefix: String?,
+        systemInstruction: String?
+    ): String {
         val prefix = responsePrefix ?: ""
-        return "<start_of_turn>user\n$prompt<end_of_turn>\n<start_of_turn>model\n$prefix"
+        // Gemma 4 supports a dedicated system turn — use it when a system instruction is provided
+        val systemTurn = if (!systemInstruction.isNullOrBlank()) {
+            "<start_of_turn>system\n$systemInstruction<end_of_turn>\n"
+        } else ""
+        return "${systemTurn}<start_of_turn>user\n$prompt<end_of_turn>\n<start_of_turn>model\n$prefix"
     }
 
     // ── Lifecycle ──

@@ -40,6 +40,12 @@ class DiaryRepository(
     fun byDateRange(startTime: Long, endTime: Long): Flow<List<DiaryEntry>> =
         dao.byDateRange(startTime, endTime).distinctUntilChanged()
 
+    fun getCompletedByCompletedAt(startTime: Long, endTime: Long): Flow<List<DiaryEntry>> =
+        dao.getCompletedByCompletedAt(startTime, endTime).distinctUntilChanged()
+
+    fun getPendingAsOf(dayEnd: Long): Flow<List<DiaryEntry>> =
+        dao.getPendingAsOf(dayEnd).distinctUntilChanged()
+
     suspend fun getUnsynced(): List<DiaryEntry> = dao.getUnsynced()
 
     suspend fun getAllOnce(): List<DiaryEntry> = dao.getAllOnce()
@@ -292,4 +298,13 @@ class DiaryRepository(
 
     suspend fun markDailyPageReviewed(dayStartMillis: Long, reviewedAt: Long = System.currentTimeMillis()) =
         dailyPageDao?.markReviewed(dayStartMillis, reviewedAt)
+
+    suspend fun getAllDailyPagesOnce(): List<DailyPage> =
+        dailyPageDao?.getAllOnce() ?: emptyList()
+
+    suspend fun getCompletedSince(since: Long): List<DiaryEntry> =
+        dao.getCompletedSince(since)
+
+    suspend fun getPendingOnce(): List<DiaryEntry> =
+        dao.getPendingOnce()
 }

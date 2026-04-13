@@ -29,4 +29,8 @@ interface DailyPageDao {
         """
     )
     suspend fun markReviewed(dayStartMillis: Long, reviewedAt: Long, updatedAt: Long = reviewedAt)
+
+    /** All pages sorted newest first (for assistant context building) */
+    @Query("SELECT * FROM daily_pages ORDER BY dayStartMillis DESC")
+    suspend fun getAllOnce(): List<DailyPage>
 }

@@ -7,7 +7,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.trama.app.ui.screens.CalendarScreen
-import com.trama.app.ui.screens.DayTimelineScreen
+import com.trama.app.ui.screens.ChatScreen
 import com.trama.app.ui.screens.EntryDetailScreen
 import com.trama.app.ui.screens.HomeScreen
 import com.trama.app.ui.screens.PlaceDetailScreen
@@ -24,7 +24,7 @@ object Routes {
     const val SETTINGS_SECTION = "settings/{section}"
     const val SEARCH = "search"
     const val CALENDAR = "calendar?selectedDayStart={selectedDayStart}"
-    const val DAY_TIMELINE = "timeline/{dayStartMillis}"
+    const val CHAT = "chat"
     const val RECORDINGS_LIST = "recordings"
     const val RECORDING_DETAIL = "recording/{recordingId}"
     const val PLACE_DETAIL = "place/{placeId}"
@@ -33,7 +33,6 @@ object Routes {
     fun settings(section: SettingsSection) =
         if (section == SettingsSection.ROOT) SETTINGS else "settings/${section.route}"
     fun recordingDetail(recordingId: Long) = "recording/$recordingId"
-    fun dayTimeline(dayStartMillis: Long) = "timeline/$dayStartMillis"
     fun placeDetail(placeId: Long) = "place/$placeId"
     fun calendar(selectedDayStart: Long? = null) =
         if (selectedDayStart == null) "calendar"
@@ -51,6 +50,7 @@ fun NavGraph() {
                 onSettingsClick = { navController.navigate(Routes.SETTINGS) },
                 onSearchClick = { navController.navigate(Routes.SEARCH) },
                 onCalendarClick = { navController.navigate(Routes.calendar()) },
+                onChatClick = { navController.navigate(Routes.CHAT) },
                 onRecordingClick = { recordingId ->
                     navController.navigate(Routes.recordingDetail(recordingId))
                 },
@@ -59,6 +59,10 @@ fun NavGraph() {
                     navController.navigate(Routes.RECORDINGS_LIST)
                 }
             )
+        }
+
+        composable(Routes.CHAT) {
+            ChatScreen(onBack = { navController.popBackStack() })
         }
 
         composable(
@@ -120,22 +124,9 @@ fun NavGraph() {
             val selectedDayStart = backStackEntry.arguments?.getLong("selectedDayStart") ?: -1L
             CalendarScreen(
                 initialSelectedDayStart = selectedDayStart.takeIf { it >= 0L },
-                onDayClick = { dayStartMillis -> navController.navigate(Routes.dayTimeline(dayStartMillis)) },
-                onEntryClick = { entryId -> navController.navigate(Routes.detail(entryId)) },
-                onBack = { navController.popBackStack() }
-            )
-        }
-
-        composable(
-            route = Routes.DAY_TIMELINE,
-            arguments = listOf(navArgument("dayStartMillis") { type = NavType.LongType })
-        ) { backStackEntry ->
-            val dayStartMillis = backStackEntry.arguments?.getLong("dayStartMillis") ?: return@composable
-            DayTimelineScreen(
-                dayStartMillis = dayStartMillis,
-                onBack = { navController.popBackStack() },
                 onEntryClick = { entryId -> navController.navigate(Routes.detail(entryId)) },
                 onRecordingClick = { recordingId -> navController.navigate(Routes.recordingDetail(recordingId)) },
+                onBack = { navController.popBackStack() },
                 onPlaceClick = { placeId -> navController.navigate(Routes.placeDetail(placeId)) }
             )
         }

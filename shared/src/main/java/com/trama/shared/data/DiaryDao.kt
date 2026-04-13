@@ -54,6 +54,14 @@ interface DiaryDao {
     @Query("SELECT * FROM diary_entries WHERE createdAt BETWEEN :startTime AND :endTime ORDER BY createdAt DESC")
     fun byDateRange(startTime: Long, endTime: Long): Flow<List<DiaryEntry>>
 
+    /** Entries completed within a time range (by completedAt), regardless of creation date */
+    @Query("SELECT * FROM diary_entries WHERE status = 'COMPLETED' AND completedAt BETWEEN :startTime AND :endTime ORDER BY completedAt DESC")
+    fun getCompletedByCompletedAt(startTime: Long, endTime: Long): Flow<List<DiaryEntry>>
+
+    /** Tasks that were live/pending as of a given moment: created before that point, not yet completed by then */
+    @Query("SELECT * FROM diary_entries WHERE status != 'DISCARDED' AND createdAt <= :dayEnd AND (completedAt IS NULL OR completedAt > :dayEnd) ORDER BY createdAt DESC")
+    fun getPendingAsOf(dayEnd: Long): Flow<List<DiaryEntry>>
+
     @Query("SELECT * FROM diary_entries WHERE isSynced = 0")
     suspend fun getUnsynced(): List<DiaryEntry>
 
@@ -169,6 +177,18 @@ interface DiaryDao {
     /** Get action items extracted from a specific recording (one-shot, for dedup) */
     @Query("SELECT * FROM diary_entries WHERE sourceRecordingId = :recordingId ORDER BY createdAt ASC")
     suspend fun getByRecordingIdOnce(recordingId: Long): List<DiaryEntry>
+
+    /** Completed entries since a given timestamp, newest first (for assistant context) */
+    @Query("SELECT * FROM diary_entries WHERE status = 'COMPLETED' AND completedAt >= :since ORDER BY completedAt DESC")
+    suspend fun getCompletedSince(since: Long): List<DiaryEntry>
+
+    /** All pending entries, priority-sorted, one-shot (for assistant context) */
+    @Query("""SELECT * FROM diary_entries WHERE status = 'PENDING' AND duplicateOfId IS NULL
+              ORDER BY CASE priority
+                WHEN 'URGENT' THEN 0 WHEN 'HIGH' THEN 1
+                WHEN 'NORMAL' THEN 2 WHEN 'LOW' THEN 3 ELSE 4 END,
+              createdAt DESC""")
+    suspend fun getPendingOnce(): List<DiaryEntry>
 
     /** Delete all action items linked to a recording (for reprocessing) */
     @Query("DELETE FROM diary_entries WHERE sourceRecordingId = :recordingId")

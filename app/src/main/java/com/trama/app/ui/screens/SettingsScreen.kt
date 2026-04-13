@@ -199,6 +199,7 @@ fun SettingsScreen(
         initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_CALENDAR
     )
     val themeMode by settings.themeMode.collectAsState(initial = 0)
+    val showOldEntriesExpanded by settings.showOldEntriesExpanded.collectAsState(initial = false)
     val locationDebugStatus by LocationDebugState.status.collectAsState()
     val locationDebugLastSample by LocationDebugState.lastSample.collectAsState()
     val locationDebugCandidate by LocationDebugState.candidate.collectAsState()
@@ -719,6 +720,29 @@ fun SettingsScreen(
                         Text(label, style = MaterialTheme.typography.labelMedium)
                     }
                 }
+            }
+
+            SectionDivider()
+
+            SectionHeader("Legibilidad")
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Mostrar tareas de otros días", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "La sección 'De otros días' aparece expandida al abrir la app",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = showOldEntriesExpanded,
+                    onCheckedChange = { scope.launch { settings.setShowOldEntriesExpanded(it) } }
+                )
             }
 
             SectionDivider()
