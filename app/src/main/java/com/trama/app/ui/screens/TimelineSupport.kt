@@ -122,7 +122,7 @@ internal fun buildTimelineEvents(
             .filter { it.completedAt != null }
             .forEach { entry -> add(TimelineEventUi.EntryCompleted(entry)) }
         recordings.forEach { add(TimelineEventUi.RecordingCaptured(it)) }
-        calendarEvents.forEach { add(TimelineEventUi.CalendarScheduled(it)) }
+        calendarEvents.distinctBy { "${it.id}_${it.startMillis}" }.forEach { add(TimelineEventUi.CalendarScheduled(it)) }
         storedEvents.forEach { add(TimelineEventUi.StoredEvent(it)) }
     }
 

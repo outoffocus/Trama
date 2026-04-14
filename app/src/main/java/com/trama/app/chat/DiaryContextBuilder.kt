@@ -205,8 +205,8 @@ class DiaryContextBuilder(private val repository: DiaryRepository) {
         private val CONTEXT_TTL_MS = 5L * 60_000L
         /**
          * Max chars for Gemma local model system instruction.
-         * maxNumTokens=32768, leaving ~4K tokens for conversation → 28K tokens × 4 chars ≈ 112K chars.
+         * maxNumTokens=8192 total; reserve ~3K tokens for conversation + response → 5K tokens × 4 chars ≈ 20K chars.
          */
-        const val MAX_LOCAL_CONTEXT_CHARS = 112_000
+        const val MAX_LOCAL_CONTEXT_CHARS = 20_000
     }
 }

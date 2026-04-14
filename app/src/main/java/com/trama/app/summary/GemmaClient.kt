@@ -100,7 +100,7 @@ object GemmaClient {
         val config = com.google.ai.edge.litertlm.EngineConfig(
             modelPath = modelPath,
             backend = com.google.ai.edge.litertlm.Backend.CPU(),
-            maxNumTokens = 32768, // Gemma 4 E4B supports 128K; 32K is practical for on-device RAM
+            maxNumTokens = 8192, // conservative KV-cache cap; 32K triggers native OOM → SIGSEGV on device
             cacheDir = context.cacheDir.absolutePath
         )
         val engine = com.google.ai.edge.litertlm.Engine(config)
