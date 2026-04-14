@@ -248,6 +248,7 @@ fun HomeScreen(
 
     var duplicatesExpanded by remember { mutableStateOf(true) }
     var overdueExpanded by remember { mutableStateOf(true) }
+    var futureExpanded by remember { mutableStateOf(true) }
     var olderExpanded by remember(showOldEntriesExpanded) { mutableStateOf(showOldEntriesExpanded) }
     var todayExpanded by remember { mutableStateOf(true) }
     var completedExpanded by remember { mutableStateOf(false) }
@@ -330,9 +331,16 @@ fun HomeScreen(
         }
     }
     val resolvedCalendarEvents = todayCalendarEvents ?: emptyList()
-    val visiblePendingEntries = pendingEntries.filter { entry ->
+    // Future entries: due date is AFTER today. Captured today OR scheduled for a future day.
+    // These were previously invisible (filtered out entirely), causing confusion when the AI
+    // extracted a future due date from a voice note captured moments ago.
+    val futureEntries = pendingEntries.filter { entry ->
         val due = entry.dueDate
-        due == null || due <= endOfDay
+        due != null && due > endOfDay
+    }
+    val futureIds = futureEntries.map { it.id }.toSet()
+    val visiblePendingEntries = pendingEntries.filter { entry ->
+        entry.id !in futureIds
     }
     // Group pending — overdue means due date is from a PREVIOUS day, not today
     val overdueEntries = visiblePendingEntries.filter { entry ->
@@ -750,6 +758,42 @@ fun HomeScreen(
                                     originalText = originalEntry?.displayText,
                                     onKeep = { scope.launch { repository.clearDuplicate(entry.id) } },
                                     onDelete = { scope.launch { repository.deleteById(entry.id); syncDeleted(entry) } },
+                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    if (futureEntries.isNotEmpty()) {
+                        item(key = "header_future") {
+                            SectionHeader(
+                                "Próximas",
+                                futureEntries.size,
+                                MaterialTheme.colorScheme.secondary,
+                                expanded = futureExpanded,
+                                onToggle = { futureExpanded = !futureExpanded },
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            )
+                        }
+                        if (futureExpanded) {
+                            items(futureEntries, key = { "future_${it.id}" }) { entry ->
+                                EntryCardItem(
+                                    entry = entry,
+                                    accentColor = timelineAccentConfig.pending,
+                                    selectionMode = selectionMode,
+                                    selectedIds = selectedIds,
+                                    onEntryClick = onEntryClick,
+                                    isProcessing = entry.id in processingEntryIds,
+                                    onToggleComplete = { markEntryDoneWithUndo(entry) },
+                                    onPostpone = { dueDate, label -> postponeEntryWithUndo(entry, dueDate, label) },
+                                    onSelectionChange = { id, sel ->
+                                        selectedIds = if (sel) selectedIds + id else selectedIds - id
+                                        if (selectedIds.isEmpty()) selectionMode = false
+                                    },
+                                    onEnterSelectionMode = {
+                                        selectionMode = true
+                                        selectedIds = setOf(entry.id)
+                                    },
                                     modifier = Modifier.padding(horizontal = 16.dp)
                                 )
                             }

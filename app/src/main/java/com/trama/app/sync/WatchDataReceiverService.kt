@@ -28,6 +28,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlin.math.sqrt
 import kotlinx.coroutines.tasks.await
 import kotlinx.serialization.json.Json
 
@@ -44,11 +45,22 @@ class WatchDataReceiverService : WearableListenerService() {
         private const val AUDIO_RECORDING_PATH_PREFIX = "/trama/audio-recording"
         private const val MIC_PATH = "/trama/mic"
         private const val SYNC_REQUEST_PATH = "/trama/request-full-sync"
-    private const val WATCH_DEBUG_PATH = MicCoordinator.WATCH_DEBUG_PATH
+        private const val WATCH_DEBUG_PATH = MicCoordinator.WATCH_DEBUG_PATH
         private const val CMD_PAUSE = MicCoordinator.CMD_PAUSE
         private const val CMD_RESUME = MicCoordinator.CMD_RESUME
         private const val CMD_START_KEYWORD = MicCoordinator.CMD_START_KEYWORD
         private const val CMD_START_RECORDING = MicCoordinator.CMD_START_RECORDING
+
+        /** Minimum RMS energy to consider audio non-silent. PCM16 range ±32768.
+         *  Quiet speech ≈ 500–3000 RMS. Silent/muted mic ≈ 0–50 RMS. */
+        private const val MIN_AUDIO_RMS = 80.0
+
+        /** Whisper tokens generated for silence/music — not real speech content. */
+        private val WHISPER_NOISE_TOKENS_RE = Regex(
+            """\[(música|musica|silencio|inaudible|ruido|audio vacío|blank_audio|music|noise|silence)\]""" +
+            """|\(Música\)|\(música\)""",
+            RegexOption.IGNORE_CASE
+        )
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -200,8 +212,19 @@ class WatchDataReceiverService : WearableListenerService() {
                     return@launch
                 }
 
+                // Detect silent recordings: Whisper outputs [música]/[silencio] for silence,
+                // which then fools the LLM into thinking the recording has content.
+                val rms = sqrt(pcm.sumOf { it.toLong() * it.toLong() }.toDouble() / pcm.size)
+                val durationSec = pcm.size.toFloat() / metadata.sampleRateHz
+                Log.d(TAG, "Watch audio: ${pcm.size} samples (${durationSec}s), RMS=${"%.1f".format(rms)}")
+
+                if (rms < MIN_AUDIO_RMS) {
+                    Log.w(TAG, "Watch audio too quiet (RMS=${"%.1f".format(rms)} < $MIN_AUDIO_RMS), skipping — mic may not be capturing speech")
+                    return@launch
+                }
+
                 val whisper = SherpaWhisperAsrEngine(applicationContext)
-                val transcript = if (whisper.isAvailable) {
+                val rawTranscript = if (whisper.isAvailable) {
                     whisper.transcribe(
                         CapturedAudioWindow(
                             preRollPcm = shortArrayOf(),
@@ -212,6 +235,12 @@ class WatchDataReceiverService : WearableListenerService() {
                     )?.text?.trim().orEmpty()
                 } else {
                     ""
+                }
+
+                // Strip Whisper noise/hallucination tokens (generated for silence or music)
+                val transcript = WHISPER_NOISE_TOKENS_RE.replace(rawTranscript, "").trim()
+                if (rawTranscript.isNotBlank() && transcript.isBlank()) {
+                    Log.w(TAG, "Watch audio transcript was only noise tokens: '$rawTranscript' — treating as empty")
                 }
 
                 val effectiveTranscript = transcript.ifBlank { metadata.triggerText.orEmpty() }
