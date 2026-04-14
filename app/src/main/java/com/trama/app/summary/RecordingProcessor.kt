@@ -300,7 +300,7 @@ class RecordingProcessor(private val context: Context) {
                     wasReviewedByLLM = true,
                     llmConfidence = confidence,
                     sourceRecordingId = recordingId,
-                    status = EntryStatus.SUGGESTED
+                    status = EntryStatus.PENDING
                 )
             )
         }
