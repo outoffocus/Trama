@@ -100,7 +100,7 @@ object GemmaClient {
         val config = com.google.ai.edge.litertlm.EngineConfig(
             modelPath = modelPath,
             backend = com.google.ai.edge.litertlm.Backend.CPU(),
-            maxNumTokens = 8192, // conservative KV-cache cap; 32K triggers native OOM → SIGSEGV on device
+            maxNumTokens = 4096, // keep very conservative; large values trigger SIGSEGV even at 8192
             cacheDir = context.cacheDir.absolutePath
         )
         val engine = com.google.ai.edge.litertlm.Engine(config)
@@ -188,21 +188,31 @@ object GemmaClient {
             seed = 0
         )
 
-        // Prefer caller-supplied instruction; fall back to sensible defaults
-        val systemText = systemInstruction ?: if (responsePrefix != null) {
-            "Eres un asistente que SIEMPRE responde con JSON valido. " +
-            "Sin markdown, sin explicaciones, sin bloques de codigo. Solo JSON puro."
+        // IMPORTANT: ConversationConfig.systemInstruction MUST stay short.
+        // Passing a large blob (e.g. diary context) here causes a null-deref SIGSEGV
+        // inside nativeSendMessage (LiteRT-LM bug: engine enters bad state after
+        // an oversized system instruction). Keep it to a single terse sentence.
+        val shortSystemText = if (responsePrefix != null) {
+            "Responde solo con JSON válido. Sin markdown ni explicaciones."
         } else {
-            "Eres un asistente personal conciso y util. Responde en español."
+            "Eres un asistente personal conciso. Responde siempre en español."
         }
 
         val conversationConfig = com.google.ai.edge.litertlm.ConversationConfig(
-            systemInstruction = com.google.ai.edge.litertlm.Contents.of(systemText),
+            systemInstruction = com.google.ai.edge.litertlm.Contents.of(shortSystemText),
             samplerConfig = samplerConfig
         )
         val conversation = engine.createConversation(conversationConfig)
 
-        val message = conversation.sendMessage(prompt)
+        // If a large systemInstruction was provided (e.g. diary context), embed it at the
+        // top of the user message instead — this avoids the SIGSEGV while keeping the context.
+        val fullPrompt = if (!systemInstruction.isNullOrBlank()) {
+            "[CONTEXTO]\n$systemInstruction\n[FIN_CONTEXTO]\n\n$prompt"
+        } else {
+            prompt
+        }
+
+        val message = conversation.sendMessage(fullPrompt)
         conversation.close()
 
         // Don't prepend responsePrefix — LiteRT-LM manages the conversation

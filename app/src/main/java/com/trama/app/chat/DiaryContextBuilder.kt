@@ -204,9 +204,10 @@ class DiaryContextBuilder(private val repository: DiaryRepository) {
         /** Context cache TTL — re-query DB after 5 minutes. */
         private val CONTEXT_TTL_MS = 5L * 60_000L
         /**
-         * Max chars for Gemma local model system instruction.
-         * maxNumTokens=8192 total; reserve ~3K tokens for conversation + response → 5K tokens × 4 chars ≈ 20K chars.
+         * Max chars sent to local model (embedded in user message, not ConversationConfig).
+         * maxNumTokens=4096 total; context(~1500 tok) + history(~300) + response(1024) = ~2824 < 4096.
+         * 1500 tokens × 4 chars/token ≈ 6000 chars.
          */
-        const val MAX_LOCAL_CONTEXT_CHARS = 20_000
+        const val MAX_LOCAL_CONTEXT_CHARS = 6_000
     }
 }
