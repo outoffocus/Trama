@@ -61,6 +61,14 @@ class WatchDataReceiverService : WearableListenerService() {
             """|\(Música\)|\(música\)""",
             RegexOption.IGNORE_CASE
         )
+
+        /**
+         * Whisper's encoder operates on a fixed 30-second mel spectrogram window.
+         * We use 29 seconds per chunk to stay safely under the limit and avoid
+         * truncation artifacts at the boundary. For audio shorter than this,
+         * a single pass is used.
+         */
+        private const val WHISPER_CHUNK_SECONDS = 29
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -225,14 +233,7 @@ class WatchDataReceiverService : WearableListenerService() {
 
                 val whisper = SherpaWhisperAsrEngine(applicationContext)
                 val rawTranscript = if (whisper.isAvailable) {
-                    whisper.transcribe(
-                        CapturedAudioWindow(
-                            preRollPcm = shortArrayOf(),
-                            livePcm = pcm,
-                            sampleRateHz = metadata.sampleRateHz
-                        ),
-                        languageTag = "es"
-                    )?.text?.trim().orEmpty()
+                    transcribeWithChunking(whisper, pcm, metadata.sampleRateHz)
                 } else {
                     ""
                 }
@@ -270,6 +271,61 @@ class WatchDataReceiverService : WearableListenerService() {
                 Log.e(TAG, "Failed to process watch audio payload", e)
             }
         }
+    }
+
+    /**
+     * Transcribe PCM audio with Whisper, splitting into chunks when the audio is
+     * longer than Whisper's 30-second mel spectrogram window.
+     *
+     * Whisper silently truncates audio beyond 30 seconds — it only encodes the first
+     * 480,000 samples (30s × 16kHz). For longer recordings we split into WHISPER_CHUNK_SECONDS
+     * windows and concatenate the results.
+     */
+    private suspend fun transcribeWithChunking(
+        whisper: SherpaWhisperAsrEngine,
+        pcm: ShortArray,
+        sampleRateHz: Int
+    ): String {
+        val chunkSamples = sampleRateHz * WHISPER_CHUNK_SECONDS
+
+        if (pcm.size <= chunkSamples) {
+            // Short enough for a single pass — no chunking needed
+            return whisper.transcribe(
+                CapturedAudioWindow(
+                    preRollPcm = shortArrayOf(),
+                    livePcm = pcm,
+                    sampleRateHz = sampleRateHz
+                ),
+                languageTag = "es"
+            )?.text?.trim().orEmpty()
+        }
+
+        // Audio longer than 29s: split into chunks and concatenate
+        val numChunks = (pcm.size + chunkSamples - 1) / chunkSamples
+        Log.d(TAG, "Watch audio ${pcm.size} samples → $numChunks Whisper chunks of ${WHISPER_CHUNK_SECONDS}s")
+
+        val parts = mutableListOf<String>()
+        var offset = 0
+        var chunkIdx = 1
+        while (offset < pcm.size) {
+            val end = minOf(offset + chunkSamples, pcm.size)
+            val chunk = pcm.copyOfRange(offset, end)
+            val text = whisper.transcribe(
+                CapturedAudioWindow(
+                    preRollPcm = shortArrayOf(),
+                    livePcm = chunk,
+                    sampleRateHz = sampleRateHz
+                ),
+                languageTag = "es"
+            )?.text?.trim().orEmpty()
+
+            Log.d(TAG, "  chunk $chunkIdx/$numChunks (${chunk.size} samples): '${text.take(60)}'")
+            if (text.isNotBlank()) parts.add(text)
+            offset += chunkSamples
+            chunkIdx++
+        }
+
+        return parts.joinToString(" ")
     }
 
     private fun bytesToShortArray(bytes: ByteArray): ShortArray {

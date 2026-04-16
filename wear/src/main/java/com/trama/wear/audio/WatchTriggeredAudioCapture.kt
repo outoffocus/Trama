@@ -12,9 +12,9 @@ class WatchTriggeredAudioCapture {
     companion object {
         private const val SAMPLE_RATE_HZ = 16_000
         private const val READ_SIZE = 1024
-        private const val MAX_DURATION_MS = 8_000L
+        private const val MAX_DURATION_MS = 45_000L  // 45s — enough for a long verbal note
         private const val MIN_DURATION_MS = 1_200L
-        private const val SILENCE_STOP_MS = 2_500L
+        private const val SILENCE_STOP_MS = 3_000L   // 3s pause → stop (natural speech rhythm)
         private const val SILENCE_RMS_THRESHOLD = 700.0
         // Minimum RMS for the full capture to be considered real audio.
         // Captures below this are likely mic-contention artifacts (all-zero PCM).

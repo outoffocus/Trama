@@ -164,7 +164,13 @@ class WatchKeywordListenerService : LifecycleService() {
             MicCoordinator.sendPause(applicationContext)
         }
 
-        return START_STICKY
+        // START_NOT_STICKY: do NOT let the OS auto-restart us.
+        // If the watch is under heavy CPU load and the OS kills us, an immediate
+        // auto-restart (START_STICKY) causes a ForegroundServiceDidNotStartInTimeException
+        // death spiral: the OS queues startForegroundService() but can't schedule
+        // onCreate() within the 5-second window, crashes us again, and repeats.
+        // Instead we schedule our own restart in onDestroy() with a meaningful backoff.
+        return START_NOT_STICKY
     }
 
     private fun registerSettingsReceiver() {
@@ -201,6 +207,20 @@ class WatchKeywordListenerService : LifecycleService() {
         // Note: MicCoordinator.sendResume is handled by WatchServiceController.stopByUser()
         // not here, because onDestroy also fires when phone pauses us (and we shouldn't
         // send RESUME back in that case).
+
+        // Self-restart with backoff when we die unexpectedly.
+        // Because we use START_NOT_STICKY the OS won't restart us automatically,
+        // so we schedule our own restart — but only if the user still wants the
+        // service running and the phone hasn't taken over the mic.
+        // The 5-second delay gives the system a moment to recover from load spikes
+        // before we try to open AudioRecord again.
+        if (WatchServiceController.isUserEnabled(applicationContext) &&
+            !WatchServiceController.isPhoneActive(applicationContext) &&
+            !isBatteryLow()) {
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                WatchServiceController.resumeIfAllowed(applicationContext)
+            }, RESTART_MAX_BACKOFF_MS)
+        }
 
         WatchServiceController.notifyStopped()
         super.onDestroy()
