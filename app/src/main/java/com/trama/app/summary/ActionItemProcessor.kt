@@ -33,20 +33,21 @@ class ActionItemProcessor(private val context: Context) {
         val normalizedInput = existingEntry?.correctedText?.takeIf { it.isNotBlank() } ?: text
         val processingText = normalizedInput.ifBlank { originalText }
 
-        val result = tryProcess(
+        val outcome = tryProcess(
             originalText = originalText,
             normalizedInput = processingText
         )
+        val result = outcome?.primary
         // Only run the heuristic auto-splitter when the LLM was unavailable or
         // returned nothing usable. If the LLM already produced an actionable
         // result, trust it — re-splitting with regex was a source of false
         // positives (e.g. splitting on every verb in a single coherent request).
-        val splitCleanTexts = if (result == null) {
+        val splitCleanTexts = if (outcome == null) {
             maybeAutoSplitEntry(entryId, processingText, null, repository)
         } else {
             emptyList()
         }
-        val heuristicFallback = if (result == null && splitCleanTexts.isEmpty()) {
+        val heuristicFallback = if (outcome == null && splitCleanTexts.isEmpty()) {
             buildHeuristicFallback(originalText, processingText)
         } else {
             null
@@ -66,6 +67,8 @@ class ActionItemProcessor(private val context: Context) {
                     confidence = result.confidence
                 )
                 Log.i(TAG, "Processed entry $entryId: '${result.cleanText}' [${result.actionType}]")
+                // Persist any extra actions the LLM extracted from the same note.
+                persistLLMExtras(entryId, outcome.extras, repository)
             } else {
                 repository.updateAIProcessing(
                     id = entryId,
@@ -174,7 +177,7 @@ class ActionItemProcessor(private val context: Context) {
     private suspend fun tryProcess(
         originalText: String,
         normalizedInput: String
-    ): ProcessingResult? {
+    ): LLMOutcome? {
         // Try Cloud
         val apiKey = getApiKey()
         if (!apiKey.isNullOrBlank()) {
@@ -228,7 +231,7 @@ class ActionItemProcessor(private val context: Context) {
         originalText: String,
         normalizedInput: String,
         apiKey: String
-    ): ProcessingResult {
+    ): LLMOutcome {
         val prompt = buildPrompt(originalText, normalizedInput)
 
         val model = GenerativeModel(
@@ -251,7 +254,7 @@ class ActionItemProcessor(private val context: Context) {
     private suspend fun processWithLocalModel(
         originalText: String,
         normalizedInput: String
-    ): ProcessingResult? {
+    ): LLMOutcome? {
         // Use the same structured prompt as Cloud
         val prompt = buildPrompt(originalText, normalizedInput)
         val responseText = GemmaClient.generate(context, prompt, maxTokens = 256, responsePrefix = "{") ?: return null
@@ -267,13 +270,16 @@ class ActionItemProcessor(private val context: Context) {
             val validatedCleanText = cleanText.takeIf { it.isNotBlank() } ?: return null
             val truncated = validatedCleanText.take(200)
             val passesGate = isActionableAfterValidation(truncated, modelIsActionable = true)
-            ProcessingResult(
-                cleanText = truncated,
-                actionType = inferActionType(normalizedInput),
-                dueDate = null,
-                priority = "NORMAL",
-                confidence = if (passesGate) 0.7f else 0.25f,
-                isActionable = passesGate
+            LLMOutcome(
+                primary = ProcessingResult(
+                    cleanText = truncated,
+                    actionType = inferActionType(normalizedInput),
+                    dueDate = null,
+                    priority = "NORMAL",
+                    confidence = if (passesGate) 0.7f else 0.25f,
+                    isActionable = passesGate
+                ),
+                extras = emptyList()
             )
         }
     }
@@ -310,24 +316,50 @@ class ActionItemProcessor(private val context: Context) {
     }
 
 
-    private fun parseResult(responseText: String, confidenceMultiplier: Float): ProcessingResult {
+    private fun parseResult(responseText: String, confidenceMultiplier: Float): LLMOutcome {
         val parsed = json.decodeFromString<LLMResponse>(JsonRepair.extractAndRepair(responseText))
         require(parsed.cleanText.isNotBlank()) { "LLM returned blank cleanText" }
-        val cleanText = parsed.cleanText.trim()
-        val baseConfidence = parsed.confidence * confidenceMultiplier
-        val passesGate = isActionableAfterValidation(cleanText, parsed.isActionable)
-        // If the deterministic validator disagrees with the model, collapse confidence
-        // so the caller can treat the entry as non-actionable.
-        val effectiveConfidence = if (!passesGate) {
-            minOf(baseConfidence, 0.29f)
-        } else {
-            baseConfidence
-        }
+
+        val primary = buildProcessingResult(
+            cleanText = parsed.cleanText.trim(),
+            actionType = parsed.actionType,
+            dueDate = parsed.dueDate,
+            priority = parsed.priority,
+            confidence = parsed.confidence * confidenceMultiplier,
+            modelIsActionable = parsed.isActionable
+        )
+        val extras = parsed.extraActions
+            .filter { it.cleanText.isNotBlank() }
+            .map { extra ->
+                buildProcessingResult(
+                    cleanText = extra.cleanText.trim(),
+                    actionType = extra.actionType,
+                    dueDate = extra.dueDate,
+                    priority = extra.priority,
+                    // Extras inherit the primary's confidence — the model only
+                    // signals actionability at the top level.
+                    confidence = parsed.confidence * confidenceMultiplier,
+                    modelIsActionable = true
+                )
+            }
+        return LLMOutcome(primary = primary, extras = extras)
+    }
+
+    private fun buildProcessingResult(
+        cleanText: String,
+        actionType: String,
+        dueDate: String?,
+        priority: String,
+        confidence: Float,
+        modelIsActionable: Boolean
+    ): ProcessingResult {
+        val passesGate = isActionableAfterValidation(cleanText, modelIsActionable)
+        val effectiveConfidence = if (!passesGate) minOf(confidence, 0.29f) else confidence
         return ProcessingResult(
             cleanText = cleanText,
-            actionType = validateActionType(parsed.actionType),
-            dueDate = parseDateString(parsed.dueDate),
-            priority = validatePriority(parsed.priority),
+            actionType = validateActionType(actionType),
+            dueDate = parseDateString(dueDate),
+            priority = validatePriority(priority),
             confidence = effectiveConfidence,
             isActionable = passesGate
         )
@@ -335,6 +367,55 @@ class ActionItemProcessor(private val context: Context) {
 
     private fun shouldAcceptAsTask(result: ProcessingResult): Boolean =
         result.isActionable && result.confidence >= ACTIONABLE_CONFIDENCE_THRESHOLD
+
+    /**
+     * Inserts additional actions the LLM extracted from the same note as sibling
+     * entries, mirroring [maybeAutoSplitEntry]. Each extra passes through the
+     * same deterministic gate as the primary; rejected ones are skipped.
+     */
+    private suspend fun persistLLMExtras(
+        entryId: Long,
+        extras: List<ProcessingResult>,
+        repository: DiaryRepository
+    ) {
+        if (extras.isEmpty()) return
+        val originalEntry = repository.getByIdOnce(entryId) ?: return
+        for (extra in extras) {
+            if (!shouldAcceptAsTask(extra)) {
+                Log.i(
+                    TAG,
+                    "Skipping non-actionable LLM extra for entry $entryId: " +
+                        "'${extra.cleanText}' (confidence=${extra.confidence})"
+                )
+                continue
+            }
+            val siblingId = repository.insert(
+                DiaryEntry(
+                    text = extra.cleanText,
+                    keyword = originalEntry.keyword,
+                    category = originalEntry.category,
+                    confidence = originalEntry.confidence,
+                    createdAt = System.currentTimeMillis(),
+                    source = originalEntry.source,
+                    duration = originalEntry.duration,
+                    correctedText = null,
+                    wasReviewedByLLM = true,
+                    llmConfidence = extra.confidence,
+                    status = EntryStatus.PENDING,
+                    actionType = extra.actionType,
+                    cleanText = extra.cleanText,
+                    dueDate = extra.dueDate,
+                    priority = extra.priority
+                )
+            )
+            Log.i(TAG, "Persisted LLM extra for entry $entryId as $siblingId: '${extra.cleanText}'")
+            try {
+                checkForDuplicates(siblingId, extra.cleanText, repository)
+            } catch (e: Exception) {
+                Log.w(TAG, "Duplicate check failed for LLM extra $siblingId", e)
+            }
+        }
+    }
 
     /**
      * Deterministic post-LLM check: rejects cleanText strings that are clearly not
@@ -355,8 +436,16 @@ class ActionItemProcessor(private val context: Context) {
         // At least one non-temporal, non-stopword token of length ≥ 3
         val meaningful = tokens.filter { it.length >= 3 && it !in TEMPORAL_TOKENS }
         if (meaningful.isEmpty()) return false
+        // Must contain at least one known action verb — a reminder without a verb
+        // ("esa reunión mañana") is almost always a fragment, not a task.
+        if (!hasActionVerb(normalized)) return false
         return true
     }
+
+    private fun hasActionVerb(normalized: String): Boolean =
+        ManualActionSuggestionExtractor.ACTION_VERBS.any { verb ->
+            Regex("(?<![\\p{L}])${Regex.escape(verb)}(?![\\p{L}])").containsMatchIn(normalized)
+        }
 
     // ── Duplicate detection ──
 
@@ -520,6 +609,20 @@ Reglas:
         val dueDate: String? = null,
         val priority: String = "NORMAL",
         val confidence: Float = 0.8f,
-        val isActionable: Boolean = true
+        val isActionable: Boolean = true,
+        val extraActions: List<LLMExtraAction> = emptyList()
+    )
+
+    @Serializable
+    private data class LLMExtraAction(
+        val cleanText: String,
+        val actionType: String = "GENERIC",
+        val dueDate: String? = null,
+        val priority: String = "NORMAL"
+    )
+
+    data class LLMOutcome(
+        val primary: ProcessingResult,
+        val extras: List<ProcessingResult>
     )
 }

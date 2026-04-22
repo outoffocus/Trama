@@ -29,7 +29,8 @@ object ManualActionSuggestionExtractor {
         "sabado" to Calendar.SATURDAY,
         "domingo" to Calendar.SUNDAY
     )
-    private val splitVerbs = listOf(
+    /** Action verbs recognized for splitting/validating action-item candidates. */
+    val ACTION_VERBS: List<String> = listOf(
         "llamar",
         "telefonear",
         "comprar",
@@ -52,7 +53,7 @@ object ManualActionSuggestionExtractor {
         "acordarnos de"
     )
     private val sentenceSplitRegex = Regex("""[.\n]+""")
-    private val splitVerbPattern = splitVerbs
+    private val splitVerbPattern = ACTION_VERBS
         .map { trigger ->
             trigger.trim()
                 .split("\\s+".toRegex())
@@ -126,7 +127,7 @@ object ManualActionSuggestionExtractor {
         val tokens = normalized.split(Regex("\\s+")).filter { it.isNotBlank() }
         if (tokens.size < 2) return false
         // Require at least one action verb plus a meaningful complement word
-        val hasActionVerb = splitVerbs.any { verb ->
+        val hasActionVerb = ACTION_VERBS.any { verb ->
             val root = verb.split(" ").first()
             tokens.any { it.startsWith(root) }
         }
