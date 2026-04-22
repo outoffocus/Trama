@@ -59,9 +59,6 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import java.text.Normalizer
 
 /**
  * Continuous speech listening service using Android SpeechRecognizer.
@@ -101,22 +98,6 @@ class KeywordListenerService : LifecycleService() {
         private const val DEEP_SLEEP_THRESHOLD = 15
         private const val HIBERNATE_THRESHOLD = 30
 
-        // Deduplication: ignore entries within this window of a previous capture
-        private const val DEDUP_WINDOW_MS = 5000L
-        private const val PERSISTED_DEDUP_WINDOW_MS = 15000L
-        private val DEDUP_STOPWORDS = setOf(
-            "recordar",
-            "recorda",
-            "acordarme",
-            "acordarnos",
-            "de",
-            "me",
-            "olvide",
-            "se",
-            "fue",
-            "la",
-            "olla"
-        )
     }
 
     private var recognizer: SpeechRecognizer? = null
@@ -156,22 +137,7 @@ class KeywordListenerService : LifecycleService() {
     @Volatile
     private var batteryLowNoticeShown = false
 
-    // Deduplication: avoid saving same entry from partial + final results.
-    // Guarded by saveMutex during check-then-update.
-    @Volatile private var lastSavedText = ""
-    @Volatile private var lastSavedDedupKey = ""
-    @Volatile private var lastSavedTime = 0L
-
-    /** Serializes the check-then-insert sequence in [saveEntry] so concurrent detections
-     *  (partial + final from different threads) cannot both pass the in-memory dedup gate
-     *  and double-insert. Room's `withTransaction` already serializes DB writes, but the
-     *  in-memory flags (`lastSaved*`) need this mutex for atomic update. */
-    private val saveMutex = Mutex()
-
-    /** Guards the synchronous check-then-update of in-memory dedup state in
-     *  [processDetectedResult]. Separate from [saveMutex] because that callsite is
-     *  non-suspend. */
-    private val dedupLock = Any()
+    private val dedup = DeduplicationManager()
 
     // Track if partial result already triggered a save for this recognition cycle
     @Volatile private var partialAlreadySaved = false
@@ -873,21 +839,15 @@ class KeywordListenerService : LifecycleService() {
         result: DetectionResult,
         text: String
     ): Boolean {
-        val now = System.currentTimeMillis()
-        val dedupKey = buildDedupKey(result, text)
-
-        // Atomic check-then-reserve: if no duplicate, claim the dedup slot synchronously
-        // so any concurrent processDetectedResult sees the claim and bails out.
-        synchronized(dedupLock) {
-            if (now - lastSavedTime < DEDUP_WINDOW_MS && dedupKey.isNotBlank() && dedupKey == lastSavedDedupKey) {
+        when (dedup.tryReserve(result, text)) {
+            DeduplicationManager.Reservation.Duplicate -> {
                 publishAsrDebug(status = "duplicado ignorado")
-                Log.i(TAG, "Dedup: skipping similar entry within ${DEDUP_WINDOW_MS}ms")
+                Log.i(TAG, "Dedup: skipping similar entry within ${DeduplicationManager.IN_MEMORY_WINDOW_MS}ms")
                 return false
             }
-            lastSavedText = text
-            lastSavedDedupKey = dedupKey
-            lastSavedTime = now
-            partialAlreadySaved = true
+            DeduplicationManager.Reservation.Reserved -> {
+                partialAlreadySaved = true
+            }
         }
 
         pendingPartialDetection = null
@@ -971,8 +931,7 @@ class KeywordListenerService : LifecycleService() {
     ) {
         lifecycleScope.launch(Dispatchers.IO) {
             val repo = repository ?: return@launch
-            val normalizedCaptured = normalizeTextForDedup(originalText.ifBlank { text })
-            val normalizedSaved = normalizeTextForDedup(text)
+            val capturedText = originalText.ifBlank { text }
             val entry = DiaryEntry(
                 text = originalText.ifBlank { text },
                 keyword = intentId,
@@ -985,33 +944,15 @@ class KeywordListenerService : LifecycleService() {
                 llmConfidence = llmConfidence,
                 cleanText = null
             )
-            val entryId = saveMutex.withLock { repo.withTransaction {
-                val latestPending = getLatestPendingOnce()
-                if (
-                    latestPending != null &&
-                    System.currentTimeMillis() - latestPending.createdAt <= PERSISTED_DEDUP_WINDOW_MS
-                ) {
-                    val latestNormalizedText = normalizeTextForDedup(latestPending.text)
-                    val latestNormalizedClean = normalizeTextForDedup(latestPending.cleanText ?: "")
-                    val isSameRecentEntry =
-                        normalizedCaptured.isNotBlank() && (
-                            normalizedCaptured == latestNormalizedText ||
-                                normalizedCaptured == latestNormalizedClean
-                            ) ||
-                            normalizedSaved.isNotBlank() && (
-                            normalizedSaved == latestNormalizedText ||
-                                normalizedSaved == latestNormalizedClean
-                            ) ||
-                            isSimilar(normalizedSaved, latestNormalizedText) ||
-                            isSimilar(normalizedCaptured, latestNormalizedText)
-
-                    if (isSameRecentEntry) {
+            val entryId = dedup.withSaveLock {
+                repo.withTransaction {
+                    val latestPending = getLatestPendingOnce()
+                    if (dedup.isDuplicateOfLatestPending(latestPending, capturedText, text)) {
                         return@withTransaction null
                     }
+                    insert(entry)
                 }
-
-                insert(entry)
-            } }
+            }
 
             if (entryId == null) {
                 Log.i(TAG, "Persisted dedup: skipping recently saved duplicate '$text'")
@@ -1039,57 +980,6 @@ class KeywordListenerService : LifecycleService() {
                 EntryProcessingState.markFinished(entryId)
             }
         }
-    }
-
-    /**
-     * Simple similarity check: if >70% of words overlap, consider it a duplicate.
-     */
-    private fun isSimilar(a: String, b: String): Boolean {
-        if (a.isBlank() || b.isBlank()) return false
-        val wordsA = a.lowercase().split("\\s+".toRegex()).toSet()
-        val wordsB = b.lowercase().split("\\s+".toRegex()).toSet()
-        if (wordsA.isEmpty() || wordsB.isEmpty()) return false
-        val intersection = wordsA.intersect(wordsB)
-        val smaller = minOf(wordsA.size, wordsB.size)
-        return intersection.size.toFloat() / smaller >= 0.7f
-    }
-
-    private fun buildDedupKey(result: DetectionResult, text: String): String {
-        val normalized = normalizeTextForDedup(text)
-        if (normalized.isBlank()) return ""
-
-        val stripped = result.pattern
-            ?.normalizedTriggers
-            ?.mapNotNull { trigger ->
-                normalized
-                    .removePrefix("$trigger ")
-                    .takeIf { it != normalized }
-                    ?.trim()
-            }
-            ?.firstOrNull()
-            ?: result.customKeyword
-                ?.let { keyword ->
-                    val normalizedKeyword = normalizeTextForDedup(keyword)
-                    normalized.removePrefix("$normalizedKeyword ").trim()
-                }
-            ?: normalized
-
-        val meaningful = stripped
-            .split(" ")
-            .filter { token ->
-                token.isNotBlank() && token !in DEDUP_STOPWORDS
-            }
-            .joinToString(" ")
-
-        return meaningful.ifBlank { normalized }
-    }
-
-    private fun normalizeTextForDedup(text: String): String {
-        return Normalizer.normalize(text.lowercase(), Normalizer.Form.NFD)
-            .replace("\\p{M}+".toRegex(), "")
-            .replace("[^\\p{L}\\p{N}\\s]".toRegex(), " ")
-            .replace("\\s+".toRegex(), " ")
-            .trim()
     }
 
     private fun vibrate(pattern: LongArray) {
