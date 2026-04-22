@@ -251,6 +251,7 @@ fun HomeScreen(
     var showAddDialog by remember { mutableStateOf(false) }
 
     var duplicatesExpanded by remember { mutableStateOf(true) }
+    var suggestedExpanded by remember { mutableStateOf(true) }
     var olderExpanded by remember(showOldEntriesExpanded) { mutableStateOf(showOldEntriesExpanded) }
     var todayExpanded by remember { mutableStateOf(true) }
     var completedExpanded by remember { mutableStateOf(false) }
@@ -295,11 +296,13 @@ fun HomeScreen(
 
     // Data
     val allPendingEntriesState by repository.getPending().collectAsState(initial = null)
+    val suggestedEntriesState by repository.getSuggested().collectAsState(initial = null)
     val duplicateEntriesState by repository.getDuplicates().collectAsState(initial = null)
     val completedEntriesState by repository.getCompleted().collectAsState(initial = null)
     val recordingsState by repository.getAllRecordings().collectAsState(initial = null)
     val allPendingEntries = allPendingEntriesState ?: emptyList()
     val duplicateEntries = duplicateEntriesState ?: emptyList()
+    val suggestedEntries = suggestedEntriesState ?: emptyList()
     val completedEntries = completedEntriesState ?: emptyList()
     val recordings = recordingsState ?: emptyList()
 
@@ -743,6 +746,34 @@ fun HomeScreen(
                                     originalText = originalEntry?.displayText,
                                     onKeep = { scope.launch { repository.clearDuplicate(entry.id) } },
                                     onDelete = { scope.launch { repository.deleteById(entry.id); syncDeleted(entry) } },
+                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    if (suggestedEntries.isNotEmpty()) {
+                        item(key = "header_suggested") {
+                            SectionHeader(
+                                "Sugerencias por revisar",
+                                suggestedEntries.size,
+                                MaterialTheme.colorScheme.secondary,
+                                expanded = suggestedExpanded,
+                                onToggle = { suggestedExpanded = !suggestedExpanded },
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            )
+                        }
+                        if (suggestedExpanded) {
+                            items(suggestedEntries, key = { "sug_${it.id}" }) { entry ->
+                                SuggestedCard(
+                                    entry = entry,
+                                    onAccept = { scope.launch { repository.markPending(entry.id) } },
+                                    onDiscard = {
+                                        scope.launch {
+                                            repository.markDiscarded(entry.id)
+                                            syncDeleted(entry)
+                                        }
+                                    },
                                     modifier = Modifier.padding(horizontal = 16.dp)
                                 )
                             }
@@ -1310,6 +1341,39 @@ private fun DuplicateCard(
                 }
                 TextButton(onClick = onKeep) {
                     Text("No es duplicado")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SuggestedCard(
+    entry: DiaryEntry,
+    onAccept: () -> Unit,
+    onDiscard: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text(
+                text = entry.displayText,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onDiscard) {
+                    Text("Descartar", color = MaterialTheme.colorScheme.error)
+                }
+                TextButton(onClick = onAccept) {
+                    Text("Aceptar")
                 }
             }
         }

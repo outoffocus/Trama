@@ -78,10 +78,10 @@ class ActionItemProcessor(private val context: Context) {
                     priority = result.priority,
                     confidence = result.confidence
                 )
-                repository.markDiscarded(entryId)
+                repository.markSuggested(entryId)
                 Log.i(
                     TAG,
-                    "Discarding non-actionable entry $entryId: '${result.cleanText}' " +
+                    "Routing entry $entryId to review queue: '${result.cleanText}' " +
                         "(actionable=${result.isActionable}, confidence=${result.confidence})"
                 )
                 return
@@ -98,10 +98,18 @@ class ActionItemProcessor(private val context: Context) {
                 )
                 Log.i(TAG, "Heuristic fallback for entry $entryId: '${heuristicFallback.cleanText}' [${heuristicFallback.actionType}]")
             } else {
-                repository.markDiscarded(entryId)
+                repository.updateAIProcessing(
+                    id = entryId,
+                    cleanText = heuristicFallback.cleanText,
+                    actionType = heuristicFallback.actionType,
+                    dueDate = heuristicFallback.dueDate,
+                    priority = heuristicFallback.priority,
+                    confidence = heuristicFallback.confidence
+                )
+                repository.markSuggested(entryId)
                 Log.i(
                     TAG,
-                    "Discarding non-actionable heuristic fallback for entry $entryId: " +
+                    "Routing heuristic fallback to review queue for entry $entryId: " +
                         "'${heuristicFallback.cleanText}' (confidence=${heuristicFallback.confidence})"
                 )
                 return

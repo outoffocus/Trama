@@ -27,6 +27,10 @@ interface DiaryDao {
               createdAt DESC""")
     fun getPending(): Flow<List<DiaryEntry>>
 
+    /** Suggested items awaiting user review (low-confidence LLM extractions). */
+    @Query("SELECT * FROM diary_entries WHERE status = 'SUGGESTED' ORDER BY createdAt DESC")
+    fun getSuggested(): Flow<List<DiaryEntry>>
+
     /** Completed items, most recent first */
     @Query("SELECT * FROM diary_entries WHERE status = 'COMPLETED' ORDER BY completedAt DESC")
     fun getCompleted(): Flow<List<DiaryEntry>>
@@ -133,6 +137,10 @@ interface DiaryDao {
     /** Mark entry as discarded */
     @Query("UPDATE diary_entries SET status = 'DISCARDED', completedAt = :now WHERE id = :id")
     suspend fun markDiscarded(id: Long, now: Long = System.currentTimeMillis())
+
+    /** Mark entry as suggested (awaiting user review) */
+    @Query("UPDATE diary_entries SET status = 'SUGGESTED' WHERE id = :id")
+    suspend fun markSuggested(id: Long)
 
     /** Reopen a completed/discarded entry back to pending */
     @Query("UPDATE diary_entries SET status = 'PENDING', completedAt = NULL WHERE id = :id")

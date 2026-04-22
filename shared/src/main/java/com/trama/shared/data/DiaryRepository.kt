@@ -30,6 +30,8 @@ class DiaryRepository(
 
     fun getPending(): Flow<List<DiaryEntry>> = dao.getPending().distinctUntilChanged()
 
+    fun getSuggested(): Flow<List<DiaryEntry>> = dao.getSuggested().distinctUntilChanged()
+
     fun getCompleted(): Flow<List<DiaryEntry>> = dao.getCompleted().distinctUntilChanged()
 
     fun getOverdue(): Flow<List<DiaryEntry>> = dao.getOverdue().distinctUntilChanged()
@@ -78,6 +80,8 @@ class DiaryRepository(
     suspend fun markCompleted(id: Long) = dao.markCompleted(id)
 
     suspend fun markDiscarded(id: Long) = dao.markDiscarded(id)
+
+    suspend fun markSuggested(id: Long) = dao.markSuggested(id)
 
     suspend fun markPending(id: Long) = dao.markPending(id)
 
