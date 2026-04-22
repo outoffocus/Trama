@@ -10,6 +10,7 @@ import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.EntryActionType
 import com.trama.shared.model.EntryPriority
 import com.trama.shared.model.EntryStatus
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.text.SimpleDateFormat
@@ -213,31 +214,101 @@ class ActionItemProcessor(private val context: Context) {
     }
 
     /**
-     * Collects currently-live tasks (PENDING) and passes their cleanText to the
-     * LLM so it can avoid re-extracting duplicates and resolve references like
-     * "esa tarea" or "la reunión de la que hablé". Capped to stay within Gemma's
-     * small context budget.
+     * Collects live tasks (PENDING), today's completed tasks, and the user's
+     * current place (if inside an active dwell) so the LLM can:
+     *   - avoid re-extracting tasks already captured,
+     *   - resolve references like "esa tarea" or "lo de ayer",
+     *   - resolve "aquí" / "en el curro" to a concrete place name,
+     *   - reuse consistent names for people/places mentioned earlier.
+     *
+     * Gemma 3n E4B handles a 32K context comfortably, so we lean into richer
+     * grounding instead of aggressive truncation.
      */
     private suspend fun buildRecentContext(
         entryId: Long,
         repository: DiaryRepository
     ): String {
-        val pending = try {
+        val pendingItems = try {
             repository.getPendingOnce()
+                .asSequence()
+                .filter { it.id != entryId }
+                .map { (it.cleanText ?: it.displayText).trim() }
+                .filter { it.isNotBlank() }
+                .distinct()
+                .take(MAX_PENDING_CONTEXT)
+                .toList()
         } catch (e: Exception) {
             Log.d(TAG, "Could not load pending entries for context", e)
-            return ""
+            emptyList()
         }
-        val items = pending
-            .asSequence()
-            .filter { it.id != entryId }
-            .map { (it.cleanText ?: it.displayText).trim() }
-            .filter { it.isNotBlank() }
-            .distinct()
-            .take(MAX_CONTEXT_ITEMS)
-            .toList()
-        if (items.isEmpty()) return ""
-        return items.joinToString(separator = "\n") { "- $it" }
+
+        val completedItems = try {
+            val today = com.trama.shared.util.DayRange.today()
+            (repository.getCompletedByCompletedAt(today.startMs, today.endExclusiveMs)
+                .firstOrNull() ?: emptyList())
+                .asSequence()
+                .filter { it.id != entryId }
+                .map { (it.cleanText ?: it.displayText).trim() }
+                .filter { it.isNotBlank() }
+                .distinct()
+                .take(MAX_COMPLETED_CONTEXT)
+                .toList()
+        } catch (e: Exception) {
+            Log.d(TAG, "Could not load completed entries for context", e)
+            emptyList()
+        }
+
+        val placeLine = try {
+            resolveCurrentPlace(repository)
+        } catch (e: Exception) {
+            Log.d(TAG, "Could not resolve current place for context", e)
+            null
+        }
+
+        val sections = mutableListOf<String>()
+        if (placeLine != null) sections += placeLine
+        if (pendingItems.isNotEmpty()) {
+            sections += "Tareas pendientes:\n" + pendingItems.joinToString("\n") { "- $it" }
+        }
+        if (completedItems.isNotEmpty()) {
+            sections += "Completadas hoy:\n" + completedItems.joinToString("\n") { "- $it" }
+        }
+        return sections.joinToString("\n\n")
+    }
+
+    /**
+     * Resolves the user's current place when an active dwell has a known place
+     * within ~80m of the anchor. Returns a short line suitable for prompt context
+     * or null when we have no reliable signal.
+     */
+    private suspend fun resolveCurrentPlace(repository: DiaryRepository): String? {
+        val dwell = repository.getDwellDetectionState() ?: return null
+        if (!dwell.active) return null
+        val lat = dwell.anchorLat ?: return null
+        val lon = dwell.anchorLon ?: return null
+
+        val deltaLat = PLACE_RADIUS_M / 111_320.0
+        val deltaLon = PLACE_RADIUS_M /
+            (111_320.0 * kotlin.math.cos(Math.toRadians(lat)).coerceAtLeast(0.1))
+        val candidates = repository.findPlacesInBoundingBox(
+            minLat = lat - deltaLat,
+            maxLat = lat + deltaLat,
+            minLon = lon - deltaLon,
+            maxLon = lon + deltaLon
+        )
+        val place = candidates.minByOrNull {
+            val dy = (it.latitude - lat) * 111_320.0
+            val dx = (it.longitude - lon) *
+                111_320.0 * kotlin.math.cos(Math.toRadians(lat))
+            kotlin.math.sqrt(dx * dx + dy * dy)
+        } ?: return null
+
+        val tag = when {
+            place.isHome -> " (casa)"
+            place.isWork -> " (trabajo)"
+            else -> ""
+        }
+        return "Lugar actual del usuario: ${place.name}$tag"
     }
 
     private fun buildHeuristicFallback(
@@ -348,9 +419,16 @@ class ActionItemProcessor(private val context: Context) {
         val today = dateFormat.format(Calendar.getInstance().time)
         val tomorrow = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 1) }
         val tomorrowStr = dateFormat.format(tomorrow.time)
-        val contextBlock = if (recentContext.isBlank()) "" else
-            "CONTEXTO — tareas pendientes del usuario ahora mismo:\n$recentContext\n\n" +
-                "Si la nota es una referencia a alguna de las tareas anteriores (ej: \"eso que dije de Pedro\", \"lo de la reunion\"), responde con isActionable=false y confidence<=0.3. No dupliques tareas ya existentes.\n"
+        val contextBlock = if (recentContext.isBlank()) "" else buildString {
+            appendLine("CONTEXTO DEL USUARIO (hoy):")
+            appendLine(recentContext)
+            appendLine()
+            appendLine("Reglas sobre el CONTEXTO:")
+            appendLine("- Si la nota es una referencia a una tarea ya en Tareas pendientes o Completadas hoy (ej: \"eso que dije de Pedro\", \"lo de la reunion\"), responde con isActionable=false y confidence<=0.3. No dupliques.")
+            appendLine("- Si la nota menciona personas o lugares que ya aparecen en el contexto, reutiliza la misma grafía literal (evita duplicados tipo \"Pedro\" vs \"Pedrito\").")
+            appendLine("- Si hay \"Lugar actual del usuario\" y la nota dice \"aquí\", \"en el curro\", \"en casa\", resuelve la referencia a ese lugar literal en cleanText.")
+            appendLine()
+        }
         return PromptTemplateStore.render(
             context,
             PromptTemplateStore.ACTION_ITEM,
@@ -615,8 +693,14 @@ Reglas:
         /** Minimum confidence for an LLM extraction to be accepted as a real task. */
         private const val ACTIONABLE_CONFIDENCE_THRESHOLD = 0.45f
 
-        /** How many live tasks to pass to the LLM as context. Gemma is memory-bound. */
-        private const val MAX_CONTEXT_ITEMS = 15
+        /** How many pending tasks to pass to the LLM as context. */
+        private const val MAX_PENDING_CONTEXT = 40
+
+        /** How many of today's completed tasks to pass as context. */
+        private const val MAX_COMPLETED_CONTEXT = 20
+
+        /** Radius for matching the active dwell anchor to a known place. */
+        private const val PLACE_RADIUS_M = 80.0
 
         /** Phrases that, when they constitute the whole cleanText, are not actionable. */
         private val TEMPORAL_ONLY_PHRASES = setOf(
