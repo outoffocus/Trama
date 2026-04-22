@@ -21,7 +21,7 @@ import com.trama.shared.model.TimelineEvent
         DwellDetectionState::class,
         DailyPage::class
     ],
-    version = 10
+    version = 11
 )
 @TypeConverters(Converters::class)
 abstract class DiaryDatabase : RoomDatabase() {
@@ -169,6 +169,13 @@ abstract class DiaryDatabase : RoomDatabase() {
                         hasManualReview INTEGER NOT NULL DEFAULT 0
                     )"""
                 )
+            }
+        }
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE dwell_detection_state ADD COLUMN lastClosedLat REAL DEFAULT NULL")
+                db.execSQL("ALTER TABLE dwell_detection_state ADD COLUMN lastClosedLon REAL DEFAULT NULL")
+                db.execSQL("ALTER TABLE dwell_detection_state ADD COLUMN lastClosedAt INTEGER DEFAULT NULL")
             }
         }
     }

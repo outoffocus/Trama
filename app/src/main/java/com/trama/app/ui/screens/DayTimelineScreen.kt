@@ -52,7 +52,9 @@ fun DayTimelineScreen(
     val context = LocalContext.current
     val repository = remember { DatabaseProvider.getRepository(context) }
     val settings = remember { SettingsDataStore(context) }
-    val dayEndMillis = remember(dayStartMillis) { dayStartMillis + 86_400_000L }
+    val dayEndMillis = remember(dayStartMillis) {
+        com.trama.shared.util.DayRange.of(dayStartMillis).endExclusiveMs
+    }
     val entries by repository.byDateRange(dayStartMillis, dayEndMillis).collectAsState(initial = emptyList())
     val recordings by repository.getAllRecordings().collectAsState(initial = emptyList())
     val storedTimelineEvents by repository.getTimelineEventsByDateRange(
@@ -114,7 +116,7 @@ fun DayTimelineScreen(
             createdEntries = entries.filter { it.createdAt in dayStartMillis until dayEndMillis },
             completedEntries = entries.filter { (it.completedAt ?: -1L) in dayStartMillis until dayEndMillis },
             recordings = recordings.filter { it.createdAt in dayStartMillis until dayEndMillis },
-            calendarEvents = calendarEvents,
+            calendarEvents = calendarEvents.filter { it.startMillis in dayStartMillis until dayEndMillis },
             storedEvents = storedTimelineEvents
         )
     }

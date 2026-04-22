@@ -127,7 +127,7 @@ class ContextualAudioCaptureEngine(
             val snapshot = capture.assembler.finalizeWindow(capture.preRollWindow)
             capture.gateJob = scope.launch(Dispatchers.IO) {
                 try {
-                    val eval = evaluateGateWindows(snapshot)
+                    val eval = evaluateGateWindows(snapshot, isFinal = isFinal, config = capture.config)
                     onGateEvaluated?.invoke(eval.bestTranscript, eval.matched, eval.debugSummary)
                     capture.lastGateTranscript = eval.bestTranscript
                     if (eval.matched && !capture.triggerAlreadyDetected) {
@@ -162,6 +162,11 @@ class ContextualAudioCaptureEngine(
             activeCapture = null
 
             val finalWindow = capture.assembler.finalizeWindow(capture.preRollWindow)
+            val dropped = capture.assembler.droppedSampleCount
+            if (dropped > 0) {
+                Log.w(TAG, "Capture cap reached, dropped ${dropped} samples (reason=$reason). " +
+                    "Engine likely failed to stop — check silence detection.")
+            }
             if (finalWindow.mergedPcm().isEmpty()) {
                 onStatusChanged?.invoke("rearmed")
                 onStatusChanged?.invoke("listening")
@@ -180,7 +185,7 @@ class ContextualAudioCaptureEngine(
                 capture.gateJob?.cancel()
                 scope.launch(Dispatchers.IO) {
                     try {
-                        val eval = evaluateGateWindows(finalWindow)
+                        val eval = evaluateGateWindows(finalWindow, isFinal = true, config = capture.config)
                         onGateEvaluated?.invoke(eval.bestTranscript, eval.matched, eval.debugSummary)
                         if (eval.matched) {
                             onGateMatch?.invoke(eval.bestTranscript)
@@ -311,18 +316,53 @@ class ContextualAudioCaptureEngine(
         )
     }
 
-    private suspend fun evaluateGateWindows(window: CapturedAudioWindow): GateEvaluation {
-        val transcript = runCatching {
-            gateAsr.transcribe(window, languageTag = "es")
-        }.getOrNull()?.trim().orEmpty()
+    private suspend fun evaluateGateWindows(
+        window: CapturedAudioWindow,
+        isFinal: Boolean,
+        config: ContextualCaptureConfig
+    ): GateEvaluation {
+        val candidateWindows = if (isFinal) {
+            config.gateEvalWindowsMs
+                .filter { it > 0L }
+                .map(window::tailWindow)
+                .plus(window)
+                .distinctBy { it.durationMs() }
+        } else {
+            config.gateEvalWindowsMs
+                // Gate patterns are short and recent, so we only need the newest tail slices.
+                .filter { it > 0L }
+                .map(window::tailWindow)
+                .distinctBy { it.durationMs() }
+                .ifEmpty { listOf(window.tailWindow(3_000L)) }
+        }
 
-        val matched = transcript.isNotBlank() && triggerDetector(transcript)
-        val debug = "full(${window.durationMs()}ms): '${transcript.ifBlank { "-" }}'${if (matched) " [MATCH]" else ""}"
+        val debugParts = mutableListOf<String>()
+        var bestTranscript = ""
+
+        for (candidate in candidateWindows) {
+            val transcript = runCatching {
+                gateAsr.transcribe(candidate, languageTag = "es")
+            }.getOrNull()?.trim().orEmpty()
+
+            if (bestTranscript.isBlank() && transcript.isNotBlank()) {
+                bestTranscript = transcript
+            }
+
+            val matched = transcript.isNotBlank() && triggerDetector(transcript)
+            debugParts += "${if (isFinal) "full" else "tail"}(${candidate.durationMs()}ms): '${transcript.ifBlank { "-" }}'${if (matched) " [MATCH]" else ""}"
+            if (matched) {
+                return GateEvaluation(
+                    matched = true,
+                    bestTranscript = transcript,
+                    debugSummary = debugParts.joinToString(" | ")
+                )
+            }
+        }
 
         return GateEvaluation(
-            matched = matched,
-            bestTranscript = transcript,
-            debugSummary = debug
+            matched = false,
+            bestTranscript = bestTranscript,
+            debugSummary = debugParts.joinToString(" | ")
         )
     }
 

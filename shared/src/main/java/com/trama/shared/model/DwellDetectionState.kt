@@ -15,5 +15,10 @@ data class DwellDetectionState(
     val anchorLon: Double? = null,
     val dwellStartedAt: Long? = null,
     val active: Boolean = false,
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    /** Anchor of the most recently closed dwell — used to suppress immediate re-entry
+     *  when the user drifts just outside the exit radius and then returns. */
+    val lastClosedLat: Double? = null,
+    val lastClosedLon: Double? = null,
+    val lastClosedAt: Long? = null
 )

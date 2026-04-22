@@ -37,7 +37,15 @@ class ActionItemProcessor(private val context: Context) {
             originalText = originalText,
             normalizedInput = processingText
         )
-        val splitCleanTexts = maybeAutoSplitEntry(entryId, processingText, result, repository)
+        // Only run the heuristic auto-splitter when the LLM was unavailable or
+        // returned nothing usable. If the LLM already produced an actionable
+        // result, trust it — re-splitting with regex was a source of false
+        // positives (e.g. splitting on every verb in a single coherent request).
+        val splitCleanTexts = if (result == null) {
+            maybeAutoSplitEntry(entryId, processingText, null, repository)
+        } else {
+            emptyList()
+        }
         val heuristicFallback = if (result == null && splitCleanTexts.isEmpty()) {
             buildHeuristicFallback(originalText, processingText)
         } else {
@@ -48,25 +56,53 @@ class ActionItemProcessor(private val context: Context) {
         }
 
         if (result != null && splitCleanTexts.isEmpty()) {
-            repository.updateAIProcessing(
-                id = entryId,
-                cleanText = result.cleanText,
-                actionType = result.actionType,
-                dueDate = result.dueDate,
-                priority = result.priority,
-                confidence = result.confidence
-            )
-            Log.i(TAG, "Processed entry $entryId: '${result.cleanText}' [${result.actionType}]")
+            if (shouldAcceptAsTask(result)) {
+                repository.updateAIProcessing(
+                    id = entryId,
+                    cleanText = result.cleanText,
+                    actionType = result.actionType,
+                    dueDate = result.dueDate,
+                    priority = result.priority,
+                    confidence = result.confidence
+                )
+                Log.i(TAG, "Processed entry $entryId: '${result.cleanText}' [${result.actionType}]")
+            } else {
+                repository.updateAIProcessing(
+                    id = entryId,
+                    cleanText = result.cleanText,
+                    actionType = result.actionType,
+                    dueDate = result.dueDate,
+                    priority = result.priority,
+                    confidence = result.confidence
+                )
+                repository.markDiscarded(entryId)
+                Log.i(
+                    TAG,
+                    "Discarding non-actionable entry $entryId: '${result.cleanText}' " +
+                        "(actionable=${result.isActionable}, confidence=${result.confidence})"
+                )
+                return
+            }
         } else if (heuristicFallback != null && splitCleanTexts.isEmpty()) {
-            repository.updateAIProcessing(
-                id = entryId,
-                cleanText = heuristicFallback.cleanText,
-                actionType = heuristicFallback.actionType,
-                dueDate = heuristicFallback.dueDate,
-                priority = heuristicFallback.priority,
-                confidence = heuristicFallback.confidence
-            )
-            Log.i(TAG, "Heuristic fallback for entry $entryId: '${heuristicFallback.cleanText}' [${heuristicFallback.actionType}]")
+            if (shouldAcceptAsTask(heuristicFallback)) {
+                repository.updateAIProcessing(
+                    id = entryId,
+                    cleanText = heuristicFallback.cleanText,
+                    actionType = heuristicFallback.actionType,
+                    dueDate = heuristicFallback.dueDate,
+                    priority = heuristicFallback.priority,
+                    confidence = heuristicFallback.confidence
+                )
+                Log.i(TAG, "Heuristic fallback for entry $entryId: '${heuristicFallback.cleanText}' [${heuristicFallback.actionType}]")
+            } else {
+                repository.markDiscarded(entryId)
+                Log.i(
+                    TAG,
+                    "Discarding non-actionable heuristic fallback for entry $entryId: " +
+                        "'${heuristicFallback.cleanText}' (confidence=${heuristicFallback.confidence})"
+                )
+                return
+            }
         } else {
             Log.w(TAG, "No LLM available for entry $entryId, leaving as-is")
         }
@@ -175,12 +211,16 @@ class ActionItemProcessor(private val context: Context) {
             .firstOrNull()
             ?: return null
 
+        // Without an LLM we can't reliably judge actionability, so the heuristic
+        // only proposes — the deterministic validator below is the final gate.
+        val passesGate = isActionableAfterValidation(suggestion.text, modelIsActionable = true)
         return ProcessingResult(
             cleanText = suggestion.text,
             actionType = suggestion.actionType,
             dueDate = suggestion.dueDate,
             priority = suggestion.priority,
-            confidence = 0.65f
+            confidence = if (passesGate) 0.5f else 0.25f,
+            isActionable = passesGate
         )
     }
 
@@ -225,12 +265,15 @@ class ActionItemProcessor(private val context: Context) {
             Log.d(TAG, "Local model JSON parse failed, using text fallback", e)
             val cleanText = JsonRepair.extractAndRepair(responseText).trim().removeSurrounding("\"")
             val validatedCleanText = cleanText.takeIf { it.isNotBlank() } ?: return null
+            val truncated = validatedCleanText.take(200)
+            val passesGate = isActionableAfterValidation(truncated, modelIsActionable = true)
             ProcessingResult(
-                cleanText = validatedCleanText.take(200),
+                cleanText = truncated,
                 actionType = inferActionType(normalizedInput),
                 dueDate = null,
                 priority = "NORMAL",
-                confidence = 0.7f
+                confidence = if (passesGate) 0.7f else 0.25f,
+                isActionable = passesGate
             )
         }
     }
@@ -270,13 +313,49 @@ class ActionItemProcessor(private val context: Context) {
     private fun parseResult(responseText: String, confidenceMultiplier: Float): ProcessingResult {
         val parsed = json.decodeFromString<LLMResponse>(JsonRepair.extractAndRepair(responseText))
         require(parsed.cleanText.isNotBlank()) { "LLM returned blank cleanText" }
+        val cleanText = parsed.cleanText.trim()
+        val baseConfidence = parsed.confidence * confidenceMultiplier
+        val passesGate = isActionableAfterValidation(cleanText, parsed.isActionable)
+        // If the deterministic validator disagrees with the model, collapse confidence
+        // so the caller can treat the entry as non-actionable.
+        val effectiveConfidence = if (!passesGate) {
+            minOf(baseConfidence, 0.29f)
+        } else {
+            baseConfidence
+        }
         return ProcessingResult(
-            cleanText = parsed.cleanText.trim(),
+            cleanText = cleanText,
             actionType = validateActionType(parsed.actionType),
             dueDate = parseDateString(parsed.dueDate),
             priority = validatePriority(parsed.priority),
-            confidence = parsed.confidence * confidenceMultiplier
+            confidence = effectiveConfidence,
+            isActionable = passesGate
         )
+    }
+
+    private fun shouldAcceptAsTask(result: ProcessingResult): Boolean =
+        result.isActionable && result.confidence >= ACTIONABLE_CONFIDENCE_THRESHOLD
+
+    /**
+     * Deterministic post-LLM check: rejects cleanText strings that are clearly not
+     * actionable regardless of what the model reported. Catches the well-known
+     * failure modes — temporal-only fragments, verbless stubs, ASR noise — where
+     * the model's textual rules are ignored.
+     */
+    private fun isActionableAfterValidation(cleanText: String, modelIsActionable: Boolean): Boolean {
+        if (!modelIsActionable) return false
+        val normalized = cleanText
+            .lowercase(Locale.getDefault())
+            .trim()
+            .trim('.', ',', ';', ':', '!', '?', '¿', '¡', '-', ' ')
+        if (normalized.length < 6) return false
+        if (normalized in TEMPORAL_ONLY_PHRASES) return false
+        val tokens = normalized.split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (tokens.size < 2) return false
+        // At least one non-temporal, non-stopword token of length ≥ 3
+        val meaningful = tokens.filter { it.length >= 3 && it !in TEMPORAL_TOKENS }
+        if (meaningful.isEmpty()) return false
+        return true
     }
 
     // ── Duplicate detection ──
@@ -393,6 +472,36 @@ Reglas:
         private const val TAG = "ActionItemProcessor"
         private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
         private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+
+        /** Minimum confidence for an LLM extraction to be accepted as a real task. */
+        private const val ACTIONABLE_CONFIDENCE_THRESHOLD = 0.45f
+
+        /** Phrases that, when they constitute the whole cleanText, are not actionable. */
+        private val TEMPORAL_ONLY_PHRASES = setOf(
+            "mañana", "manana", "hoy", "ayer", "anoche",
+            "esta tarde", "esta noche", "esta mañana", "esta manana",
+            "mañana por la mañana", "manana por la manana",
+            "mañana por la tarde", "manana por la tarde",
+            "mañana por la noche", "manana por la noche",
+            "pasado mañana", "pasado manana",
+            "hay que", "tengo que", "deberia", "debería",
+            "recordar", "acordarme", "acordarnos",
+            "por la mañana", "por la manana", "por la tarde", "por la noche",
+            "todos los dias", "todos los días", "cada dia", "cada día",
+            "cada mañana", "cada manana", "cada tarde", "cada noche",
+            "a veces", "de vez en cuando"
+        )
+
+        /** Tokens that count as temporal/filler when evaluating whether a cleanText has real content. */
+        private val TEMPORAL_TOKENS = setOf(
+            "hoy", "ayer", "anoche", "mañana", "manana", "tarde", "noche",
+            "esta", "este", "pasado", "pasada",
+            "luego", "después", "despues", "antes",
+            "siempre", "nunca", "veces", "vez",
+            "todos", "todas", "cada", "los", "las", "el", "la",
+            "por", "de", "en", "a", "al", "del",
+            "que", "y", "o", "u"
+        )
     }
 
     data class ProcessingResult(
@@ -400,7 +509,8 @@ Reglas:
         val actionType: String,
         val dueDate: Long?,
         val priority: String,
-        val confidence: Float
+        val confidence: Float,
+        val isActionable: Boolean = true
     )
 
     @Serializable
@@ -409,6 +519,7 @@ Reglas:
         val actionType: String = "GENERIC",
         val dueDate: String? = null,
         val priority: String = "NORMAL",
-        val confidence: Float = 0.8f
+        val confidence: Float = 0.8f,
+        val isActionable: Boolean = true
     )
 }

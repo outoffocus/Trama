@@ -9,10 +9,20 @@ package com.trama.shared.audio
 class ContextualCaptureAssembler(
     private val config: ContextualCaptureConfig
 ) {
-    private var postRoll = ShortArray(0)
+    private val postRollChunks = mutableListOf<ShortArray>()
+    private var postRollSamples = 0
+    private var droppedSamples = 0
+
+    private val maxPostRollSamples: Int =
+        config.maxCaptureSeconds.coerceAtLeast(1) * config.sampleRateHz
+
+    /** Number of samples dropped on the current capture due to the safety cap. 0 when healthy. */
+    val droppedSampleCount: Int get() = droppedSamples
 
     fun beginCapture(buffer: CircularAudioBuffer): CapturedAudioWindow {
-        postRoll = shortArrayOf()
+        postRollChunks.clear()
+        postRollSamples = 0
+        droppedSamples = 0
         return CapturedAudioWindow(
             preRollPcm = buffer.snapshotLast(config.preRollSeconds, config.sampleRateHz),
             livePcm = shortArrayOf(),
@@ -22,20 +32,30 @@ class ContextualCaptureAssembler(
 
     fun appendPostRoll(chunk: ShortArray) {
         if (chunk.isEmpty()) return
-        val maxSamples = config.postRollSeconds * config.sampleRateHz
-        val current = postRoll.size
-        if (current >= maxSamples) return
-
-        val acceptedSize = minOf(chunk.size, maxSamples - current)
-        if (acceptedSize <= 0) return
-        
-        val accepted = chunk.copyOf(acceptedSize)
-        val merged = ShortArray(current + accepted.size)
-        postRoll.copyInto(merged, 0)
-        accepted.copyInto(merged, current)
-        postRoll = merged
+        if (postRollSamples >= maxPostRollSamples) {
+            droppedSamples += chunk.size
+            return
+        }
+        val remaining = maxPostRollSamples - postRollSamples
+        val accepted = if (chunk.size <= remaining) chunk else chunk.copyOf(remaining)
+        postRollChunks += accepted
+        postRollSamples += accepted.size
+        if (accepted.size < chunk.size) droppedSamples += chunk.size - accepted.size
     }
 
     fun finalizeWindow(preRollWindow: CapturedAudioWindow): CapturedAudioWindow =
-        preRollWindow.copy(livePcm = postRoll)
+        preRollWindow.copy(livePcm = mergePostRoll())
+
+    private fun mergePostRoll(): ShortArray {
+        if (postRollSamples <= 0) return shortArrayOf()
+        if (postRollChunks.size == 1) return postRollChunks.first()
+
+        val merged = ShortArray(postRollSamples)
+        var offset = 0
+        for (chunk in postRollChunks) {
+            chunk.copyInto(merged, destinationOffset = offset)
+            offset += chunk.size
+        }
+        return merged
+    }
 }

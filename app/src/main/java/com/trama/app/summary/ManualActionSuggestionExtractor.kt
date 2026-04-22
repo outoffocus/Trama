@@ -72,6 +72,22 @@ object ManualActionSuggestionExtractor {
     private val tomorrowRegex = Regex("""\b(mañana|manana)\b""", RegexOption.IGNORE_CASE)
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
 
+    private const val MIN_SUGGESTION_LENGTH = 8
+
+    private val TEMPORAL_TOKENS = setOf(
+        "hoy", "ayer", "anoche", "mañana", "manana", "tarde", "noche",
+        "esta", "este", "pasado", "pasada",
+        "luego", "después", "despues", "antes",
+        "siempre", "nunca",
+        "todos", "todas", "cada"
+    )
+
+    private val FILLER_TOKENS = setOf(
+        "los", "las", "el", "la", "un", "una", "unos", "unas",
+        "por", "de", "en", "a", "al", "del", "con", "para",
+        "que", "y", "o", "u", "si", "no"
+    )
+
     fun extract(text: String): List<ManualActionSuggestion> {
         val trimmed = text.trim()
         if (trimmed.isBlank()) return emptyList()
@@ -82,12 +98,15 @@ object ManualActionSuggestionExtractor {
             .split(normalized)
             .flatMap { sentence -> inlineSplitRegex.split(sentence) }
             .map { it.trim() }
-            .filter { it.length >= 4 }
+            // Fragments below this length almost never carry a verb + complement in Spanish,
+            // so they are typically noise ("por la", "y luego") that used to produce
+            // low-quality suggestions.
+            .filter { it.length >= MIN_SUGGESTION_LENGTH }
 
         val suggestions = linkedMapOf<String, ManualActionSuggestion>()
         for (part in parts) {
             val cleanText = cleanText(part)
-            if (cleanText.isBlank()) continue
+            if (!isLikelyActionable(cleanText)) continue
             val suggestion = ManualActionSuggestion(
                 text = cleanText,
                 actionType = inferActionType(part),
@@ -99,6 +118,24 @@ object ManualActionSuggestionExtractor {
 
         return suggestions.values.take(8)
     }
+
+    private fun isLikelyActionable(cleanText: String): Boolean {
+        if (cleanText.isBlank()) return false
+        val normalized = cleanText.lowercase(Locale.getDefault()).trim()
+        if (normalized.length < MIN_SUGGESTION_LENGTH) return false
+        val tokens = normalized.split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (tokens.size < 2) return false
+        // Require at least one action verb plus a meaningful complement word
+        val hasActionVerb = splitVerbs.any { verb ->
+            val root = verb.split(" ").first()
+            tokens.any { it.startsWith(root) }
+        }
+        if (!hasActionVerb) return false
+        val hasComplement = tokens.any { it.length >= 4 && it !in FILLER_TOKENS && !isTemporal(it) }
+        return hasComplement
+    }
+
+    private fun isTemporal(token: String): Boolean = token in TEMPORAL_TOKENS
 
     private fun cleanText(raw: String): String {
         val noTrigger = raw.trim().replaceFirst(leadingTriggerRegex, "")

@@ -62,6 +62,30 @@ interface DiaryDao {
     @Query("SELECT * FROM diary_entries WHERE status != 'DISCARDED' AND createdAt <= :dayEnd AND (completedAt IS NULL OR completedAt > :dayEnd) ORDER BY createdAt DESC")
     fun getPendingAsOf(dayEnd: Long): Flow<List<DiaryEntry>>
 
+    /**
+     * Pending/suggested tasks that *belong to* the given day.
+     * A task belongs to day D if:
+     *   - it has a dueDate within D, OR
+     *   - it has no dueDate and was created within D.
+     * Duplicates and discarded entries are excluded. Completed entries are
+     * intentionally excluded here — they are surfaced separately via
+     * [getCompletedByCompletedAt] for the same day range.
+     */
+    @Query("""
+        SELECT * FROM diary_entries
+        WHERE status IN ('PENDING','SUGGESTED')
+          AND duplicateOfId IS NULL
+          AND (
+            (dueDate IS NOT NULL AND dueDate BETWEEN :dayStart AND :dayEnd)
+            OR (dueDate IS NULL AND createdAt BETWEEN :dayStart AND :dayEnd)
+          )
+        ORDER BY CASE priority
+            WHEN 'URGENT' THEN 0 WHEN 'HIGH' THEN 1
+            WHEN 'NORMAL' THEN 2 WHEN 'LOW' THEN 3 ELSE 4 END,
+          COALESCE(dueDate, createdAt) ASC
+    """)
+    fun getPendingForDay(dayStart: Long, dayEnd: Long): Flow<List<DiaryEntry>>
+
     @Query("SELECT * FROM diary_entries WHERE isSynced = 0")
     suspend fun getUnsynced(): List<DiaryEntry>
 

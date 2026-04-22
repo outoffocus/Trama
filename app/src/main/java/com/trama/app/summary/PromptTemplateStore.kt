@@ -37,6 +37,7 @@ Analiza esta nota de voz capturada y devuelve SOLO un objeto JSON valido.
 
 Formato exacto:
 {
+  "isActionable": true|false,
   "cleanText": "texto accionable minimo util, sin el trigger inicial",
   "actionType": "CALL|BUY|SEND|EVENT|REVIEW|TALK_TO|GENERIC",
   "dueDate": "YYYY-MM-DD o null",
@@ -58,6 +59,30 @@ Formato exacto:
     }
   ]
 }
+
+NO EXTRAER (isActionable=false, confidence<=0.3):
+- solo expresiones temporales o de frecuencia: "mañana", "hoy", "esta tarde", "todos los días", "a veces"
+- frases sin verbo de accion claro + objeto/persona/destino: "hay que ver", "sería bueno"
+- reflexiones, auto-charla o preguntas retóricas: "no sé qué hacer", "¿y si lo dejo?"
+- fragmentos incompletos por mala transcripcion: "por la", "y luego el"
+- meros comentarios sobre el pasado sin accion pendiente: "ayer fui al medico"
+- transcripciones con palabras mayormente sin sentido o repeticiones de ruido
+
+Cuando isActionable=false, igualmente rellena cleanText con el texto original trimmed para referencia.
+
+Ejemplos:
+
+Input: "recuerdame que mañana tengo que llamar a Pedro"
+Output: {"isActionable": true, "cleanText": "Llamar a Pedro", "actionType": "CALL", "dueDate": "{{tomorrow}}", "priority": "NORMAL", "confidence": 0.9, ...}
+
+Input: "mañana por la noche"
+Output: {"isActionable": false, "cleanText": "mañana por la noche", "actionType": "GENERIC", "dueDate": null, "priority": "NORMAL", "confidence": 0.2, ...}
+
+Input: "tengo que comprar leche y pan"
+Output: {"isActionable": true, "cleanText": "Comprar leche y pan", "actionType": "BUY", "dueDate": null, "priority": "NORMAL", "confidence": 0.9, ...}
+
+Input: "hay que"
+Output: {"isActionable": false, "cleanText": "hay que", "actionType": "GENERIC", "dueDate": null, "priority": "NORMAL", "confidence": 0.1, ...}
 
 Reglas:
 - Tienes dos entradas:
@@ -98,9 +123,13 @@ Reglas:
   - NORMAL en el resto
 - confidence:
   - entre 0.0 y 1.0
-  - alto si el contenido es claro y especifico
-  - bajo si la nota es ambigua o esta mal transcrita
-  - 0.3 o menos si cleanText contiene un infinitivo español como destino, lugar o nombre propio (ej: "ir a aceptar", "en completar") — señal de error ASR donde un nombre fue sustituido por un verbo
+  - alto (>=0.8) si el contenido es claro, especifico y accionable (verbo + objeto/persona/destino)
+  - bajo (<=0.4) si la nota es ambigua, esta mal transcrita, o cleanText carece de objeto/destino
+  - 0.3 o menos si isActionable=false, o si cleanText contiene un infinitivo español como destino, lugar o nombre propio (ej: "ir a aceptar", "en completar") — señal de error ASR donde un nombre fue sustituido por un verbo
+- isActionable:
+  - true SOLO si cleanText describe una accion concreta (verbo + complemento) que el usuario puede marcar como hecha
+  - false si cleanText es solo temporal, un fragmento, un comentario pasado o ruido
+  - ante la duda, false — es mejor perder una tarea que crear recordatorios inutiles
 - people, places, phones, numbers:
   - incluye solo valores mencionados o claramente presentes en la nota
   - no inventes ninguno

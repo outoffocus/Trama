@@ -11,7 +11,7 @@ import org.junit.Test
 class ContextualCaptureAssemblerTest {
 
     @Test
-    fun finalizeWindow_mergesPreRollAndCapturedAudio() {
+    fun finalizeWindow_mergesPreRollAndEntireCapturedAudio() {
         val config = ContextualCaptureConfig(preRollSeconds = 1, postRollSeconds = 2, sampleRateHz = 4)
         val buffer = CircularAudioBuffer(sampleRateHz = 4, maxSeconds = 3)
         buffer.append(shortArrayOf(1, 2, 3, 4, 5, 6))
@@ -24,11 +24,33 @@ class ContextualCaptureAssemblerTest {
         val finalWindow = assembler.finalizeWindow(preRoll)
 
         assertArrayEquals(shortArrayOf(3, 4, 5, 6), finalWindow.preRollPcm)
-        assertArrayEquals(shortArrayOf(7, 8, 9, 10, 11, 12, 13, 14), finalWindow.livePcm)
+        assertArrayEquals(shortArrayOf(7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18), finalWindow.livePcm)
         assertArrayEquals(
-            shortArrayOf(3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14),
+            shortArrayOf(3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18),
             finalWindow.mergedPcm()
         )
+    }
+
+    @Test
+    fun appendPostRoll_dropsChunksOnceMaxCaptureReached() {
+        val config = ContextualCaptureConfig(
+            preRollSeconds = 0,
+            postRollSeconds = 2,
+            sampleRateHz = 4,
+            maxCaptureSeconds = 2 // cap = 8 samples
+        )
+        val buffer = CircularAudioBuffer(sampleRateHz = 4, maxSeconds = 1)
+
+        val assembler = ContextualCaptureAssembler(config)
+        val preRoll = assembler.beginCapture(buffer)
+        assembler.appendPostRoll(shortArrayOf(1, 2, 3, 4, 5, 6)) // accepted
+        assembler.appendPostRoll(shortArrayOf(7, 8, 9, 10))      // first 2 accepted, rest dropped
+        assembler.appendPostRoll(shortArrayOf(11, 12))           // fully dropped
+
+        val finalWindow = assembler.finalizeWindow(preRoll)
+
+        assertArrayEquals(shortArrayOf(1, 2, 3, 4, 5, 6, 7, 8), finalWindow.livePcm)
+        assertEquals(4, assembler.droppedSampleCount)
     }
 
     @Test

@@ -129,7 +129,9 @@ fun CalendarScreen(
             set(Calendar.SECOND, 59); set(Calendar.MILLISECOND, 999)
         }.timeInMillis
     }
-    val selectedDayEnd = remember(selectedDayStart) { selectedDayStart + 86_400_000L - 1L }
+    val selectedDayEnd = remember(selectedDayStart) {
+        com.trama.shared.util.DayRange.of(selectedDayStart).endInclusiveMs
+    }
 
     // Data
     val monthEntriesState by repository.byDateRange(monthStart, monthEnd).collectAsState(initial = null)

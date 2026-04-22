@@ -65,7 +65,7 @@ class DailyPageGenerator(
     }
 
     suspend fun buildSnapshot(dayStartMillis: Long): DailyReviewSnapshot = withContext(Dispatchers.IO) {
-        val endOfDay = dayStartMillis + 86_400_000L - 1L
+        val endOfDay = com.trama.shared.util.DayRange.of(dayStartMillis).endInclusiveMs
         val entriesToday = repository.byDateRange(dayStartMillis, endOfDay).first()
         val pending = repository.getPending().first()
         val completed = repository.getCompleted().first()

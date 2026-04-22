@@ -21,7 +21,10 @@ data class ClosedDwell(
 data class DwellDetectorConfig(
     val entryRadiusMeters: Float = 80f,
     val exitRadiusMeters: Float = 200f,
-    val dwellThresholdMillis: Long = 15 * 60 * 1000L
+    val dwellThresholdMillis: Long = 15 * 60 * 1000L,
+    /** Window during which re-entering the radius of a just-closed dwell does NOT
+     *  start a new candidate; instead it is ignored (treated as GPS drift). */
+    val reentryCooldownMillis: Long = 5 * 60 * 1000L
 )
 
 data class DwellDetectorResult(
@@ -44,6 +47,36 @@ class DwellDetector(
             return DwellDetectorResult(
                 nextState = state.copy(updatedAt = updatedAt)
             )
+        }
+
+        // Re-entry suppression: if the previous dwell was just closed and the user
+        // is still within its exit radius, treat the sample as drift — do not
+        // accumulate a new candidate that would trigger a duplicate dwell on the
+        // same place (user never actually left the extended vicinity).
+        val lastClosedLat = state.lastClosedLat
+        val lastClosedLon = state.lastClosedLon
+        val lastClosedAt = state.lastClosedAt
+        if (!state.active &&
+            lastClosedLat != null && lastClosedLon != null && lastClosedAt != null &&
+            sample.timestamp - lastClosedAt <= config.reentryCooldownMillis
+        ) {
+            val distanceFromLastClosed = distanceMeters(
+                lastClosedLat, lastClosedLon, sample.latitude, sample.longitude
+            )
+            if (distanceFromLastClosed <= config.exitRadiusMeters) {
+                // Inside cooldown window and still near the closed dwell: discard any
+                // in-flight candidate and wait. When the cooldown expires or the user
+                // walks past the exit radius, normal detection resumes.
+                return DwellDetectorResult(
+                    nextState = state.copy(
+                        candidateLat = null,
+                        candidateLon = null,
+                        candidateStartedAt = null,
+                        candidateLastSeenAt = null,
+                        updatedAt = updatedAt
+                    )
+                )
+            }
         }
 
         if (!state.active && state.candidateLat == null) {
@@ -122,13 +155,18 @@ class DwellDetector(
             longitude = state.anchorLon ?: sample.longitude
         )
 
+        val closedAnchorLat = state.anchorLat ?: sample.latitude
+        val closedAnchorLon = state.anchorLon ?: sample.longitude
         return DwellDetectorResult(
             nextState = DwellDetectionState(
                 candidateLat = sample.latitude,
                 candidateLon = sample.longitude,
                 candidateStartedAt = sample.timestamp,
                 candidateLastSeenAt = sample.timestamp,
-                updatedAt = updatedAt
+                updatedAt = updatedAt,
+                lastClosedLat = closedAnchorLat,
+                lastClosedLon = closedAnchorLon,
+                lastClosedAt = sample.timestamp
             ),
             closedDwells = closed
         )

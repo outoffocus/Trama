@@ -14,7 +14,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import java.io.File
 
 /**
  * Whisper backend powered by sherpa-onnx.
@@ -28,6 +27,9 @@ class SherpaWhisperAsrEngine(
     companion object {
         private const val TAG = "SherpaWhisperAsr"
         private const val MODEL_DIR = "asr/whisper"
+        // sherpa-onnx Whisper currently supports only greedy_search, so hotword biasing
+        // cannot be enabled safely in this backend.
+        private const val SUPPORTS_HOTWORDS = false
         private val CANDIDATE_BUNDLES = listOf(
             WhisperBundle(
                 encoderAssets = listOf(
@@ -138,7 +140,7 @@ class SherpaWhisperAsrEngine(
 
         return withContext(Dispatchers.IO) {
             recognizerMutex.withLock {
-                val currentHotwords = hotwords
+                val currentHotwords = if (SUPPORTS_HOTWORDS) hotwords else emptyList()
                 val newHash = currentHotwords.toSet().hashCode()
                 if (recognizer == null || newHash != activeHotwordsHash) {
                     recognizer = createRecognizer(languageTag, currentHotwords)
@@ -205,23 +207,10 @@ class SherpaWhisperAsrEngine(
             .setDecodingMethod("greedy_search")
 
         if (currentHotwords.isNotEmpty()) {
-            try {
-                val hotwordsFile = writeHotwordsFile(currentHotwords)
-                configBuilder.setHotwordsFile(hotwordsFile)
-                configBuilder.setHotwordsScore(10.0f)
-                Log.i(TAG, "Whisper hotwords: ${currentHotwords.size} words injected")
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to write hotwords file, proceeding without bias", e)
-            }
+            Log.w(TAG, "Ignoring ${currentHotwords.size} hotwords: sherpa-onnx Whisper only supports greedy_search")
         }
 
-        Log.i(TAG, "Initializing sherpa-onnx bundle ${bundle.label}")
+        Log.i(TAG, "Initializing sherpa-onnx bundle ${bundle.label} with greedy_search")
         return OfflineRecognizer(configBuilder.build())
-    }
-
-    private fun writeHotwordsFile(words: List<String>): String {
-        val file = File(appContext.cacheDir, "whisper_hotwords.txt")
-        file.writeText(words.joinToString("\n"))
-        return file.absolutePath
     }
 }

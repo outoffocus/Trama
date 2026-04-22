@@ -223,6 +223,12 @@ private class FakeDiaryDao : DiaryDao {
     override suspend fun getByRecordingIdOnce(recordingId: Long): List<DiaryEntry> = emptyList()
     override suspend fun deleteByRecordingId(recordingId: Long) {}
     override suspend fun updateDueDate(id: Long, dueDate: Long?) {}
+    override fun getCompletedByCompletedAt(startTime: Long, endTime: Long): Flow<List<DiaryEntry>> = flowOf(emptyList())
+    override fun getPendingAsOf(dayEnd: Long): Flow<List<DiaryEntry>> = flowOf(emptyList())
+    override fun getPendingForDay(dayStart: Long, dayEnd: Long): Flow<List<DiaryEntry>> = flowOf(emptyList())
+    override fun getPendingFromOtherDays(beforeDayStart: Long, dayEnd: Long): Flow<List<DiaryEntry>> = flowOf(emptyList())
+    override suspend fun getCompletedSince(since: Long): List<DiaryEntry> = emptyList()
+    override suspend fun getPendingOnce(): List<DiaryEntry> = emptyList()
 }
 
 private class FakeRecordingDao : RecordingDao {

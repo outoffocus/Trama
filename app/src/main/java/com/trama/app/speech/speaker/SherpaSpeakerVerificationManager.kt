@@ -15,7 +15,7 @@ class SherpaSpeakerVerificationManager(
 
         const val REQUIRED_SAMPLES = 3
         const val MAX_SAMPLES = 5
-        const val DEFAULT_THRESHOLD = 0.72f
+        const val DEFAULT_THRESHOLD = 0.60f
         private const val MIN_ENROLLMENT_DURATION_MS = 1_500L
         private const val MIN_VERIFY_DURATION_MS = 800L
     }
@@ -31,7 +31,11 @@ class SherpaSpeakerVerificationManager(
         get() = loadSamples().size
 
     val threshold: Float
-        get() = prefs.getFloat(KEY_THRESHOLD, DEFAULT_THRESHOLD)
+        get() = if (prefs.contains(KEY_THRESHOLD)) {
+            prefs.getFloat(KEY_THRESHOLD, DEFAULT_THRESHOLD)
+        } else {
+            defaultThresholdForSampleCount(sampleCount)
+        }
 
     val isEnabled: Boolean
         get() = prefs.getBoolean(KEY_ENABLED, false)
@@ -100,12 +104,20 @@ class SherpaSpeakerVerificationManager(
         }
 
         val profile = meanEmbedding(samples)
-        val similarity = cosineSimilarity(profile, current.vector)
+        val profileSimilarity = cosineSimilarity(profile, current.vector)
+        val bestSampleSimilarity = samples.maxOfOrNull { sample ->
+            cosineSimilarity(sample, current.vector)
+        } ?: profileSimilarity
+        val similarity = maxOf(profileSimilarity, bestSampleSimilarity)
         val accepted = similarity >= threshold
         return SpeakerVerificationResult(
             accepted = accepted,
             similarity = similarity,
-            reason = if (accepted) "accepted" else "below_threshold"
+            reason = if (accepted) {
+                if (bestSampleSimilarity > profileSimilarity) "accepted_best_sample" else "accepted_profile"
+            } else {
+                "below_threshold"
+            }
         )
     }
 
@@ -165,5 +177,13 @@ class SherpaSpeakerVerificationManager(
         }
         if (normA <= 0.0 || normB <= 0.0) return 0f
         return (dot / (sqrt(normA) * sqrt(normB))).toFloat()
+    }
+
+    private fun defaultThresholdForSampleCount(sampleCount: Int): Float {
+        return when {
+            sampleCount <= REQUIRED_SAMPLES -> 0.50f
+            sampleCount == 4 -> 0.55f
+            else -> DEFAULT_THRESHOLD
+        }
     }
 }

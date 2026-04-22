@@ -85,7 +85,9 @@ fun SummaryScreen(
             set(Calendar.MILLISECOND, 0)
         }.timeInMillis
     }
-    val endOfDay = remember(dayStartMillis) { dayStartMillis + 86_400_000L - 1L }
+    val endOfDay = remember(dayStartMillis) {
+        com.trama.shared.util.DayRange.of(dayStartMillis).endInclusiveMs
+    }
     val headerDate = remember(dayStartMillis) {
         SimpleDateFormat("EEEE d 'de' MMMM", Locale("es"))
             .format(Date(dayStartMillis))

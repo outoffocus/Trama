@@ -46,6 +46,9 @@ class DiaryRepository(
     fun getPendingAsOf(dayEnd: Long): Flow<List<DiaryEntry>> =
         dao.getPendingAsOf(dayEnd).distinctUntilChanged()
 
+    fun getPendingForDay(dayStart: Long, dayEnd: Long): Flow<List<DiaryEntry>> =
+        dao.getPendingForDay(dayStart, dayEnd).distinctUntilChanged()
+
     suspend fun getUnsynced(): List<DiaryEntry> = dao.getUnsynced()
 
     suspend fun getAllOnce(): List<DiaryEntry> = dao.getAllOnce()

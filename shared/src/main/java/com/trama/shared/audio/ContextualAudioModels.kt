@@ -5,7 +5,8 @@ data class ContextualCaptureConfig(
     val postRollSeconds: Int,
     val sampleRateHz: Int = 16_000,
     val silenceStopMs: Long = 1_500L,
-    val gateEvalWindowsMs: List<Long> = listOf(0L, 15_000L, 12_000L, 8_000L, 5_000L, 3_000L)
+    val gateEvalWindowsMs: List<Long> = listOf(0L, 15_000L, 12_000L, 8_000L, 5_000L, 3_000L),
+    val maxCaptureSeconds: Int = 180
 )
 
 data class CapturedAudioWindow(
