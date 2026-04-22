@@ -283,19 +283,25 @@ Responde UNICAMENTE con un JSON valido, sin texto antes ni despues, con esta est
 - "groups": array de objetos con "label" (string), "emoji" (string), "items" (array de strings)
 - "actions": array de objetos con "type" (CALENDAR_EVENT|REMINDER|TODO|MESSAGE|CALL|NOTE), "title" (string), y opcionalmente "description", "datetime" (ISO 8601), "contact"
 
+Separacion funcional entre "groups" y "actions":
+- "groups" describe lo que PASO, se hablo o se penso hoy — resumen retrospectivo de las notas (reflexiones, observaciones, lo que ya hiciste, contexto). Tono pasado.
+- "actions" son tareas PENDIENTES deducidas de las notas que todavia no estan hechas — cosas por hacer, llamadas por hacer, recordatorios futuros. Tono futuro.
+- Una misma nota NUNCA aparece en "groups" y "actions" a la vez. Decide el lado segun el tono: si es algo por hacer → solo "actions". Si es algo sobre lo que ya ocurrio o un pensamiento sin accion pendiente → solo "groups".
+
 Reglas generales:
 - No inventes hechos, fechas, personas ni acciones
 - Si algo es ambiguo, elige la interpretacion mas conservadora
 - Todo debe salir de las notas o del contexto de calendario proporcionado
 
 Reglas para "groups":
-- Agrupa TODAS las notas en categorias SEMANTICAS. Maximo 5-6 categorias
-- Los items deben ser frases cortas que resuman cada nota
+- Maximo 5-6 categorias
+- Los items deben ser frases cortas que resuman cada nota descriptiva (pasado, contexto, reflexion)
 - NUNCA repitas una misma nota en dos categorias
+- NUNCA incluyas en "groups" notas que ya estan en "actions"
 - Usa etiquetas utiles y naturales en español
 
 Reglas para "actions":
-- Solo incluye acciones que se deduzcan claramente de las notas
+- Solo incluye acciones que se deduzcan claramente de las notas y que sigan pendientes
 - Detecta fechas relativas: "mañana" = dia siguiente a {{dateStr}}
 - Si mencionan una persona, usa "contact"
 - "title" debe ser breve y accionable
