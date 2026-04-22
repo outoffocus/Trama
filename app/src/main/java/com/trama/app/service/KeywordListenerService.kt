@@ -1,9 +1,5 @@
 package com.trama.app.service
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -23,12 +19,8 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
 import android.widget.Toast
-import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
-import com.trama.app.MainActivity
-import com.trama.app.NotificationConfig
-import com.trama.app.R
 import com.trama.app.audio.ContextualAudioCaptureEngine
 import com.trama.app.audio.SherpaWhisperAsrEngine
 import com.trama.shared.audio.VoskGateAsr
@@ -81,9 +73,6 @@ class KeywordListenerService : LifecycleService() {
 
     companion object {
         private const val TAG = "KeywordListenerService"
-        private const val CHANNEL_ID = NotificationConfig.CHANNEL_LISTENER
-        private const val NOTIFICATION_ID = NotificationConfig.ID_LISTENER
-        private const val NEW_ENTRY_CHANNEL_ID = NotificationConfig.CHANNEL_NEW_ENTRY
 
         private const val RESTART_DELAY_NORMAL_MS = 500L
         private const val RESTART_DELAY_SLOW_MS = 1500L
@@ -131,13 +120,13 @@ class KeywordListenerService : LifecycleService() {
     private var dedicatedAsrFailedOver = false
 
     @Volatile private var consecutiveSilent = 0
-    @Volatile private var lastNotificationText = ""
     @Volatile
     private var batteryPct: Int = 100
     @Volatile
     private var batteryLowNoticeShown = false
 
     private val dedup = DeduplicationManager()
+    private val notifier = ServiceNotifier(this)
 
     // Track if partial result already triggered a save for this recognition cycle
     @Volatile private var partialAlreadySaved = false
@@ -153,13 +142,13 @@ class KeywordListenerService : LifecycleService() {
                     Log.i(TAG, "Screen off → slow mode")
                     screenOff = true
                     consecutiveSilent = SLOW_MODE_THRESHOLD
-                    updateNotificationIfChanged("Escuchando (segundo plano)")
+                    notifier.updateForegroundIfChanged("Escuchando (segundo plano)")
                 }
                 Intent.ACTION_SCREEN_ON -> {
                     Log.i(TAG, "Screen on → fast mode")
                     screenOff = false
                     consecutiveSilent = 0
-                    updateNotificationIfChanged("Escuchando...")
+                    notifier.updateForegroundIfChanged("Escuchando...")
                 }
             }
         }
@@ -190,7 +179,7 @@ class KeywordListenerService : LifecycleService() {
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannels()
+        notifier.createChannels()
         initDatabase()
         settings = SettingsDataStore(applicationContext)
         dictionary = PersonalDictionary(applicationContext)
@@ -210,12 +199,12 @@ class KeywordListenerService : LifecycleService() {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(
-                NOTIFICATION_ID,
-                buildNotification("Inicializando..."),
+                notifier.foregroundId,
+                notifier.buildForeground("Inicializando..."),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
             )
         } else {
-            startForeground(NOTIFICATION_ID, buildNotification("Inicializando..."))
+            startForeground(notifier.foregroundId, notifier.buildForeground("Inicializando..."))
         }
 
         if (!ServiceController.shouldBeRunning(this)) {
@@ -440,11 +429,11 @@ class KeywordListenerService : LifecycleService() {
                 }
                 publishAsrDebug(engine = "${gateAsr.name} -> ${asrEngine.name}", status = humanReadableAsrState(state))
                 when (state) {
-                    "capturing" -> updateNotificationIfChanged("Capturando contexto...")
-                    "gating" -> updateNotificationIfChanged("Escuchando (gate ligero)")
-                    "trigger_detected" -> updateNotificationIfChanged("Trigger detectado, procesando contexto...")
-                    "rearmed" -> updateNotificationIfChanged("Listo para siguiente frase")
-                    else -> updateNotificationIfChanged("Escuchando (ASR dedicado)")
+                    "capturing" -> notifier.updateForegroundIfChanged("Capturando contexto...")
+                    "gating" -> notifier.updateForegroundIfChanged("Escuchando (gate ligero)")
+                    "trigger_detected" -> notifier.updateForegroundIfChanged("Trigger detectado, procesando contexto...")
+                    "rearmed" -> notifier.updateForegroundIfChanged("Listo para siguiente frase")
+                    else -> notifier.updateForegroundIfChanged("Escuchando (ASR dedicado)")
                 }
             }
             engine.onGateMatch = {
@@ -559,7 +548,7 @@ class KeywordListenerService : LifecycleService() {
                 } else if (recognizerAvailable) {
                     if (!hasActiveNetwork()) {
                         Log.w(TAG, "Cloud SpeechRecognizer fallback unavailable without network, waiting")
-                        updateNotificationIfChanged("Esperando conexión para fallback")
+                        notifier.updateForegroundIfChanged("Esperando conexión para fallback")
                         publishAsrDebug(engine = "speechrecognizer", status = "fallback sin red")
                         scheduleFallbackRecognizerInit(adaptiveDelay())
                         return@launch
@@ -569,7 +558,7 @@ class KeywordListenerService : LifecycleService() {
                     }
                 } else {
                     Log.e(TAG, "No SpeechRecognizer available")
-                    updateNotificationIfChanged("Error: reconocimiento no disponible")
+                    notifier.updateForegroundIfChanged("Error: reconocimiento no disponible")
                     stopSelf()
                     return@launch
                 }
@@ -579,7 +568,7 @@ class KeywordListenerService : LifecycleService() {
                 startListening()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to create SpeechRecognizer", e)
-                updateNotificationIfChanged("Error: no se pudo iniciar")
+                notifier.updateForegroundIfChanged("Error: no se pudo iniciar")
                 stopSelf()
             }
         }
@@ -591,7 +580,7 @@ class KeywordListenerService : LifecycleService() {
         Log.w(TAG, "Falling back to SpeechRecognizer after dedicated ASR failure", error)
         asrEngine = NoOpAsrEngine()
         stopContextualCapture()
-        updateNotificationIfChanged("Escuchando (fallback Android)")
+        notifier.updateForegroundIfChanged("Escuchando (fallback Android)")
         publishAsrDebug(engine = "speechrecognizer", status = "fallback tras error")
         initSpeechRecognizerAndStart()
     }
@@ -608,7 +597,7 @@ class KeywordListenerService : LifecycleService() {
         rec.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
                 speechRecognizerActive = true
-                updateNotificationIfChanged("Escuchando...")
+                notifier.updateForegroundIfChanged("Escuchando...")
             }
 
             override fun onBeginningOfSpeech() {
@@ -965,7 +954,7 @@ class KeywordListenerService : LifecycleService() {
                     "(intent: $intentId, label: $label, reviewed: $wasReviewed)"
             )
             publishAsrDebug(status = "entrada guardada")
-            showNewEntryNotification(entry)
+            notifier.showNewEntry(entry)
 
             phoneToWatchSyncer?.syncUnsentEntries()
 
@@ -997,43 +986,9 @@ class KeywordListenerService : LifecycleService() {
         }
     }
 
-    private fun createNotificationChannels() {
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "Servicio de escucha", NotificationManager.IMPORTANCE_LOW).apply {
-                description = "Muestra el estado del servicio de escucha de palabras clave"
-            }
-        )
-        manager.createNotificationChannel(
-            NotificationChannel(NEW_ENTRY_CHANNEL_ID, "Nuevas entradas", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                description = "Notificaciones cuando se captura una nueva entrada"
-            }
-        )
-    }
-
-    private fun buildNotification(text: String): Notification {
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
-        )
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Trama")
-            .setContentText(text)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentIntent(pendingIntent)
-            .setOngoing(true)
-            .build()
-    }
-
-    private fun updateNotificationIfChanged(text: String) {
-        if (text == lastNotificationText) return
-        lastNotificationText = text
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(NOTIFICATION_ID, buildNotification(text))
-    }
-
     private fun stopForLowBattery(reason: String) {
         Log.w(TAG, "Battery low ($batteryPct%), stopping listener [$reason]")
-        updateNotificationIfChanged("Pausado: batería baja")
+        notifier.updateForegroundIfChanged("Pausado: batería baja")
         if (!batteryLowNoticeShown) {
             batteryLowNoticeShown = true
             lifecycleScope.launch(Dispatchers.Main) {
@@ -1046,26 +1001,6 @@ class KeywordListenerService : LifecycleService() {
         }
         listening = false
         stopSelf()
-    }
-
-    private fun showNewEntryNotification(entry: DiaryEntry) {
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val displayText = entry.displayText
-        val reviewBadge = if (entry.wasReviewedByLLM) " (revisado por IA)" else ""
-
-        val notification = NotificationCompat.Builder(this, NEW_ENTRY_CHANNEL_ID)
-            .setContentTitle("${entry.category}$reviewBadge")
-            .setContentText(displayText)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentIntent(pendingIntent)
-            .setAutoCancel(true)
-            .build()
-
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(entry.id.toInt() + 1000, notification)
     }
 
     private fun isBatteryLow(): Boolean {
