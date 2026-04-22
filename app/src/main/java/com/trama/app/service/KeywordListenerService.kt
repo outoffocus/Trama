@@ -139,12 +139,7 @@ class KeywordListenerService : LifecycleService() {
         )
     }
 
-    // Track if partial result already triggered a save for this recognition cycle
-    @Volatile private var partialAlreadySaved = false
-    @Volatile private var partialAlreadyVibrated = false
-    @Volatile private var confirmedAlreadyVibrated = false
-    @Volatile private var pendingPartialDetection: DetectionResult? = null
-    @Volatile private var pendingGateDetection: DetectionResult? = null
+    private val detectionState = DetectionState()
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -433,10 +428,7 @@ class KeywordListenerService : LifecycleService() {
         ).also { engine ->
             engine.onStatusChanged = { state ->
                 if (state == "gating" || state == "capturing") {
-                    partialAlreadyVibrated = false
-                    confirmedAlreadyVibrated = false
-                    pendingPartialDetection = null
-                    pendingGateDetection = null
+                    detectionState.resetForRearm()
                 }
                 publishAsrDebug(engine = "${gateAsr.name} -> ${asrEngine.name}", status = humanReadableAsrState(state))
                 when (state) {
@@ -448,12 +440,12 @@ class KeywordListenerService : LifecycleService() {
                 }
             }
             engine.onGateMatch = {
-                if (!partialAlreadyVibrated) {
+                if (!detectionState.partialAlreadyVibrated) {
                     vibrate(longArrayOf(0, 35))
-                    partialAlreadyVibrated = true
+                    detectionState.partialAlreadyVibrated = true
                 }
                 val detection = intentDetector.detect(it)
-                pendingGateDetection = detection
+                detectionState.pendingGateDetection = detection
                 val reason = detection?.label?.let { label -> "gate -> $label" } ?: "gate -> trigger"
                 publishAsrDebug(status = "trigger detectado", gateText = it, triggerReason = reason)
             }
@@ -600,11 +592,7 @@ class KeywordListenerService : LifecycleService() {
         if (!listening) return
         val rec = recognizer ?: return
 
-        partialAlreadySaved = false  // Reset for new cycle
-        partialAlreadyVibrated = false
-        confirmedAlreadyVibrated = false
-        pendingPartialDetection = null
-        pendingGateDetection = null
+        detectionState.resetAll()
         rec.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
                 speechRecognizerActive = true
@@ -644,7 +632,7 @@ class KeywordListenerService : LifecycleService() {
             }
 
             override fun onPartialResults(partialResults: Bundle?) {
-                if (partialAlreadySaved) return  // Already captured in this cycle
+                if (detectionState.partialAlreadySaved) return  // Already captured in this cycle
 
                 val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 val text = matches?.firstOrNull()?.trim() ?: return
@@ -652,10 +640,10 @@ class KeywordListenerService : LifecycleService() {
                 if (text.isNotBlank()) {
                     val result = intentDetector.detectPartial(text)
                     if (result != null) {
-                        pendingPartialDetection = result
-                        if (!partialAlreadyVibrated) {
+                        detectionState.pendingPartialDetection = result
+                        if (!detectionState.partialAlreadyVibrated) {
                             vibrate(longArrayOf(0, 35))
-                            partialAlreadyVibrated = true
+                            detectionState.partialAlreadyVibrated = true
                         }
                         publishAsrDebug(
                             status = "trigger parcial",
@@ -808,7 +796,7 @@ class KeywordListenerService : LifecycleService() {
     private fun processPendingPartialResult(
         finalText: String
     ): Boolean {
-        val result = pendingPartialDetection ?: return false
+        val result = detectionState.pendingPartialDetection ?: return false
         Log.i(TAG, "Using pending partial detection to preserve recognized reminder")
         publishAsrDebug(
             gateText = finalText,
@@ -823,7 +811,7 @@ class KeywordListenerService : LifecycleService() {
     private fun processPendingGateResult(
         finalText: String
     ): Boolean {
-        val result = pendingGateDetection ?: return false
+        val result = detectionState.pendingGateDetection ?: return false
         Log.i(TAG, "Using pending gate detection to preserve recognized reminder")
         publishAsrDebug(
             gateText = finalText,
@@ -846,16 +834,15 @@ class KeywordListenerService : LifecycleService() {
                 return false
             }
             DeduplicationManager.Reservation.Reserved -> {
-                partialAlreadySaved = true
+                detectionState.partialAlreadySaved = true
             }
         }
 
-        pendingPartialDetection = null
-        pendingGateDetection = null
+        detectionState.clearPending()
 
-        if (!confirmedAlreadyVibrated) {
+        if (!detectionState.confirmedAlreadyVibrated) {
             vibrate(longArrayOf(0, 120, 40, 120))
-            confirmedAlreadyVibrated = true
+            detectionState.confirmedAlreadyVibrated = true
         }
         publishAsrDebug(status = "procesando entrada")
 
