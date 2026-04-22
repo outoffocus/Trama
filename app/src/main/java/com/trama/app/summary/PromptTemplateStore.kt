@@ -138,6 +138,7 @@ Reglas:
   - añade acciones extra SOLO si son claramente independientes y accionables
   - conserva el contexto compartido dentro del texto de cada accion cuando haga falta para no perder informacion
 
+{{recentContext}}
 Transcripcion original Whisper: "{{originalText}}"
 Texto normalizado previo: "{{normalizedInput}}"
             """.trimIndent()

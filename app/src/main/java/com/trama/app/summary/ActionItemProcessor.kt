@@ -33,9 +33,12 @@ class ActionItemProcessor(private val context: Context) {
         val normalizedInput = existingEntry?.correctedText?.takeIf { it.isNotBlank() } ?: text
         val processingText = normalizedInput.ifBlank { originalText }
 
+        val recentContext = buildRecentContext(entryId, repository)
+
         val outcome = tryProcess(
             originalText = originalText,
-            normalizedInput = processingText
+            normalizedInput = processingText,
+            recentContext = recentContext
         )
         val result = outcome?.primary
         // Only run the heuristic auto-splitter when the LLM was unavailable or
@@ -184,13 +187,14 @@ class ActionItemProcessor(private val context: Context) {
 
     private suspend fun tryProcess(
         originalText: String,
-        normalizedInput: String
+        normalizedInput: String,
+        recentContext: String
     ): LLMOutcome? {
         // Try Cloud
         val apiKey = getApiKey()
         if (!apiKey.isNullOrBlank()) {
             try {
-                return processWithCloud(originalText, normalizedInput, apiKey)
+                return processWithCloud(originalText, normalizedInput, recentContext, apiKey)
             } catch (e: Exception) {
                 Log.w(TAG, "Cloud failed: ${e.javaClass.simpleName}", e)
             }
@@ -199,13 +203,41 @@ class ActionItemProcessor(private val context: Context) {
         // Try local on-device model
         if (GemmaClient.isModelAvailable(context)) {
             try {
-                return processWithLocalModel(originalText, normalizedInput)
+                return processWithLocalModel(originalText, normalizedInput, recentContext)
             } catch (e: Exception) {
                 Log.w(TAG, "Local model failed", e)
             }
         }
 
         return null
+    }
+
+    /**
+     * Collects currently-live tasks (PENDING) and passes their cleanText to the
+     * LLM so it can avoid re-extracting duplicates and resolve references like
+     * "esa tarea" or "la reunión de la que hablé". Capped to stay within Gemma's
+     * small context budget.
+     */
+    private suspend fun buildRecentContext(
+        entryId: Long,
+        repository: DiaryRepository
+    ): String {
+        val pending = try {
+            repository.getPendingOnce()
+        } catch (e: Exception) {
+            Log.d(TAG, "Could not load pending entries for context", e)
+            return ""
+        }
+        val items = pending
+            .asSequence()
+            .filter { it.id != entryId }
+            .map { (it.cleanText ?: it.displayText).trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(MAX_CONTEXT_ITEMS)
+            .toList()
+        if (items.isEmpty()) return ""
+        return items.joinToString(separator = "\n") { "- $it" }
     }
 
     private fun buildHeuristicFallback(
@@ -238,9 +270,10 @@ class ActionItemProcessor(private val context: Context) {
     private suspend fun processWithCloud(
         originalText: String,
         normalizedInput: String,
+        recentContext: String,
         apiKey: String
     ): LLMOutcome {
-        val prompt = buildPrompt(originalText, normalizedInput)
+        val prompt = buildPrompt(originalText, normalizedInput, recentContext)
 
         val model = GenerativeModel(
             modelName = GeminiConfig.MODEL_NAME,
@@ -261,10 +294,11 @@ class ActionItemProcessor(private val context: Context) {
 
     private suspend fun processWithLocalModel(
         originalText: String,
-        normalizedInput: String
+        normalizedInput: String,
+        recentContext: String
     ): LLMOutcome? {
         // Use the same structured prompt as Cloud
-        val prompt = buildPrompt(originalText, normalizedInput)
+        val prompt = buildPrompt(originalText, normalizedInput, recentContext)
         val responseText = GemmaClient.generate(context, prompt, maxTokens = 256, responsePrefix = "{") ?: return null
         Log.d(TAG, "Local model response: $responseText")
 
@@ -306,10 +340,16 @@ class ActionItemProcessor(private val context: Context) {
         }
     }
 
-    private fun buildPrompt(originalText: String, normalizedInput: String): String {
+    private fun buildPrompt(
+        originalText: String,
+        normalizedInput: String,
+        recentContext: String = ""
+    ): String {
         val today = dateFormat.format(Calendar.getInstance().time)
         val tomorrow = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 1) }
         val tomorrowStr = dateFormat.format(tomorrow.time)
+        val contextBlock = if (recentContext.isBlank()) "" else
+            "Tareas pendientes actuales del usuario (no dupliques; resuelve referencias como \"esa tarea\"):\n$recentContext\n"
         return PromptTemplateStore.render(
             context,
             PromptTemplateStore.ACTION_ITEM,
@@ -318,7 +358,8 @@ class ActionItemProcessor(private val context: Context) {
                 "originalText" to originalText,
                 "normalizedInput" to normalizedInput,
                 "today" to today,
-                "tomorrow" to tomorrowStr
+                "tomorrow" to tomorrowStr,
+                "recentContext" to contextBlock
             )
         )
     }
@@ -572,6 +613,9 @@ Reglas:
 
         /** Minimum confidence for an LLM extraction to be accepted as a real task. */
         private const val ACTIONABLE_CONFIDENCE_THRESHOLD = 0.45f
+
+        /** How many live tasks to pass to the LLM as context. Gemma is memory-bound. */
+        private const val MAX_CONTEXT_ITEMS = 15
 
         /** Phrases that, when they constitute the whole cleanText, are not actionable. */
         private val TEMPORAL_ONLY_PHRASES = setOf(
