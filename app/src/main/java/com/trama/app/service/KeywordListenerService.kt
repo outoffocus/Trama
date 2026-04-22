@@ -126,7 +126,7 @@ class KeywordListenerService : LifecycleService() {
     private var batteryLowNoticeShown = false
 
     private val dedup = DeduplicationManager()
-    private val notifier = ServiceNotifier(this)
+    private val notifier by lazy { ServiceNotifier(this) }
     private val captureSaver by lazy {
         CaptureSaver(
             context = this,
