@@ -66,7 +66,15 @@
       "Bash(perl -i -pe ' *)",
       "Bash(./gradlew :app:testDebugUnitTest --tests \"com.trama.app.location.DwellDetectorHysteresisTest\")",
       "Bash(perl -i -pe 's/\\\\bsplitVerbs\\\\b/ACTION_VERBS/g' app/src/main/java/com/trama/app/summary/ManualActionSuggestionExtractor.kt)",
-      "Bash(./gradlew :app:testDebugUnitTest --tests \"com.trama.app.summary.*\")"
+      "Bash(./gradlew :app:testDebugUnitTest --tests \"com.trama.app.summary.*\")",
+      "WebFetch(domain:api.anthropic.com)",
+      "Bash(mkdir -p /tmp/trama-design)",
+      "Read(//tmp/**)",
+      "Bash(cp \"/Users/pabmon/.claude/projects/-Users-pabmon-Documents-Projects-TRAMA-Trama/a7b2b017-174c-475d-a0c5-ab08b8c296f8/tool-results/webfetch-1776897308569-v1nlvl.bin\" design.gz)",
+      "Read(//private/tmp/trama-design/**)",
+      "Bash(gunzip -k design.gz)",
+      "Bash(mkdir -p extracted)",
+      "Bash(tar -xf design -C extracted)"
     ]
   }
 }

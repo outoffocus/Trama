@@ -349,7 +349,8 @@ class ActionItemProcessor(private val context: Context) {
         val tomorrow = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 1) }
         val tomorrowStr = dateFormat.format(tomorrow.time)
         val contextBlock = if (recentContext.isBlank()) "" else
-            "Tareas pendientes actuales del usuario (no dupliques; resuelve referencias como \"esa tarea\"):\n$recentContext\n"
+            "CONTEXTO — tareas pendientes del usuario ahora mismo:\n$recentContext\n\n" +
+                "Si la nota es una referencia a alguna de las tareas anteriores (ej: \"eso que dije de Pedro\", \"lo de la reunion\"), responde con isActionable=false y confidence<=0.3. No dupliques tareas ya existentes.\n"
         return PromptTemplateStore.render(
             context,
             PromptTemplateStore.ACTION_ITEM,

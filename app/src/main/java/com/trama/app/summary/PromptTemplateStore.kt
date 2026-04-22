@@ -28,6 +28,7 @@ object PromptTemplateStore {
             title = "Procesamiento de entrada",
             subtitle = "Limpia una nota y extrae tipo, fecha y prioridad",
             defaultTemplate = """
+{{recentContext}}
 Analiza esta nota de voz capturada y devuelve SOLO un objeto JSON valido.
 - No añadas explicaciones, markdown, backticks ni texto extra.
 - Si dudas entre varias interpretaciones, elige la mas conservadora y mas literal.
@@ -67,6 +68,7 @@ NO EXTRAER (isActionable=false, confidence<=0.3):
 - fragmentos incompletos por mala transcripcion: "por la", "y luego el"
 - meros comentarios sobre el pasado sin accion pendiente: "ayer fui al medico"
 - transcripciones con palabras mayormente sin sentido o repeticiones de ruido
+- referencias a una tarea que ya aparece en el CONTEXTO del inicio del prompt (ej: "eso que dije de Pedro", "la reunion del lunes"). En ese caso copia el texto literal de la nota en cleanText pero marca isActionable=false con confidence<=0.3 — no dupliques tareas existentes.
 
 Cuando isActionable=false, igualmente rellena cleanText con el texto original trimmed para referencia.
 
@@ -102,11 +104,7 @@ Reglas:
   - NO elimines nombres propios, lugares, telefonos, numeros o fechas si ayudan a entender la accion
   - no la conviertas en una frase demasiado bonita ni demasiado general
   - es mejor una accion algo larga y fiel que una corta y ambigua
-  - NUNCA reduzcas cleanText a solo una expresion temporal, frecuencia o habito (ej: "Todos los dias", "Cada manana", "Mañana", "manana" son INVALIDOS solos como cleanText)
-  - si el texto describe un habito recurrente (ej: "hacer ejercicios todas las mananas por mis problemas de espalda"), cleanText debe contener la accion concreta; puede incluir la frecuencia pero NO puede ser solo la frecuencia
-  - cuando el patron es "por [motivo] tengo que [accion]", cleanText debe preservar la accion y opcionalmente el motivo, NUNCA solo el patron temporal
-  - cuando el patron es "[temporal] tengo que [accion]" o "[temporal] hay que [accion]" (ej: "mañana tengo que ir a CTAG"), cleanText es la ACCION ("ir a CTAG"), la fecha va en dueDate — NUNCA devuelvas solo la expresion temporal como cleanText
-  - en general: si eliminas el trigger ("tengo que", "hay que", etc.) y lo que queda es solo una fecha o palabra temporal, ALGO FALTA — debes incluir el destino, la persona o el objeto de la accion
+  - cleanText NUNCA puede ser solo una expresion temporal, frecuencia o habito. Si al quitar el trigger ("tengo que", "hay que", "recuerdame que", etc.) solo queda tiempo ("Mañana", "Cada manana", "Todos los dias"), falta el destino/persona/objeto: inclúyelo. La expresion temporal va en dueDate, no en cleanText. Ej: "mañana tengo que ir a CTAG" → cleanText "Ir a CTAG", dueDate={{tomorrow}}. NUNCA cleanText="Mañana".
 - actionType: CALL=llamar, BUY=comprar, SEND=enviar, EVENT=cita/reunión, REVIEW=revisar, TALK_TO=hablar con, GENERIC=otro
 - dueDate:
   - usa YYYY-MM-DD
@@ -138,7 +136,6 @@ Reglas:
   - añade acciones extra SOLO si son claramente independientes y accionables
   - conserva el contexto compartido dentro del texto de cada accion cuando haga falta para no perder informacion
 
-{{recentContext}}
 Transcripcion original Whisper: "{{originalText}}"
 Texto normalizado previo: "{{normalizedInput}}"
             """.trimIndent()
