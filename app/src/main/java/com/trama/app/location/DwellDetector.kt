@@ -33,7 +33,8 @@ data class DwellDetectorResult(
 )
 
 class DwellDetector(
-    private val config: DwellDetectorConfig
+    private val config: DwellDetectorConfig,
+    private val distance: (Double, Double, Double, Double) -> Float = ::defaultDistanceMeters
 ) {
 
     fun process(
@@ -60,7 +61,7 @@ class DwellDetector(
             lastClosedLat != null && lastClosedLon != null && lastClosedAt != null &&
             sample.timestamp - lastClosedAt <= config.reentryCooldownMillis
         ) {
-            val distanceFromLastClosed = distanceMeters(
+            val distanceFromLastClosed = distance(
                 lastClosedLat, lastClosedLon, sample.latitude, sample.longitude
             )
             if (distanceFromLastClosed <= config.exitRadiusMeters) {
@@ -92,14 +93,14 @@ class DwellDetector(
         }
 
         if (!state.active) {
-            val distance = distanceMeters(
+            val distanceFromCandidate = distance(
                 state.candidateLat ?: sample.latitude,
                 state.candidateLon ?: sample.longitude,
                 sample.latitude,
                 sample.longitude
             )
 
-            if (distance <= config.entryRadiusMeters) {
+            if (distanceFromCandidate <= config.entryRadiusMeters) {
                 val startedAt = state.candidateStartedAt ?: sample.timestamp
                 val elapsed = sample.timestamp - startedAt
                 return if (elapsed >= config.dwellThresholdMillis) {
@@ -137,7 +138,7 @@ class DwellDetector(
             )
         }
 
-        val distanceFromAnchor = distanceMeters(
+        val distanceFromAnchor = distance(
             state.anchorLat ?: sample.latitude,
             state.anchorLon ?: sample.longitude,
             sample.latitude,
@@ -198,18 +199,18 @@ class DwellDetector(
         return dwells
     }
 
-    private fun distanceMeters(
-        startLat: Double,
-        startLon: Double,
-        endLat: Double,
-        endLon: Double
-    ): Float {
-        val result = FloatArray(1)
-        Location.distanceBetween(startLat, startLon, endLat, endLon, result)
-        return result[0]
-    }
-
     private companion object {
         const val DAY_MS = 24 * 60 * 60 * 1000L
     }
+}
+
+private fun defaultDistanceMeters(
+    startLat: Double,
+    startLon: Double,
+    endLat: Double,
+    endLon: Double
+): Float {
+    val result = FloatArray(1)
+    Location.distanceBetween(startLat, startLon, endLat, endLon, result)
+    return result[0]
 }
