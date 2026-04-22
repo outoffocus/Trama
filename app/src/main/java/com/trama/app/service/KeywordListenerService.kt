@@ -127,6 +127,17 @@ class KeywordListenerService : LifecycleService() {
 
     private val dedup = DeduplicationManager()
     private val notifier = ServiceNotifier(this)
+    private val captureSaver by lazy {
+        CaptureSaver(
+            context = this,
+            dedup = dedup,
+            notifier = notifier,
+            scope = lifecycleScope,
+            repoProvider = { repository },
+            onStatus = { status -> publishAsrDebug(status = status) },
+            onEntrySaved = { phoneToWatchSyncer?.syncUnsentEntries() }
+        )
+    }
 
     // Track if partial result already triggered a save for this recognition cycle
     @Volatile private var partialAlreadySaved = false
@@ -870,12 +881,11 @@ class KeywordListenerService : LifecycleService() {
                 validation?.correctedText ?: result.capturedText
             )
 
-            saveEntry(
+            captureSaver.save(
                 intentId = intentId,
                 label = result.label,
                 text = correctedText,
                 originalText = result.capturedText,
-                correctedByLLM = validation?.correctedText,
                 llmConfidence = validation?.confidence ?: 0.9f,
                 wasReviewed = validation?.correctedText != null || validation?.reason?.contains("IA") == true,
                 confidence = 0.9f
@@ -905,69 +915,6 @@ class KeywordListenerService : LifecycleService() {
                 lastWindowMs = lastWindowMs,
                 lastDecodeMs = lastDecodeMs
             )
-        }
-    }
-
-    private fun saveEntry(
-        intentId: String,
-        label: String,
-        text: String,
-        originalText: String,
-        correctedByLLM: String?,
-        llmConfidence: Float,
-        wasReviewed: Boolean,
-        confidence: Float
-    ) {
-        lifecycleScope.launch(Dispatchers.IO) {
-            val repo = repository ?: return@launch
-            val capturedText = originalText.ifBlank { text }
-            val entry = DiaryEntry(
-                text = originalText.ifBlank { text },
-                keyword = intentId,
-                category = label,
-                confidence = confidence,
-                source = Source.PHONE,
-                duration = 0,
-                correctedText = text,
-                wasReviewedByLLM = wasReviewed,
-                llmConfidence = llmConfidence,
-                cleanText = null
-            )
-            val entryId = dedup.withSaveLock {
-                repo.withTransaction {
-                    val latestPending = getLatestPendingOnce()
-                    if (dedup.isDuplicateOfLatestPending(latestPending, capturedText, text)) {
-                        return@withTransaction null
-                    }
-                    insert(entry)
-                }
-            }
-
-            if (entryId == null) {
-                Log.i(TAG, "Persisted dedup: skipping recently saved duplicate '$text'")
-                publishAsrDebug(status = "duplicado reciente ignorado")
-                return@launch
-            }
-            Log.i(
-                TAG,
-                "Entry saved: raw='${originalText.ifBlank { text }}' corrected='${text}' " +
-                    "(intent: $intentId, label: $label, reviewed: $wasReviewed)"
-            )
-            publishAsrDebug(status = "entrada guardada")
-            notifier.showNewEntry(entry)
-
-            phoneToWatchSyncer?.syncUnsentEntries()
-
-            // Fire-and-forget: process entry through AI to extract action metadata
-            EntryProcessingState.markProcessing(entryId)
-            try {
-                val processor = ActionItemProcessor(this@KeywordListenerService)
-                processor.process(entryId, text, repo)
-            } catch (e: Exception) {
-                Log.w(TAG, "ActionItemProcessor failed for entry $entryId", e)
-            } finally {
-                EntryProcessingState.markFinished(entryId)
-            }
         }
     }
 
