@@ -141,7 +141,17 @@ data class IntentPattern(
                     "recuérdame",
                     "acordarme de",
                     "acordarnos de",
-                    "no olvidar"
+                    "no olvidar",
+                    "nota mental",
+                    "apuntame",
+                    "apúntame",
+                    "apuntar",
+                    "apunta",
+                    "anota",
+                    "anotar",
+                    "recordatorio",
+                    "me acuerdo",
+                    "tienes que acordarte"
                 )
             ),
             IntentPattern(
@@ -162,7 +172,30 @@ data class IntentPattern(
                     "necesitaria",
                     "necesitaría",
                     "necesitariamos",
-                    "necesitaríamos"
+                    "necesitaríamos",
+                    "me gustaria",
+                    "me gustaría",
+                    "nos gustaria",
+                    "nos gustaría",
+                    "voy a",
+                    "vamos a",
+                    "podria",
+                    "podría",
+                    "podriamos",
+                    "podríamos",
+                    "quiero",
+                    "queremos",
+                    "quisiera",
+                    "quisieramos",
+                    "quisiéramos",
+                    "haria falta",
+                    "haría falta",
+                    "he de",
+                    "hemos de",
+                    "tengo pendiente",
+                    "tenemos pendiente",
+                    "pendiente de",
+                    "falta por"
                 )
             ),
             IntentPattern(
@@ -170,8 +203,36 @@ data class IntentPattern(
                 label = "Comunicacion",
                 triggers = listOf(
                     "llamar a",
+                    "llama a",
+                    "llamame",
+                    "llámame",
                     "escribir a",
-                    "mandar mensaje a"
+                    "escribe a",
+                    "escribele a",
+                    "escríbele a",
+                    "mandar mensaje a",
+                    "manda mensaje a",
+                    "mandar un mensaje a",
+                    "manda un mensaje a",
+                    "mandar whatsapp a",
+                    "manda whatsapp a",
+                    "mandar correo a",
+                    "manda correo a",
+                    "enviar a",
+                    "envia a",
+                    "envía a",
+                    "contestar a",
+                    "contesta a",
+                    "responder a",
+                    "responde a",
+                    "decirle a",
+                    "dile a",
+                    "preguntar a",
+                    "pregunta a",
+                    "pregúntale a",
+                    "preguntale a",
+                    "avisar a",
+                    "avisa a"
                 )
             )
         )

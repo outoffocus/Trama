@@ -68,6 +68,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -75,6 +76,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import com.trama.app.diagnostics.CaptureLog
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -690,6 +692,10 @@ fun SettingsScreen(
                     }
                 }
             }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            CaptureDiagnosticsCard()
 
             SectionDivider()
             }
@@ -2510,4 +2516,107 @@ private fun TestPhraseDialog(
         confirmButton = { TextButton(onClick = onDismiss) { Text("Cerrar") } },
         shape = RoundedCornerShape(24.dp)
     )
+}
+
+@Composable
+private fun CaptureDiagnosticsCard() {
+    var tick by remember { mutableIntStateOf(0) }
+    val events = remember(tick) {
+        CaptureLog.recentEvents(System.currentTimeMillis() - 24L * 60 * 60 * 1000)
+    }
+
+    val rows: List<Triple<String, String, Int>> = remember(events) {
+        val grouped = events.groupingBy { it.gate to it.result }.eachCount()
+        val order = listOf(
+            "ASR_FINAL" to "OK",
+            "SPEAKER" to "OK",
+            "SPEAKER" to "REJECT",
+            "INTENT" to "OK",
+            "INTENT" to "NO_MATCH",
+            "DEDUP_MEM" to "DUP",
+            "DEDUP_SEM" to "DUP",
+            "LLM" to "OK",
+            "LLM" to "REJECT",
+            "SAVE" to "OK",
+            "RECORDING" to "OK",
+            "RECORDING" to "NO_MATCH"
+        )
+        order.map { (g, r) -> Triple(g, r, grouped[g to r] ?: 0) }
+    }
+
+    val labels = mapOf(
+        "ASR_FINAL" to "OK" to "Transcripciones ASR",
+        "SPEAKER" to "OK" to "Speaker verificado",
+        "SPEAKER" to "REJECT" to "Speaker rechazado",
+        "INTENT" to "OK" to "Intent detectado",
+        "INTENT" to "NO_MATCH" to "Sin intent (ignorado)",
+        "DEDUP_MEM" to "DUP" to "Duplicado (memoria)",
+        "DEDUP_SEM" to "DUP" to "Duplicado (semántico)",
+        "LLM" to "OK" to "LLM acepta tarea",
+        "LLM" to "REJECT" to "LLM → revisión",
+        "SAVE" to "OK" to "Entradas guardadas",
+        "RECORDING" to "OK" to "Grabaciones con acciones",
+        "RECORDING" to "NO_MATCH" to "Grabaciones sin acciones"
+    )
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.35f)
+        ),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Diagnóstico de captura (últimas 24h)",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        "Una entrada por cada etapa del pipeline. Si el número de 'Transcripciones ASR' sube pero 'Entradas guardadas' no, mira qué etapa intermedia rechaza: speaker, intent o LLM.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                TextButton(onClick = { tick++ }) { Text("Actualizar") }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            rows.forEach { (gate, result, count) ->
+                val label = labels[gate to result] ?: "$gate / $result"
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        count.toString(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (count == 0) MaterialTheme.colorScheme.onSurfaceVariant
+                                else MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+
+            if (events.isEmpty()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    "Sin eventos todavía. Deja el servicio en marcha y vuelve a abrir esta pantalla.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
 }

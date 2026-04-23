@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.ComponentCallbacks2
 import android.content.res.Configuration
 import android.util.Log
+import com.trama.app.diagnostics.CaptureLog
 import com.trama.app.summary.GemmaClient
 import com.trama.app.summary.SummaryScheduler
 import com.trama.app.ui.SettingsDataStore
@@ -19,6 +20,7 @@ class TramaApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        CaptureLog.init(applicationContext)
         scheduleDailySummaryIfEnabled()
         registerMemoryCallback()
     }

@@ -74,10 +74,10 @@ class IntentDetectorTest {
 
     @Test
     fun `custom keyword matching is case insensitive`() {
-        detector.setCustomKeywords(listOf("URGENTE TAREA"))
-        val result = detector.detect("hay una urgente tarea pendiente")
+        detector.setCustomKeywords(listOf("PROYECTO ZETA"))
+        val result = detector.detect("hablamos del proyecto zeta ayer")
         assertNotNull(result)
-        assertEquals("URGENTE TAREA", result!!.customKeyword)
+        assertEquals("PROYECTO ZETA", result!!.customKeyword)
     }
 
     @Test

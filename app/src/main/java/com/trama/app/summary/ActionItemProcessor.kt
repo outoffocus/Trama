@@ -5,6 +5,7 @@ import android.util.Log
 import com.google.ai.client.generativeai.GenerativeModel
 import com.trama.app.GeminiConfig
 import com.google.ai.client.generativeai.type.generationConfig
+import com.trama.app.diagnostics.CaptureLog
 import com.trama.shared.data.DiaryRepository
 import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.EntryActionType
@@ -71,6 +72,16 @@ class ActionItemProcessor(private val context: Context) {
                     confidence = result.confidence
                 )
                 Log.i(TAG, "Processed entry $entryId: '${result.cleanText}' [${result.actionType}]")
+                CaptureLog.event(
+                    gate = CaptureLog.Gate.LLM,
+                    result = CaptureLog.Result.OK,
+                    text = result.cleanText,
+                    meta = mapOf(
+                        "id" to entryId,
+                        "actionType" to result.actionType,
+                        "confidence" to "%.2f".format(result.confidence)
+                    )
+                )
                 // Persist any extra actions the LLM extracted from the same note.
                 persistLLMExtras(entryId, outcome.extras, repository)
             } else {
@@ -87,6 +98,17 @@ class ActionItemProcessor(private val context: Context) {
                     TAG,
                     "Routing entry $entryId to review queue: '${result.cleanText}' " +
                         "(actionable=${result.isActionable}, confidence=${result.confidence})"
+                )
+                CaptureLog.event(
+                    gate = CaptureLog.Gate.LLM,
+                    result = CaptureLog.Result.REJECT,
+                    text = result.cleanText,
+                    meta = mapOf(
+                        "id" to entryId,
+                        "isActionable" to result.isActionable,
+                        "confidence" to "%.2f".format(result.confidence),
+                        "route" to "SUGGESTED"
+                    )
                 )
                 return
             }

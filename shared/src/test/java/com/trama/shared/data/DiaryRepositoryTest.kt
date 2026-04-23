@@ -188,6 +188,8 @@ private class FakeDiaryDao : DiaryDao {
     override suspend fun getByIdOnce(id: Long): DiaryEntry? = inserted.find { it.id == id }
     override fun getAll(): Flow<List<DiaryEntry>> = flowOf(emptyList())
     override fun getPending(): Flow<List<DiaryEntry>> = flowOf(emptyList())
+    override fun getSuggested(): Flow<List<DiaryEntry>> = flowOf(emptyList())
+    override suspend fun markSuggested(id: Long) {}
     override fun getCompleted(): Flow<List<DiaryEntry>> = flowOf(emptyList())
     override fun getOverdue(now: Long): Flow<List<DiaryEntry>> = flowOf(emptyList())
     override fun byDateRange(startTime: Long, endTime: Long): Flow<List<DiaryEntry>> = flowOf(emptyList())

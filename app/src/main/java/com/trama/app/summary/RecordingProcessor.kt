@@ -5,6 +5,7 @@ import android.util.Log
 import com.google.ai.client.generativeai.GenerativeModel
 import com.trama.app.GeminiConfig
 import com.google.ai.client.generativeai.type.generationConfig
+import com.trama.app.diagnostics.CaptureLog
 import com.trama.shared.data.DiaryRepository
 import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.EntryStatus
@@ -109,6 +110,16 @@ class RecordingProcessor(private val context: Context) {
             saveResult(recordingId, result, source, "CLOUD", 0.9f, repository)
 
             Log.i(TAG, "Recording $recordingId processed via Cloud: '${result.title}', ${result.actionItems.size} actions")
+            CaptureLog.event(
+                gate = CaptureLog.Gate.RECORDING,
+                result = if (result.actionItems.isNotEmpty()) CaptureLog.Result.OK else CaptureLog.Result.NO_MATCH,
+                text = result.title,
+                meta = mapOf(
+                    "id" to recordingId,
+                    "actions" to result.actionItems.size,
+                    "source" to "CLOUD"
+                )
+            )
             checkActionsForDuplicates(recordingId, repository)
             true
         } catch (e: Exception) {
@@ -144,6 +155,16 @@ class RecordingProcessor(private val context: Context) {
             saveResult(recordingId, result, source, "LOCAL", 0.8f, repository)
 
             Log.i(TAG, "Recording $recordingId processed via local model: '${result.title}', ${result.actionItems.size} actions")
+            CaptureLog.event(
+                gate = CaptureLog.Gate.RECORDING,
+                result = if (result.actionItems.isNotEmpty()) CaptureLog.Result.OK else CaptureLog.Result.NO_MATCH,
+                text = result.title,
+                meta = mapOf(
+                    "id" to recordingId,
+                    "actions" to result.actionItems.size,
+                    "source" to "LOCAL"
+                )
+            )
             if (result.actionItems.isNotEmpty()) {
                 checkActionsForDuplicates(recordingId, repository)
             }

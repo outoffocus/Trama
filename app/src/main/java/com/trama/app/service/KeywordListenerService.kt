@@ -23,6 +23,7 @@ import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.trama.app.audio.ContextualAudioCaptureEngine
 import com.trama.app.audio.SherpaWhisperAsrEngine
+import com.trama.app.diagnostics.CaptureLog
 import com.trama.shared.audio.VoskGateAsr
 import com.trama.shared.audio.ContextualCaptureConfig
 import com.trama.shared.audio.LightweightGateAsr
@@ -476,6 +477,16 @@ class KeywordListenerService : LifecycleService() {
                     val text = transcript?.text?.trim().orEmpty()
                     if (text.isNotBlank()) {
                         val elapsedMs = System.currentTimeMillis() - startedAt
+                        CaptureLog.event(
+                            gate = CaptureLog.Gate.ASR_FINAL,
+                            result = CaptureLog.Result.OK,
+                            text = text,
+                            meta = mapOf(
+                                "engine" to asrEngine.name,
+                                "windowMs" to window.durationMs(),
+                                "decodeMs" to elapsedMs
+                            )
+                        )
                         val speakerWindow = window
                             .copy(preRollPcm = shortArrayOf())
                             .tailWindow(SPEAKER_VERIFY_WINDOW_MS)
@@ -492,8 +503,22 @@ class KeywordListenerService : LifecycleService() {
                                 TAG,
                                 "Speaker verification rejected capture (sim=${speakerVerification.similarity}, threshold=$speakerThreshold): '$text'"
                             )
+                            CaptureLog.event(
+                                gate = CaptureLog.Gate.SPEAKER,
+                                result = CaptureLog.Result.REJECT,
+                                text = text,
+                                meta = mapOf(
+                                    "sim" to "%.2f".format(speakerVerification.similarity),
+                                    "threshold" to "%.2f".format(speakerThreshold)
+                                )
+                            )
                             return@launch
                         }
+                        CaptureLog.event(
+                            gate = CaptureLog.Gate.SPEAKER,
+                            result = CaptureLog.Result.OK,
+                            meta = mapOf("sim" to "%.2f".format(speakerVerification.similarity))
+                        )
                         publishAsrDebug(
                             engine = asrEngine.name,
                             status = "ultima captura",
@@ -508,8 +533,13 @@ class KeywordListenerService : LifecycleService() {
                                 "${elapsedMs}ms decode): '$text'"
                         )
                         val saved = processText(text)
-                        if (!saved) {
-                            processPendingGateResult(text)
+                        val rescued = if (!saved) processPendingGateResult(text) else false
+                        if (!saved && !rescued) {
+                            CaptureLog.event(
+                                gate = CaptureLog.Gate.INTENT,
+                                result = CaptureLog.Result.NO_MATCH,
+                                text = text
+                            )
                         }
                     }
                 }
@@ -827,10 +857,24 @@ class KeywordListenerService : LifecycleService() {
         result: DetectionResult,
         text: String
     ): Boolean {
+        CaptureLog.event(
+            gate = CaptureLog.Gate.INTENT,
+            result = CaptureLog.Result.OK,
+            text = text,
+            meta = mapOf(
+                "label" to result.label,
+                "pattern" to (result.pattern?.id ?: "custom")
+            )
+        )
         when (dedup.tryReserve(result, text)) {
             DeduplicationManager.Reservation.Duplicate -> {
                 publishAsrDebug(status = "duplicado ignorado")
                 Log.i(TAG, "Dedup: skipping similar entry within ${DeduplicationManager.IN_MEMORY_WINDOW_MS}ms")
+                CaptureLog.event(
+                    gate = CaptureLog.Gate.DEDUP_MEM,
+                    result = CaptureLog.Result.DUP,
+                    text = text
+                )
                 return false
             }
             DeduplicationManager.Reservation.Reserved -> {

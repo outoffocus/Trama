@@ -2,6 +2,7 @@ package com.trama.app.service
 
 import android.content.Context
 import android.util.Log
+import com.trama.app.diagnostics.CaptureLog
 import com.trama.app.summary.ActionItemProcessor
 import com.trama.shared.data.DiaryRepository
 import com.trama.shared.model.DiaryEntry
@@ -63,12 +64,24 @@ class CaptureSaver(
             if (entryId == null) {
                 Log.i(TAG, "Persisted dedup: skipping recently saved duplicate '$text'")
                 onStatus("duplicado reciente ignorado")
+                CaptureLog.event(
+                    gate = CaptureLog.Gate.DEDUP_SEM,
+                    result = CaptureLog.Result.DUP,
+                    text = text,
+                    meta = mapOf("intent" to intentId)
+                )
                 return@launch
             }
             Log.i(
                 TAG,
                 "Entry saved: raw='$capturedText' corrected='$text' " +
                     "(intent: $intentId, label: $label, reviewed: $wasReviewed)"
+            )
+            CaptureLog.event(
+                gate = CaptureLog.Gate.SAVE,
+                result = CaptureLog.Result.OK,
+                text = text,
+                meta = mapOf("id" to entryId, "intent" to intentId, "label" to label)
             )
             onStatus("entrada guardada")
             notifier.showNewEntry(entry)
