@@ -136,6 +136,8 @@ Reglas:
   - añade acciones extra SOLO si son claramente independientes y accionables
   - conserva el contexto compartido dentro del texto de cada accion cuando haga falta para no perder informacion
 
+RESPONDE SOLO con el objeto JSON. No uses backticks ni bloques ``` ni texto fuera del JSON.
+
 Transcripcion original Whisper: "{{originalText}}"
 Texto normalizado previo: "{{normalizedInput}}"
             """.trimIndent()
@@ -213,6 +215,8 @@ Reglas:
   - no crees dos tareas si en realidad es la misma accion expresada dos veces
   - mejor menos acciones y fiables que muchas dudosas
 
+RESPONDE SOLO con el objeto JSON. No uses backticks ni bloques ``` ni texto fuera del JSON.
+
 Transcripción:
 \"\"\"
 {{transcription}}
@@ -270,6 +274,8 @@ Reglas:
 - NO extraigas una tarea si ya aparece (o una referencia a ella) en el CONTEXTO del inicio del prompt. Prefiere omitir antes que duplicar.
 Hoy es {{today}}.
 
+RESPONDE SOLO con el array JSON. No uses backticks ni bloques ``` ni texto fuera del array.
+
 Texto: "{{transcription}}"
             """.trimIndent()
         ),
@@ -312,6 +318,8 @@ Reglas para "actions":
 - NO inventes acciones que no esten en las notas
 - No dupliques acciones equivalentes
 {{calendarContext}}
+RESPONDE SOLO con el objeto JSON. No uses backticks ni bloques ``` ni texto fuera del JSON.
+
 Notas del dia:
 {{entriesText}}
             """.trimIndent()
@@ -331,6 +339,8 @@ No rechaces una nota solo porque contenga nombres poco comunes, lugares, telefon
 Si corriges el texto, preserva TODA la informacion: nombres propios, lugares, telefonos, numeros, fechas, motivos y contexto.
 Mejor aceptar una nota ambigua que perder una nota personal real.
 Error ASR frecuente — infinitivo como sustantivo: si un infinitivo español común (aceptar, completar, cancelar, pagar, enviar, comprar, borrar, guardar, llamar, gestionar, revisar, firmar, entregar, recoger, actualizar, confirmar, etc.) aparece como destino de "ir a", nombre de lugar, nombre de persona o sigla (ej: "ir a aceptar", "en aceptar", "llegar a cancelar"), es casi seguro un error ASR donde el modelo sustituyó un nombre propio o acrónimo. En ese caso, sustituye esa palabra por "[inaudible]" en la correccion y baja confianza a 0.4.
+
+RESPONDE SOLO con el objeto JSON. No uses backticks ni bloques ``` ni texto fuera del JSON.
 
 Transcripción: "{{text}}"
             """.trimIndent()
