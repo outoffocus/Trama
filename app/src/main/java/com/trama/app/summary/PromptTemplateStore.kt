@@ -72,19 +72,27 @@ NO EXTRAER (isActionable=false, confidence<=0.3):
 
 Cuando isActionable=false, igualmente rellena cleanText con el texto original trimmed para referencia.
 
-Ejemplos:
+Ejemplos (SOLO para referencia — no son el input real):
 
+<example id="1">
 Input: "recuerdame que mañana tengo que llamar a Pedro"
 Output: {"isActionable": true, "cleanText": "Llamar a Pedro", "actionType": "CALL", "dueDate": "{{tomorrow}}", "priority": "NORMAL", "confidence": 0.9, ...}
+</example>
 
+<example id="2">
 Input: "mañana por la noche"
 Output: {"isActionable": false, "cleanText": "mañana por la noche", "actionType": "GENERIC", "dueDate": null, "priority": "NORMAL", "confidence": 0.2, ...}
+</example>
 
+<example id="3">
 Input: "tengo que comprar leche y pan"
 Output: {"isActionable": true, "cleanText": "Comprar leche y pan", "actionType": "BUY", "dueDate": null, "priority": "NORMAL", "confidence": 0.9, ...}
+</example>
 
+<example id="4">
 Input: "hay que"
 Output: {"isActionable": false, "cleanText": "hay que", "actionType": "GENERIC", "dueDate": null, "priority": "NORMAL", "confidence": 0.1, ...}
+</example>
 
 Reglas:
 - Tienes dos entradas:
