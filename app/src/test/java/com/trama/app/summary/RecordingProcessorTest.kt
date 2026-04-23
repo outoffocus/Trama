@@ -1,8 +1,10 @@
 package com.trama.app.summary
 
 import android.content.Context
+import android.content.SharedPreferences
 import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.Source
+import io.mockk.every
 import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -17,7 +19,11 @@ class RecordingProcessorTest {
 
     @Before
     fun setUp() {
-        processor = RecordingProcessor(mockk<Context>(relaxed = true))
+        val ctx = mockk<Context>(relaxed = true)
+        val prefs = mockk<SharedPreferences>(relaxed = true)
+        every { ctx.getSharedPreferences(any(), any()) } returns prefs
+        every { prefs.getString(any(), any()) } answers { secondArg() }
+        processor = RecordingProcessor(ctx)
     }
 
     @Test

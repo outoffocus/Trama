@@ -50,24 +50,17 @@ class IntentDetectorTest {
     }
 
     @Test
-    fun `detects me olvide as recordatorios`() {
-        val result = detector.detect("me olvidé estudiar mas")
+    fun `detects tengo que as tareas`() {
+        val result = detector.detect("tengo que estudiar mas")
         assertNotNull(result)
-        assertEquals("recordatorios", result!!.pattern?.id)
+        assertEquals("tareas", result!!.pattern?.id)
     }
 
     @Test
-    fun `detects me olvide without accent as recordatorios`() {
-        val result = detector.detect("me olvide estudiar mas")
+    fun `detects llamar a as comunicacion`() {
+        val result = detector.detect("llamar a mi madre luego")
         assertNotNull(result)
-        assertEquals("recordatorios", result!!.pattern?.id)
-    }
-
-    @Test
-    fun `detects se me fue la olla as recordatorios`() {
-        val result = detector.detect("se me fue la olla comprar pan ayer")
-        assertNotNull(result)
-        assertEquals("recordatorios", result!!.pattern?.id)
+        assertEquals("comunicacion", result!!.pattern?.id)
     }
 
     @Test

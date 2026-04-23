@@ -184,9 +184,11 @@ class EntryCardLogicTest {
     }
 
     @Test
-    fun `displayText falls back to correctedText when cleanText is null`() {
+    fun `displayText falls back to raw text when cleanText is null`() {
+        // displayText is cleanText ?: text — correctedText is not part of the
+        // fallback chain (it's kept as an audit trail, not shown).
         val e = entry(text = "raw", correctedText = "corrected", cleanText = null)
-        assertEquals("corrected", e.displayText)
+        assertEquals("raw", e.displayText)
     }
 
     @Test

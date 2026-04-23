@@ -1,6 +1,8 @@
 package com.trama.app.summary
 
 import android.content.Context
+import android.content.SharedPreferences
+import io.mockk.every
 import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -17,7 +19,13 @@ class ActionItemProcessorTest {
 
     @Before
     fun setUp() {
-        processor = ActionItemProcessor(mockk<Context>(relaxed = true))
+        val ctx = mockk<Context>(relaxed = true)
+        val prefs = mockk<SharedPreferences>(relaxed = true)
+        every { ctx.getSharedPreferences(any(), any()) } returns prefs
+        // Make SharedPreferences.getString return the default argument so that
+        // PromptTemplateStore falls back to the built-in template.
+        every { prefs.getString(any(), any()) } answers { secondArg() }
+        processor = ActionItemProcessor(ctx)
     }
 
     @Test
@@ -59,7 +67,12 @@ class ActionItemProcessorTest {
 
     @Test
     fun `buildPrompt embeds the original note and output contract`() {
-        val prompt = callPrivate<String>("buildPrompt", "recordar llamar a Juan")
+        val prompt = callPrivate<String>(
+            "buildPrompt",
+            "recordar llamar a Juan",  // originalText
+            "recordar llamar a Juan",  // normalizedInput
+            ""                          // recentContext
+        )
         assertTrue(prompt.contains("recordar llamar a Juan"))
         assertTrue(prompt.contains("\"cleanText\""))
         assertTrue(prompt.contains("\"actionType\""))
@@ -67,13 +80,11 @@ class ActionItemProcessorTest {
     }
 
     @Suppress("UNCHECKED_CAST")
-    private fun <T> callPrivate(name: String, arg: Any?): T {
-        val method = ActionItemProcessor::class.java.declaredMethods.first { it.name == name }
-        method.isAccessible = true
-        return if (method.parameterCount == 0) {
-            method.invoke(processor) as T
-        } else {
-            method.invoke(processor, arg) as T
+    private fun <T> callPrivate(name: String, vararg args: Any?): T {
+        val method = ActionItemProcessor::class.java.declaredMethods.first {
+            it.name == name && it.parameterCount == args.size
         }
+        method.isAccessible = true
+        return method.invoke(processor, *args) as T
     }
 }

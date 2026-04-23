@@ -75,7 +75,9 @@
       "Bash(gunzip -k design.gz)",
       "Bash(mkdir -p extracted)",
       "Bash(tar -xf design -C extracted)",
-      "Bash(./gradlew :app:testDebugUnitTest)"
+      "Bash(./gradlew :app:testDebugUnitTest)",
+      "Bash(./gradlew :app:testDebugUnitTest --tests \"*.IntentDetectorTest\" --tests \"*.IntentPatternTest\" --tests \"*.EntryCardLogicTest\")",
+      "Bash(./gradlew :app:testDebugUnitTest --tests \"*.RecordingProcessorTest.buildPrompt*\")"
     ]
   }
 }

@@ -102,19 +102,22 @@ class IntentPatternTest {
         val json = IntentPattern.serialize(partial)
         val merged = IntentPattern.deserialize(json)
 
-        assertEquals(2, merged.size)
+        // Every current built-in category is always present after merge,
+        // plus any user-created custom categories.
+        assertEquals(IntentPattern.DEFAULTS.size + 1, merged.size)
         val reminders = merged.find { it.id == "recordatorios" }
         assertEquals("Mis recordatorios", reminders!!.label)
-        assertEquals(listOf("custom trigger"), reminders.triggers)
+        // Merge keeps all non-legacy default triggers AND appends user ones.
+        assertTrue("custom trigger" in reminders.triggers)
         assertNotNull(merged.find { it.id == "trabajo" && it.isCustom })
     }
 
     // ── DEFAULTS ──
 
     @Test
-    fun `DEFAULTS contains only reminders category`() {
+    fun `DEFAULTS contains the current built-in categories`() {
         val ids = IntentPattern.DEFAULTS.map { it.id }
-        assertEquals(listOf("recordatorios"), ids)
+        assertEquals(listOf("recordatorios", "tareas", "comunicacion"), ids)
     }
 
     @Test
