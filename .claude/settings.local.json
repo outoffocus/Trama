@@ -74,7 +74,8 @@
       "Read(//private/tmp/trama-design/**)",
       "Bash(gunzip -k design.gz)",
       "Bash(mkdir -p extracted)",
-      "Bash(tar -xf design -C extracted)"
+      "Bash(tar -xf design -C extracted)",
+      "Bash(./gradlew :app:testDebugUnitTest)"
     ]
   }
 }

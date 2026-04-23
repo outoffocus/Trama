@@ -335,7 +335,8 @@ class RecordingProcessor(private val context: Context) {
                 val heuristicDuplicate = DuplicateHeuristics.findLikelyDuplicate(
                     text = actionText,
                     existing = existing,
-                    ignoreId = action.id
+                    ignoreId = action.id,
+                    newDueDate = action.dueDate
                 )
                 if (heuristicDuplicate != null) {
                     repository.markDuplicate(action.id, heuristicDuplicate.id)

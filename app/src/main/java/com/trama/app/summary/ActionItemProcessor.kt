@@ -594,10 +594,12 @@ class ActionItemProcessor(private val context: Context) {
 
         if (existing.isEmpty()) return
 
+        val newDueDate = repository.getByIdOnce(entryId)?.dueDate
         DuplicateHeuristics.findLikelyDuplicate(
             text = cleanText,
             existing = existing,
-            ignoreId = entryId
+            ignoreId = entryId,
+            newDueDate = newDueDate
         )?.let { duplicate ->
             repository.markDuplicate(entryId, duplicate.id)
             Log.i(TAG, "Heuristic duplicate: entry $entryId ≈ '${duplicate.displayText}'")

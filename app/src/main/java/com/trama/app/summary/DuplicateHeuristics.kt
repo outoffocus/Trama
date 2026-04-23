@@ -1,10 +1,22 @@
 package com.trama.app.summary
 
 import com.trama.shared.model.DiaryEntry
+import com.trama.shared.util.DayRange
 import java.text.Normalizer
 import java.util.Locale
 
 object DuplicateHeuristics {
+
+    /** Minimum similarity score to consider two notes duplicates. */
+    private const val SIMILARITY_THRESHOLD = 0.75f
+
+    /** Minimum length of a token that counts as a content word (object/noun). */
+    private const val CONTENT_TOKEN_MIN_LEN = 3
+
+    private val actionVerbs: Set<String> = ManualActionSuggestionExtractor
+        .ACTION_VERBS
+        .map { canonicalizeToken(it) }
+        .toSet()
 
     private val temporalPhrases = listOf(
         "pasado manana",
@@ -46,10 +58,13 @@ object DuplicateHeuristics {
     fun findLikelyDuplicate(
         text: String,
         existing: List<DiaryEntry>,
-        ignoreId: Long? = null
+        ignoreId: Long? = null,
+        newDueDate: Long? = null
     ): DiaryEntry? {
         val canonical = canonicalize(text)
         if (canonical.isBlank()) return null
+        val newTokens = canonical.split(" ").filter { it.isNotBlank() }.toSet()
+        val newDueDay = newDueDate?.let { DayRange.of(it).startMs }
 
         return existing
             .asSequence()
@@ -57,13 +72,34 @@ object DuplicateHeuristics {
             .mapNotNull { candidate ->
                 val candidateCanonical = canonicalize(candidate.displayText)
                 if (candidateCanonical.isBlank()) return@mapNotNull null
+
+                // Distinct concrete dueDates → different occurrences, not a duplicate.
+                val candidateDueDay = candidate.dueDate?.let { DayRange.of(it).startMs }
+                if (newDueDay != null && candidateDueDay != null &&
+                    newDueDay != candidateDueDay) return@mapNotNull null
+
+                val candidateTokens = candidateCanonical.split(" ")
+                    .filter { it.isNotBlank() }
+                    .toSet()
+                if (!shareContentToken(newTokens, candidateTokens)) return@mapNotNull null
+
                 val score = similarityScore(canonical, candidateCanonical)
-                if (score >= 0.86f) candidate to score else null
+                if (score >= SIMILARITY_THRESHOLD) candidate to score else null
             }
             .sortedByDescending { it.second }
             .firstOrNull()
             ?.first
     }
+
+    /**
+     * Require at least one shared "content" token (non-verb, length ≥ 3) so
+     * bare-verb captures like "comprar" and "comprar leche" don't collapse
+     * — the object is what makes two notes actually the same task.
+     */
+    private fun shareContentToken(left: Set<String>, right: Set<String>): Boolean =
+        left.intersect(right).any { token ->
+            token.length >= CONTENT_TOKEN_MIN_LEN && token !in actionVerbs
+        }
 
     private fun similarityScore(left: String, right: String): Float {
         if (left == right) return 1.0f
@@ -113,6 +149,11 @@ object DuplicateHeuristics {
         }
         return costs[right.length]
     }
+
+    private fun canonicalizeToken(token: String): String =
+        Normalizer.normalize(token.lowercase(Locale.getDefault()), Normalizer.Form.NFD)
+            .replace("\\p{M}+".toRegex(), "")
+            .replace("[^\\p{L}\\p{N}]".toRegex(), "")
 
     private fun canonicalize(text: String): String {
         var normalized = Normalizer.normalize(text.lowercase(Locale.getDefault()), Normalizer.Form.NFD)
