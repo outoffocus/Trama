@@ -137,7 +137,7 @@ class RecordingProcessor(private val context: Context) {
             } catch (e: Exception) {
                 Log.w(TAG, "Local model JSON attempt 1 failed: ${e.message}")
                 // Attempt 2: simpler prompt, less likely to confuse the model
-                retryWithSimplePrompt(transcription)
+                retryWithSimplePrompt(transcription, repository)
             }
 
             repository.deleteByRecordingId(recordingId)
@@ -158,7 +158,10 @@ class RecordingProcessor(private val context: Context) {
      * Retry with a much simpler prompt when the full prompt fails.
      * Splits into two calls: one for title+summary, one for action extraction.
      */
-    private suspend fun retryWithSimplePrompt(transcription: String): RecordingAnalysis {
+    private suspend fun retryWithSimplePrompt(
+        transcription: String,
+        repository: DiaryRepository
+    ): RecordingAnalysis {
         Log.i(TAG, "Retrying with simplified prompts")
 
         val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
@@ -184,13 +187,20 @@ class RecordingProcessor(private val context: Context) {
             ?.takeIf { it.isNotBlank() }
             ?: transcription.take(200)
 
-        // Call 2: extract actions as simple JSON array
+        // Call 2: extract actions as simple JSON array.
+        // Include live pending/completed/place context so we don't re-extract
+        // tasks already captured during the same continuous-ASR session.
+        val actionProcessor = ActionItemProcessor(context)
+        val recentContext = actionProcessor.buildContextBlock(
+            actionProcessor.buildRecentContext(entryId = -1L, repository = repository)
+        )
         val actionsPrompt = PromptTemplateStore.render(
             context,
             PromptTemplateStore.RECORDING_ACTIONS,
             mapOf(
                 "transcription" to transcription,
-                "today" to today
+                "today" to today,
+                "recentContext" to recentContext
             )
         )
 

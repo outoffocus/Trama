@@ -224,7 +224,27 @@ class ActionItemProcessor(private val context: Context) {
      * Gemma 3n E4B handles a 32K context comfortably, so we lean into richer
      * grounding instead of aggressive truncation.
      */
-    private suspend fun buildRecentContext(
+    /**
+     * Wraps the raw context string produced by [buildRecentContext] into the
+     * "CONTEXTO DEL USUARIO (hoy)" block with the behavioural rules that
+     * reference it. Safe to pass the result directly into `{{recentContext}}`
+     * placeholders (empty string when there is no context to show).
+     */
+    internal fun buildContextBlock(recentContext: String): String {
+        if (recentContext.isBlank()) return ""
+        return buildString {
+            appendLine("CONTEXTO DEL USUARIO (hoy):")
+            appendLine(recentContext)
+            appendLine()
+            appendLine("Reglas sobre el CONTEXTO:")
+            appendLine("- Si la nota es una referencia a una tarea ya en Tareas pendientes o Completadas hoy (ej: \"eso que dije de Pedro\", \"lo de la reunion\"), responde con isActionable=false y confidence<=0.3. No dupliques.")
+            appendLine("- Si la nota menciona personas o lugares que ya aparecen en el contexto, reutiliza la misma grafía literal (evita duplicados tipo \"Pedro\" vs \"Pedrito\").")
+            appendLine("- Si hay \"Lugar actual del usuario\" y la nota dice \"aquí\", \"en el curro\", \"en casa\", resuelve la referencia a ese lugar literal en cleanText.")
+            appendLine()
+        }
+    }
+
+    internal suspend fun buildRecentContext(
         entryId: Long,
         repository: DiaryRepository
     ): String {
@@ -419,16 +439,7 @@ class ActionItemProcessor(private val context: Context) {
         val today = dateFormat.format(Calendar.getInstance().time)
         val tomorrow = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 1) }
         val tomorrowStr = dateFormat.format(tomorrow.time)
-        val contextBlock = if (recentContext.isBlank()) "" else buildString {
-            appendLine("CONTEXTO DEL USUARIO (hoy):")
-            appendLine(recentContext)
-            appendLine()
-            appendLine("Reglas sobre el CONTEXTO:")
-            appendLine("- Si la nota es una referencia a una tarea ya en Tareas pendientes o Completadas hoy (ej: \"eso que dije de Pedro\", \"lo de la reunion\"), responde con isActionable=false y confidence<=0.3. No dupliques.")
-            appendLine("- Si la nota menciona personas o lugares que ya aparecen en el contexto, reutiliza la misma grafía literal (evita duplicados tipo \"Pedro\" vs \"Pedrito\").")
-            appendLine("- Si hay \"Lugar actual del usuario\" y la nota dice \"aquí\", \"en el curro\", \"en casa\", resuelve la referencia a ese lugar literal en cleanText.")
-            appendLine()
-        }
+        val contextBlock = buildContextBlock(recentContext)
         return PromptTemplateStore.render(
             context,
             PromptTemplateStore.ACTION_ITEM,

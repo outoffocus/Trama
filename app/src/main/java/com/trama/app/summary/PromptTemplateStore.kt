@@ -253,6 +253,7 @@ Resume esta nota en 2 o 3 frases.
             title = "Acciones simples de grabación",
             subtitle = "Fallback local para extraer acciones",
             defaultTemplate = """
+{{recentContext}}
 Extrae las tareas o cosas por hacer de este texto.
 Responde SOLO con un array JSON valido y nada mas.
 Ejemplo: [{"text":"Llamar a Inés por el parque","type":"CALL","dateMentions":["mañana por la tarde"],"people":["Inés"],"places":["parque"]}]
@@ -266,6 +267,7 @@ Reglas:
 - si una fecha aparece de forma implicita o poco clara, no la resuelvas, pero mantenla en dateMentions
 - incluye people, places, phones y numbers cuando existan
 - mejor menos tareas y fiables que muchas dudosas
+- NO extraigas una tarea si ya aparece (o una referencia a ella) en el CONTEXTO del inicio del prompt. Prefiere omitir antes que duplicar.
 Hoy es {{today}}.
 
 Texto: "{{transcription}}"
