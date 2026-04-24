@@ -112,7 +112,7 @@ fun RecordingDetailScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text(recording?.title ?: "Grabación") },
+                title = { Text("Grabación", style = MaterialTheme.typography.titleMedium) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Volver")
@@ -288,33 +288,33 @@ fun RecordingDetailScreen(
 
 @Composable
 private fun RecordingHeader(recording: Recording, dateFormat: SimpleDateFormat) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Icon(
-            imageVector = if (recording.source == Source.WATCH) Icons.Default.Watch
-                          else Icons.Default.Mic,
-            contentDescription = null,
-            modifier = Modifier.size(16.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-        )
+    val t = com.trama.app.ui.theme.LocalTramaColors.current
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
-            text = dateFormat.format(Date(recording.createdAt)),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+            text = recording.title ?: "Grabación sin procesar",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground,
         )
-        Text(
-            text = "·",
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
-        )
-        val min = recording.durationSeconds / 60
-        val sec = recording.durationSeconds % 60
-        Text(
-            text = "%d:%02d".format(min, sec),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Icon(
+                imageVector = if (recording.source == Source.WATCH) Icons.Default.Watch
+                              else Icons.Default.Mic,
+                contentDescription = null,
+                modifier = Modifier.size(12.dp),
+                tint = t.mutedText
+            )
+            val min = recording.durationSeconds / 60
+            val sec = recording.durationSeconds % 60
+            Text(
+                text = "${dateFormat.format(Date(recording.createdAt))} · %d:%02d".format(min, sec),
+                style = MaterialTheme.typography.labelMedium,
+                color = t.mutedText
+            )
+        }
     }
 }
 

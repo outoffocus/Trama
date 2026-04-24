@@ -219,6 +219,11 @@ private class FakeDiaryDao : DiaryDao {
     override suspend fun clearDuplicate(id: Long) {}
     override fun getDuplicates(): Flow<List<DiaryEntry>> = flowOf(emptyList())
     override suspend fun getRecentPendingForDedup(): List<DiaryEntry> = emptyList()
+    override suspend fun getRecentActiveForDedup(): List<DiaryEntry> =
+        inserted
+            .filter { it.status in listOf("PENDING", "SUGGESTED") && it.duplicateOfId == null }
+            .sortedByDescending { it.createdAt }
+            .take(80)
     override suspend fun markCompletedByKey(createdAt: Long, text: String, completedAt: Long): Int = 0
     override suspend fun deleteByKey(createdAt: Long, text: String): Int = 0
     override fun getByRecordingId(recordingId: Long): Flow<List<DiaryEntry>> = flowOf(emptyList())
@@ -257,6 +262,7 @@ private class FakeTimelineEventDao : TimelineEventDao {
     override fun byDateRange(startTime: Long, endTime: Long): Flow<List<TimelineEvent>> = flowOf(emptyList())
     override suspend fun byDateRangeOnce(startTime: Long, endTime: Long): List<TimelineEvent> = emptyList()
     override suspend fun getByIdOnce(id: Long): TimelineEvent? = null
+    override suspend fun getByTypeSourceAndDataJson(type: String, source: String, dataJson: String): TimelineEvent? = null
     override fun getByPlaceId(placeId: Long): Flow<List<TimelineEvent>> = flowOf(emptyList())
     override suspend fun insert(event: TimelineEvent): Long = 1L
     override suspend fun insertAll(events: List<TimelineEvent>) {}

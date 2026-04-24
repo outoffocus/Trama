@@ -175,7 +175,7 @@ fun PlaceDetailScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("Lugar") },
+                title = { Text("Lugar", style = MaterialTheme.typography.titleMedium) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
@@ -195,6 +195,21 @@ fun PlaceDetailScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            Text(
+                text = currentPlace.name,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            currentPlace.type?.let {
+                Text(
+                    text = it.uppercase(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = LocalTramaColors.current.mutedText,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+
             OutlinedTextField(
                 value = editedName,
                 onValueChange = { editedName = it },
@@ -216,11 +231,7 @@ fun PlaceDetailScreen(
 
             SectionRule(title = "Ficha")
             SoftCard(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(currentPlace.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    currentPlace.type?.let {
-                        Text("Tipo: $it", style = MaterialTheme.typography.bodyMedium)
-                    }
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Visitas: ${currentPlace.visitCount}", style = MaterialTheme.typography.bodyMedium)
                     currentPlace.lastVisitAt?.let {
                         Text("Última visita: ${dateFormat.format(Date(it))}", style = MaterialTheme.typography.bodySmall)

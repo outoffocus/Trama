@@ -1,5 +1,6 @@
 package com.trama.wear.service
 
+import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
@@ -10,7 +11,9 @@ import com.trama.shared.sync.MicCoordinator
 import com.trama.wear.sync.WatchToPhoneSyncer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,10 +26,13 @@ object WatchServiceController {
     private const val KEY_USER_ENABLED = "user_enabled"
     private const val KEY_PHONE_ACTIVE = "phone_active"
     private const val START_COOLDOWN_MS = 15_000L
+    private const val UNEXPECTED_STOP_RESTART_DELAY_MS = 30_000L
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var lastStartAttemptMs = 0L
     @Volatile private var startInFlight = false
+    @Volatile private var expectedStop = false
+    private var restartJob: Job? = null
 
     private val _isRunning = MutableStateFlow(false)
     val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()
@@ -39,6 +45,8 @@ object WatchServiceController {
      * Sends PAUSE to phone to take over the mic.
      */
     fun start(context: Context) {
+        expectedStop = false
+        restartJob?.cancel()
         // Stop recording if active — modes are exclusive
         if (RecordingController.isRecording.value) {
             RecordingController.stopRecording(context)
@@ -50,7 +58,7 @@ object WatchServiceController {
             .putBoolean(KEY_PHONE_ACTIVE, false)
             .apply()
 
-        startListenerService(context, reason = "user-start")
+        startListenerService(context, reason = "user-start", bypassCooldown = true)
     }
 
     /**
@@ -59,6 +67,7 @@ object WatchServiceController {
     fun startRecording(context: Context) {
         // Stop keyword listener — modes are exclusive
         if (_isRunning.value) {
+            expectedStop = true
             context.stopService(Intent(context, WatchKeywordListenerService::class.java))
             _isRunning.value = false
         }
@@ -72,10 +81,12 @@ object WatchServiceController {
     fun resumeIfAllowed(context: Context) {
         if (isPhoneActive(context)) return
         if (!isUserEnabled(context)) return
-        startListenerService(context, reason = "resume")
+        startListenerService(context, reason = "resume", bypassCooldown = true)
     }
 
     fun stop(context: Context) {
+        expectedStop = true
+        restartJob?.cancel()
         context.stopService(Intent(context, WatchKeywordListenerService::class.java))
         _isRunning.value = false
         startInFlight = false
@@ -112,6 +123,7 @@ object WatchServiceController {
 
         // Stop everything locally
         if (_isRunning.value) {
+            expectedStop = true
             context.stopService(Intent(context, WatchKeywordListenerService::class.java))
             _isRunning.value = false
         }
@@ -150,8 +162,42 @@ object WatchServiceController {
         startInFlight = false
     }
 
+    /**
+     * Called when the listener service is destroyed. If this was not a known
+     * user/phone transition, re-arm the listener while the user still wants it.
+     */
+    fun notifyServiceDestroyed(context: Context) {
+        val shouldRestart = !expectedStop && isUserEnabled(context) && !isPhoneActive(context)
+        notifyStopped()
+        if (!shouldRestart) {
+            expectedStop = false
+            return
+        }
+
+        restartJob?.cancel()
+        restartJob = scope.launch {
+            Log.w(TAG, "Watch listener stopped unexpectedly; scheduling restart")
+            MicCoordinator.sendWatchDebug(context.applicationContext, "escucha parada · reintentando")
+            delay(UNEXPECTED_STOP_RESTART_DELAY_MS)
+            if (isUserEnabled(context) && !isPhoneActive(context)) {
+                if (isAppInForeground(context)) {
+                    startListenerService(context, reason = "watchdog", bypassCooldown = true)
+                } else {
+                    Log.w(TAG, "Watchdog restart skipped: app is background/stopped")
+                    MicCoordinator.sendWatchDebug(
+                        context.applicationContext,
+                        "escucha parada · app en segundo plano"
+                    )
+                    sendResumeToPhone(context.applicationContext)
+                }
+            }
+        }
+    }
+
     /** Called after WatchKeywordListenerService has successfully entered foreground. */
     fun notifyStarted() {
+        expectedStop = false
+        restartJob?.cancel()
         _isRunning.value = true
         _isPhoneActive.value = false
         startInFlight = false
@@ -173,6 +219,8 @@ object WatchServiceController {
     }
 
     fun notifyPhoneActive(context: Context) {
+        expectedStop = true
+        restartJob?.cancel()
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().putBoolean(KEY_PHONE_ACTIVE, true).apply()
         _isPhoneActive.value = true
@@ -184,17 +232,19 @@ object WatchServiceController {
         _isPhoneActive.value = false
     }
 
-    private fun startListenerService(context: Context, reason: String) {
+    private fun startListenerService(context: Context, reason: String, bypassCooldown: Boolean = false) {
         val now = SystemClock.elapsedRealtime()
         if (_isRunning.value || startInFlight) {
             Log.d(TAG, "Skipping listener start ($reason): already running/starting")
             return
         }
-        if (now - lastStartAttemptMs < START_COOLDOWN_MS) {
+        if (!bypassCooldown && now - lastStartAttemptMs < START_COOLDOWN_MS) {
             Log.w(TAG, "Skipping listener start ($reason): cooldown")
             return
         }
 
+        expectedStop = false
+        restartJob?.cancel()
         lastStartAttemptMs = now
         startInFlight = true
         try {
@@ -206,6 +256,16 @@ object WatchServiceController {
             startInFlight = false
             _isRunning.value = false
             Log.w(TAG, "Failed to start watch listener ($reason)", e)
+        }
+    }
+
+    private fun isAppInForeground(context: Context): Boolean {
+        val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            ?: return false
+        val packageName = context.packageName
+        return manager.runningAppProcesses.orEmpty().any { process ->
+            process.processName == packageName &&
+                process.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
         }
     }
 }

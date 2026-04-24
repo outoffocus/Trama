@@ -181,112 +181,27 @@ fun EntryCard(
                         bottom = 9.dp
                     )
             ) {
-                // Header row: [action badge] [watch icon?] [processing icon?]  [timestamp]
+                // Title — primary and only content
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Surface(
-                        shape = RoundedCornerShape(5.dp),
-                        color = eventAccent.copy(alpha = if (isCompleted) 0.10f else 0.15f)
-                    ) {
-                        Text(
-                            text  = EntryActionType.label(entry.actionType),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (isCompleted) eventAccent.copy(alpha = 0.55f) else eventAccent,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-                    }
-
-                    if (entry.source == Source.WATCH) {
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Icon(
-                            Icons.Default.Watch,
-                            contentDescription = "Reloj",
-                            modifier = Modifier.size(10.dp),
-                            tint     = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.40f)
-                        )
-                    }
-
-                    if (processingBadge != null) {
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Icon(
-                            processingBadge.icon,
-                            contentDescription = processingBadge.contentDescription,
-                            modifier = Modifier.size(10.dp),
-                            tint     = processingBadge.tint.copy(alpha = 0.65f)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.weight(1f))
-
                     Text(
-                        text  = if (isCompleted) timeFormat.format(Date(entry.createdAt))
-                                else             dayTimeFormat.format(Date(entry.createdAt)),
+                        text           = primaryText,
+                        style          = MaterialTheme.typography.titleSmall,
+                        fontWeight     = if (isCompleted) FontWeight.Normal else FontWeight.SemiBold,
+                        color          = if (isCompleted)
+                                             MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                                         else
+                                             MaterialTheme.colorScheme.onSurface,
+                        maxLines       = 2,
+                        overflow       = TextOverflow.Ellipsis,
+                        textDecoration = if (isCompleted) TextDecoration.LineThrough else TextDecoration.None,
+                        modifier       = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text  = timeFormat.format(Date(entry.createdAt)),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.40f)
                     )
-                }
-
-                // Title
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text           = primaryText,
-                    style          = MaterialTheme.typography.titleSmall,
-                    fontWeight     = if (isCompleted) FontWeight.Normal else FontWeight.SemiBold,
-                    color          = if (isCompleted)
-                                         MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
-                                     else
-                                         MaterialTheme.colorScheme.onSurface,
-                    maxLines       = 3,
-                    overflow       = TextOverflow.Ellipsis,
-                    textDecoration = if (isCompleted) TextDecoration.LineThrough else TextDecoration.None
-                )
-
-                // Priority badge (urgent / high only, compact)
-                if (!isCompleted && (entry.priority == EntryPriority.URGENT || entry.priority == EntryPriority.HIGH)) {
-                    Spacer(modifier = Modifier.height(3.dp))
-                    Surface(
-                        shape = RoundedCornerShape(4.dp),
-                        color = priorityColor.copy(alpha = 0.10f)
-                    ) {
-                        Text(
-                            text      = if (entry.priority == EntryPriority.URGENT) "Urgente" else "Alta",
-                            style     = MaterialTheme.typography.labelSmall,
-                            fontWeight= FontWeight.SemiBold,
-                            color     = priorityColor,
-                            modifier  = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-                    }
-                }
-
-                // Due date (only shown on pending entries)
-                val due = entry.dueDate
-                if (due != null && !isCompleted) {
-                    Spacer(modifier = Modifier.height(3.dp))
-                    val isOverdue = due < startOfToday
-                    val daysLeft  = TimeUnit.MILLISECONDS.toDays(due - startOfToday)
-                    val dueDateText = when {
-                        isOverdue    -> "Vencida"
-                        daysLeft == 0L -> "Hoy"
-                        daysLeft == 1L -> "Mañana"
-                        daysLeft < 7   -> SimpleDateFormat("EEEE", Locale("es"))
-                            .format(Date(due)).replaceFirstChar { it.uppercase() }
-                        else           -> SimpleDateFormat("d MMM", Locale("es")).format(Date(due))
-                    }
-                    val dueTint = if (isOverdue) MaterialTheme.colorScheme.error
-                                  else          MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.48f)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Default.Schedule,
-                            contentDescription = null,
-                            modifier = Modifier.size(10.dp),
-                            tint     = dueTint
-                        )
-                        Spacer(modifier = Modifier.width(3.dp))
-                        Text(
-                            text  = dueDateText,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = dueTint
-                        )
-                    }
                 }
             }
 

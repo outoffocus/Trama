@@ -150,20 +150,6 @@ fun RecordingCard(
                 )
             }
 
-            // Summary preview or transcription snippet
-            val preview = recording.summary
-                ?: recording.transcription.take(120)
-            if (preview.isNotBlank()) {
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = preview,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
             // Footer: date + source
             Spacer(modifier = Modifier.height(6.dp))
             Row(

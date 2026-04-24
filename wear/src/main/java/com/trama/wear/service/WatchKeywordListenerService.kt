@@ -44,6 +44,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
 
 /**
  * Watch keyword listener.
@@ -70,6 +71,10 @@ class WatchKeywordListenerService : LifecycleService() {
         private const val ERROR_RETRY_DELAY_MS = 3000L       // 3s on hard errors
 
         private const val DEDUP_WINDOW_MS = 5000L
+        private const val ACTIVE_MIC_CAPTURE_MAX_MS = 45_000L
+        private const val ACTIVE_MIC_CAPTURE_MIN_MS = 1_200L
+        private const val ACTIVE_MIC_SILENCE_STOP_MS = 3_000L
+        private const val ACTIVE_MIC_SILENCE_RMS_THRESHOLD = 700.0
     }
 
     private var recognizer: SpeechRecognizer? = null
@@ -86,6 +91,7 @@ class WatchKeywordListenerService : LifecycleService() {
     private var lastNotificationText = ""
     private var useSimpleIntent = false
     private var batteryPct = 100
+    private var foregroundStarted = false
 
     // Deduplication
     private var lastSavedText = ""
@@ -110,6 +116,9 @@ class WatchKeywordListenerService : LifecycleService() {
                 Log.w(TAG, "Battery dropped to $batteryPct%, stopping watch listener")
                 updateNotificationIfChanged("Batería baja · vuelve al teléfono")
                 listening = false
+                lifecycleScope.launch(Dispatchers.IO) {
+                    MicCoordinator.sendWatchDebug(applicationContext, "parado · batería $batteryPct%")
+                }
                 WatchServiceController.sendResumeToPhone(applicationContext)
                 stopSelf()
             }
@@ -119,18 +128,8 @@ class WatchKeywordListenerService : LifecycleService() {
     override fun onCreate() {
         super.onCreate()
         try {
-            createNotificationChannel()
-
             // MUST call startForeground immediately in onCreate — before system timeout.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                startForeground(
-                    NOTIFICATION_ID,
-                    buildNotification("Inicializando..."),
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-                )
-            } else {
-                startForeground(NOTIFICATION_ID, buildNotification("Inicializando..."))
-            }
+            enterForeground("Inicializando...")
             WatchServiceController.notifyStarted()
         } catch (e: Exception) {
             Log.e(TAG, "Could not enter foreground; stopping watch listener", e)
@@ -158,12 +157,14 @@ class WatchKeywordListenerService : LifecycleService() {
 
             val vosk = VoskGateAsr(applicationContext)
             if (vosk.isAvailable) {
+                MicCoordinator.sendWatchDebug(applicationContext, "escucha activa · Vosk")
                 withContext(Dispatchers.Main) {
                     registerSettingsReceiver()
                     registerBatteryReceiver()
                 }
                 startVoskLoop(vosk)
             } else {
+                MicCoordinator.sendWatchDebug(applicationContext, "escucha activa · fallback Android")
                 withContext(Dispatchers.Main) {
                     registerSettingsReceiver()
                     registerBatteryReceiver()
@@ -218,7 +219,7 @@ class WatchKeywordListenerService : LifecycleService() {
         // not here, because onDestroy also fires when phone pauses us (and we shouldn't
         // send RESUME back in that case).
 
-        WatchServiceController.notifyStopped()
+        WatchServiceController.notifyServiceDestroyed(applicationContext)
         super.onDestroy()
     }
 
@@ -419,14 +420,22 @@ class WatchKeywordListenerService : LifecycleService() {
      * @return true if keyword matched (entry saved or rejected by heuristic),
      *         false if no keyword detected (irrelevant speech)
      */
-    private fun processText(text: String): Boolean {
+    private fun processText(
+        text: String,
+        allowShortGateTrigger: Boolean = false,
+        preRollPcm: ShortArray = shortArrayOf()
+    ): Boolean {
         val result = intentDetector?.detect(text) ?: return false
 
         // Heuristic validation
         val heuristic = EntryValidatorHeuristics.check(result.capturedText)
         if (heuristic != null && !heuristic.isValid) {
-            Log.i(TAG, "Heuristic rejected: ${heuristic.reason}")
-            return true  // keyword was there, just invalid content
+            if (allowShortGateTrigger && heuristic.reason.startsWith("Fragmento muy corto")) {
+                Log.i(TAG, "Short gate trigger accepted for capture: '${result.capturedText}'")
+            } else {
+                Log.i(TAG, "Heuristic rejected: ${heuristic.reason}")
+                return true  // keyword was there, just invalid content
+            }
         }
 
         // Deduplication
@@ -441,7 +450,9 @@ class WatchKeywordListenerService : LifecycleService() {
         transferTriggeredAudio(
             intentId = intentId,
             label = result.label,
-            capturedText = result.capturedText
+            capturedText = result.capturedText,
+            allowTextFallback = heuristic?.isValid != false,
+            preRollPcm = preRollPcm
         )
 
         lastSavedText = text
@@ -449,7 +460,13 @@ class WatchKeywordListenerService : LifecycleService() {
         return true
     }
 
-    private fun transferTriggeredAudio(intentId: String, label: String, capturedText: String) {
+    private fun transferTriggeredAudio(
+        intentId: String,
+        label: String,
+        capturedText: String,
+        allowTextFallback: Boolean = true,
+        preRollPcm: ShortArray = shortArrayOf()
+    ) {
         if (captureInFlight) {
             Log.i(TAG, "Skipping trigger capture because another capture is in flight")
             return
@@ -460,11 +477,17 @@ class WatchKeywordListenerService : LifecycleService() {
             try {
                 pauseRecognizerForCapture()
                 MicCoordinator.sendWatchDebug(applicationContext, "capturando audio", capturedText)
-                val pcm = WatchTriggeredAudioCapture().capture()
+                val tailPcm = WatchTriggeredAudioCapture().capture()
+                val pcm = mergePcm(preRollPcm, tailPcm)
                 if (pcm.isEmpty()) {
-                    Log.w(TAG, "Triggered audio capture returned empty PCM, falling back to text entry")
-                    MicCoordinator.sendWatchDebug(applicationContext, "sin audio · guardando texto", capturedText)
-                    saveEntry(intentId, label, capturedText, 0.9f)
+                    if (allowTextFallback) {
+                        Log.w(TAG, "Triggered audio capture returned empty PCM, falling back to text entry")
+                        MicCoordinator.sendWatchDebug(applicationContext, "sin audio · guardando texto", capturedText)
+                        saveEntry(intentId, label, capturedText, 0.9f)
+                    } else {
+                        Log.w(TAG, "Triggered audio capture returned empty PCM; short trigger not saved")
+                        MicCoordinator.sendWatchDebug(applicationContext, "sin audio · trigger corto descartado", capturedText)
+                    }
                     return@launch
                 }
 
@@ -485,9 +508,14 @@ class WatchKeywordListenerService : LifecycleService() {
                     Log.i(TAG, "Triggered audio transferred to phone")
                     MicCoordinator.sendWatchDebug(applicationContext, "audio enviado al móvil", capturedText)
                 }.onFailure { error ->
-                    Log.w(TAG, "Triggered audio transfer failed, falling back to text entry", error)
-                    MicCoordinator.sendWatchDebug(applicationContext, "fallo · guardando texto", capturedText)
-                    saveEntry(intentId, label, capturedText, 0.9f)
+                    if (allowTextFallback) {
+                        Log.w(TAG, "Triggered audio transfer failed, falling back to text entry", error)
+                        MicCoordinator.sendWatchDebug(applicationContext, "fallo · guardando texto", capturedText)
+                        saveEntry(intentId, label, capturedText, 0.9f)
+                    } else {
+                        Log.w(TAG, "Triggered audio transfer failed; short trigger not saved", error)
+                        MicCoordinator.sendWatchDebug(applicationContext, "fallo · trigger corto descartado", capturedText)
+                    }
                 }
             } finally {
                 captureInFlight = false
@@ -536,10 +564,12 @@ class WatchKeywordListenerService : LifecycleService() {
 
         lifecycleScope.launch(Dispatchers.IO) {
             val sampleRate = 16_000
-            val windowSamples = sampleRate * 2 // 2-second windows
+            val gateWindowSamples = sampleRate * 2 // Keep Vosk gate close to the known-good cadence.
+            val preRollSamples = sampleRate * 6 // Keep the phrase that caused the trigger.
+            val stepSamples = gateWindowSamples
             val minBuffer = AudioRecord.getMinBufferSize(
                 sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
-            ).coerceAtLeast(windowSamples * 2)
+            ).coerceAtLeast(gateWindowSamples * 2)
 
             val record = try {
                 AudioRecord(
@@ -548,45 +578,64 @@ class WatchKeywordListenerService : LifecycleService() {
                 )
             } catch (e: Exception) {
                 Log.e(TAG, "Cannot open AudioRecord for Vosk", e)
+                MicCoordinator.sendWatchDebug(applicationContext, "error micro · Vosk")
+                stopSelf()
                 return@launch
             }
 
             if (record.state != AudioRecord.STATE_INITIALIZED) {
                 record.release()
                 Log.e(TAG, "AudioRecord not initialized")
+                MicCoordinator.sendWatchDebug(applicationContext, "micro no inicializado · Vosk")
+                stopSelf()
                 return@launch
             }
 
             voskAudioRecord = record
             record.startRecording()
             Log.i(TAG, "Vosk loop started")
+            MicCoordinator.sendWatchDebug(applicationContext, "escuchando · Vosk")
 
             try {
+                val rolling = ShortArray(preRollSamples)
+                val readBuffer = ShortArray(stepSamples)
+                var rollingSamples = 0
+
                 while (listening && isActive) {
                     if (captureInFlight) {
                         delay(200)
                         continue
                     }
 
-                    val pcm = ShortArray(windowSamples)
                     var samplesRead = 0
-                    while (samplesRead < windowSamples && listening && !captureInFlight) {
-                        val n = record.read(pcm, samplesRead, windowSamples - samplesRead)
+                    while (samplesRead < stepSamples && listening && !captureInFlight) {
+                        val n = record.read(readBuffer, samplesRead, stepSamples - samplesRead)
                         if (n > 0) samplesRead += n else break
                     }
 
                     if (samplesRead == 0 || captureInFlight) continue
+                    appendToRollingWindow(rolling, rollingSamples, readBuffer, samplesRead)
+                    rollingSamples = minOf(preRollSamples, rollingSamples + samplesRead)
+                    if (rollingSamples < stepSamples) continue
+
+                    val gatePcm = latestFromRollingWindow(rolling, rollingSamples, gateWindowSamples)
+                    val preRollPcm = rolling.copyOf(rollingSamples)
 
                     val window = CapturedAudioWindow(
                         preRollPcm = shortArrayOf(),
-                        livePcm = pcm.copyOf(samplesRead),
+                        livePcm = gatePcm,
                         sampleRateHz = sampleRate
                     )
 
                     val text = vosk.transcribe(window, "es") ?: continue
                     if (text.isNotBlank()) {
                         Log.d(TAG, "Vosk: '$text'")
-                        processText(text)
+                        processVoskTextWithActiveMic(
+                            text = text,
+                            preRollPcm = preRollPcm,
+                            record = record,
+                            sampleRateHz = sampleRate
+                        )
                     }
                 }
             } finally {
@@ -596,6 +645,205 @@ class WatchKeywordListenerService : LifecycleService() {
                 Log.i(TAG, "Vosk loop stopped")
             }
         }
+    }
+
+    private suspend fun processVoskTextWithActiveMic(
+        text: String,
+        preRollPcm: ShortArray,
+        record: AudioRecord,
+        sampleRateHz: Int
+    ): Boolean {
+        val result = intentDetector?.detect(text) ?: return false
+
+        val heuristic = EntryValidatorHeuristics.check(result.capturedText)
+        val allowTextFallback: Boolean
+        if (heuristic != null && !heuristic.isValid) {
+            if (heuristic.reason.startsWith("Fragmento muy corto")) {
+                Log.i(TAG, "Short gate trigger accepted for active-mic capture: '${result.capturedText}'")
+                allowTextFallback = false
+            } else {
+                Log.i(TAG, "Heuristic rejected: ${heuristic.reason}")
+                return true
+            }
+        } else {
+            allowTextFallback = true
+        }
+
+        val now = System.currentTimeMillis()
+        if (now - lastSavedTime < DEDUP_WINDOW_MS && isSimilar(text, lastSavedText)) return true
+
+        val intentId = result.pattern?.id ?: result.customKeyword ?: "nota"
+        lastSavedText = text
+        lastSavedTime = now
+
+        if (captureInFlight) {
+            Log.i(TAG, "Skipping trigger capture because another capture is in flight")
+            return true
+        }
+
+        captureInFlight = true
+        try {
+            Log.i(TAG, "Intent '$intentId' [${result.label}]: '${text.take(60)}'")
+            MicCoordinator.sendWatchDebug(applicationContext, "capturando audio", result.capturedText)
+
+            val tailPcm = captureTailFromActiveMic(record)
+            val pcm = mergePcm(preRollPcm, tailPcm)
+            val durationSeconds = pcm.size / sampleRateHz
+            Log.i(
+                TAG,
+                "Active mic capture: pre=${preRollPcm.size}, tail=${tailPcm.size}, " +
+                    "total=${pcm.size} (${durationSeconds}s), rms=${"%.1f".format(rms(pcm))}"
+            )
+
+            if (pcm.isEmpty()) {
+                if (allowTextFallback) {
+                    saveEntry(intentId, result.label, result.capturedText, 0.9f)
+                } else {
+                    MicCoordinator.sendWatchDebug(
+                        applicationContext,
+                        "sin audio · trigger corto descartado",
+                        result.capturedText
+                    )
+                }
+                return true
+            }
+
+            val metadata = WatchAudioSyncMetadata(
+                createdAt = System.currentTimeMillis(),
+                durationSeconds = durationSeconds,
+                sampleRateHz = sampleRateHz,
+                source = Source.WATCH.name,
+                kind = "CONTEXTUAL_TRIGGER",
+                triggerText = result.capturedText,
+                intentId = intentId,
+                label = result.label
+            )
+
+            runCatching {
+                syncer?.syncRecordingAudio(shortsToBytes(pcm), metadata)
+            }.onSuccess {
+                Log.i(TAG, "Triggered active-mic audio transferred to phone")
+                MicCoordinator.sendWatchDebug(applicationContext, "audio enviado al móvil", result.capturedText)
+            }.onFailure { error ->
+                if (allowTextFallback) {
+                    Log.w(TAG, "Triggered active-mic transfer failed, falling back to text entry", error)
+                    saveEntry(intentId, result.label, result.capturedText, 0.9f)
+                } else {
+                    Log.w(TAG, "Triggered active-mic transfer failed; short trigger not saved", error)
+                    MicCoordinator.sendWatchDebug(
+                        applicationContext,
+                        "fallo · trigger corto descartado",
+                        result.capturedText
+                    )
+                }
+            }
+            return true
+        } finally {
+            captureInFlight = false
+        }
+    }
+
+    private fun captureTailFromActiveMic(record: AudioRecord): ShortArray {
+        val readSize = 1024
+        val chunks = mutableListOf<ShortArray>()
+        var totalSamples = 0
+        val buffer = ShortArray(readSize)
+        val startedAt = android.os.SystemClock.elapsedRealtime()
+        var silenceStartedAt = 0L
+
+        while (android.os.SystemClock.elapsedRealtime() - startedAt < ACTIVE_MIC_CAPTURE_MAX_MS) {
+            val read = record.read(buffer, 0, buffer.size)
+            if (read <= 0) continue
+
+            val chunk = buffer.copyOf(read)
+            chunks += chunk
+            totalSamples += read
+
+            val elapsed = android.os.SystemClock.elapsedRealtime() - startedAt
+            val isSilent = rms(chunk) < ACTIVE_MIC_SILENCE_RMS_THRESHOLD
+            if (elapsed >= ACTIVE_MIC_CAPTURE_MIN_MS) {
+                if (isSilent) {
+                    if (silenceStartedAt == 0L) {
+                        silenceStartedAt = android.os.SystemClock.elapsedRealtime()
+                    } else if (android.os.SystemClock.elapsedRealtime() - silenceStartedAt >= ACTIVE_MIC_SILENCE_STOP_MS) {
+                        break
+                    }
+                } else {
+                    silenceStartedAt = 0L
+                }
+            }
+        }
+
+        if (totalSamples <= 0) return shortArrayOf()
+        val merged = ShortArray(totalSamples)
+        var offset = 0
+        chunks.forEach { chunk ->
+            chunk.copyInto(merged, destinationOffset = offset)
+            offset += chunk.size
+        }
+        return merged
+    }
+
+    private fun appendToRollingWindow(
+        rolling: ShortArray,
+        rollingSamples: Int,
+        newSamples: ShortArray,
+        newSampleCount: Int
+    ) {
+        if (newSampleCount >= rolling.size) {
+            newSamples.copyInto(
+                destination = rolling,
+                destinationOffset = 0,
+                startIndex = newSampleCount - rolling.size,
+                endIndex = newSampleCount
+            )
+            return
+        }
+
+        val retainedSamples = minOf(rollingSamples, rolling.size - newSampleCount)
+        if (retainedSamples > 0) {
+            rolling.copyInto(
+                destination = rolling,
+                destinationOffset = 0,
+                startIndex = rollingSamples - retainedSamples,
+                endIndex = rollingSamples
+            )
+        }
+        newSamples.copyInto(
+            destination = rolling,
+            destinationOffset = retainedSamples,
+            startIndex = 0,
+            endIndex = newSampleCount
+        )
+    }
+
+    private fun latestFromRollingWindow(
+        rolling: ShortArray,
+        rollingSamples: Int,
+        requestedSamples: Int
+    ): ShortArray {
+        val count = minOf(rollingSamples, requestedSamples)
+        if (count <= 0) return shortArrayOf()
+        return rolling.copyOfRange(rollingSamples - count, rollingSamples)
+    }
+
+    private fun mergePcm(first: ShortArray, second: ShortArray): ShortArray {
+        if (first.isEmpty()) return second
+        if (second.isEmpty()) return first
+        val merged = ShortArray(first.size + second.size)
+        first.copyInto(merged, destinationOffset = 0)
+        second.copyInto(merged, destinationOffset = first.size)
+        return merged
+    }
+
+    private fun rms(samples: ShortArray): Double {
+        if (samples.isEmpty()) return 0.0
+        var sum = 0.0
+        samples.forEach { sample ->
+            val value = abs(sample.toInt()).toDouble()
+            sum += value * value
+        }
+        return kotlin.math.sqrt(sum / samples.size)
     }
 
     // ── Mic handoff ──────────────────────────────────────────────────────────
@@ -655,6 +903,21 @@ class WatchKeywordListenerService : LifecycleService() {
     private fun createNotificationChannel() {
         val channel = NotificationChannel(CHANNEL_ID, "Servicio de escucha", NotificationManager.IMPORTANCE_LOW)
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+    }
+
+    private fun enterForeground(text: String) {
+        if (foregroundStarted) return
+        createNotificationChannel()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                NOTIFICATION_ID,
+                buildNotification(text),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, buildNotification(text))
+        }
+        foregroundStarted = true
     }
 
     private fun buildNotification(text: String): Notification {

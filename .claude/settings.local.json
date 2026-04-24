@@ -83,7 +83,8 @@
       "Bash(cp \"/Users/pabmon/.claude/projects/-Users-pabmon-Documents-Projects-TRAMA-Trama/f2071cf5-e528-4db9-9a9e-fedaf2cc5275/tool-results/webfetch-1776986158029-38251e.bin\" design.gz)",
       "Bash(rm -rf extracted)",
       "Bash(mkdir extracted *)",
-      "Bash(./gradlew :app:compileDebugKotlin -q)"
+      "Bash(./gradlew :app:compileDebugKotlin -q)",
+      "Bash(awk 'NR>=120 && NR<=320' /Users/pabmon/Documents/Projects/TRAMA/Trama/app/src/main/java/com/trama/app/ui/screens/EntryDetailScreen.kt)"
     ]
   }
 }

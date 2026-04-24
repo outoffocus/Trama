@@ -6,6 +6,13 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+val generatedVoskAssetsDir = layout.buildDirectory.dir("generated/assets/vosk")
+val generatedVoskAssetsPath = generatedVoskAssetsDir.get().asFile
+val syncWearVoskAssets by tasks.registering(org.gradle.api.tasks.Copy::class) {
+    from(project(":app").layout.projectDirectory.dir("src/main/assets/asr/vosk"))
+    into(generatedVoskAssetsDir.map { it.dir("asr/vosk") })
+}
+
 android {
     namespace = "com.trama.wear"
     compileSdk = 34
@@ -41,11 +48,21 @@ android {
         compose = true
     }
 
+    sourceSets {
+        getByName("main") {
+            assets.srcDir(generatedVoskAssetsPath)
+        }
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+}
+
+tasks.named("preBuild") {
+    dependsOn(syncWearVoskAssets)
 }
 
 dependencies {

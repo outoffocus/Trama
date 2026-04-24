@@ -6,7 +6,7 @@ import org.junit.Test
 /**
  * Tests the pure-logic algorithms used in WatchKeywordListenerService:
  * - isSimilar: word-overlap deduplication
- * - calculateBackoff: progressive delay 1s→2s→4s→8s
+ * - calculateBackoff: progressive delay capped at 5s
  *
  * These are private methods, so we test the same algorithm directly
  * to document and protect the expected behavior.
@@ -16,7 +16,7 @@ class KeywordListenerLogicTest {
     // ── Constants matching WatchKeywordListenerService.companion ──
 
     private val RESTART_MIN_BACKOFF_MS = 1000L
-    private val RESTART_MAX_BACKOFF_MS = 8000L
+    private val RESTART_MAX_BACKOFF_MS = 5000L
 
     // ── isSimilar algorithm (word-overlap ≥ 70% of smaller set) ──
 
@@ -92,7 +92,7 @@ class KeywordListenerLogicTest {
         assertFalse(isSimilar(a, b))
     }
 
-    // ── calculateBackoff algorithm (1s → 2s → 4s → 8s max) ──
+    // ── calculateBackoff algorithm (1s → 2s → 4s → 5s max) ──
 
     private fun calculateBackoff(consecutiveNoKeyword: Int): Long {
         val shift = minOf(consecutiveNoKeyword, 3)
@@ -116,21 +116,21 @@ class KeywordListenerLogicTest {
     }
 
     @Test
-    fun `backoff at 3 consecutive is 8 seconds max`() {
-        assertEquals(8000L, calculateBackoff(3))
+    fun `backoff at 3 consecutive is capped at 5 seconds`() {
+        assertEquals(5000L, calculateBackoff(3))
     }
 
     @Test
-    fun `backoff caps at 8 seconds for high counts`() {
-        assertEquals(8000L, calculateBackoff(4))
-        assertEquals(8000L, calculateBackoff(10))
-        assertEquals(8000L, calculateBackoff(100))
+    fun `backoff caps at 5 seconds for high counts`() {
+        assertEquals(5000L, calculateBackoff(4))
+        assertEquals(5000L, calculateBackoff(10))
+        assertEquals(5000L, calculateBackoff(100))
     }
 
     @Test
     fun `backoff progression is exponential`() {
         val values = (0..3).map { calculateBackoff(it) }
-        assertEquals(listOf(1000L, 2000L, 4000L, 8000L), values)
+        assertEquals(listOf(1000L, 2000L, 4000L, 5000L), values)
     }
 
     @Test
