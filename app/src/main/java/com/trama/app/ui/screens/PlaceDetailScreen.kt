@@ -50,6 +50,9 @@ import com.trama.app.audio.SherpaWhisperAsrEngine
 import com.trama.app.location.DwellDurationFormatter
 import com.trama.app.location.PlaceMapsLauncher
 import com.trama.app.summary.PlaceOpinionSummarizer
+import com.trama.app.ui.components.SectionRule
+import com.trama.app.ui.components.SoftCard
+import com.trama.app.ui.theme.LocalTramaColors
 import com.trama.shared.data.DatabaseProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -211,11 +214,8 @@ fun PlaceDetailScreen(
                 Text("Guardar nombre")
             }
 
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                )
-            ) {
+            SectionRule(title = "Ficha")
+            SoftCard(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(currentPlace.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     currentPlace.type?.let {
@@ -233,24 +233,18 @@ fun PlaceDetailScreen(
                 }
             }
 
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-            ) {
+            SectionRule(title = "Tu opinión")
+            SoftCard(modifier = Modifier.fillMaxWidth()) {
                 Column(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text(
-                        "Tu opinión",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(
-                            "Valoración",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            "Valoración".uppercase(),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = LocalTramaColors.current.mutedText
                         )
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             (1..5).forEach { star ->
@@ -385,19 +379,16 @@ fun PlaceDetailScreen(
                     }
 
                     currentPlace.opinionSummary?.takeIf { it.isNotBlank() }?.let { summary ->
-                        Card(
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-                            )
-                        ) {
+                        SoftCard(modifier = Modifier.fillMaxWidth()) {
                             Column(
                                 modifier = Modifier.padding(14.dp),
                                 verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Text(
-                                    "Resumen IA",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    "Resumen IA".uppercase(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = LocalTramaColors.current.mutedText
                                 )
                                 Text(summary, style = MaterialTheme.typography.bodyMedium)
                             }
@@ -452,8 +443,8 @@ fun PlaceDetailScreen(
                 Text("Abrir en Google Maps")
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-            Text("Historial", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Spacer(modifier = Modifier.height(4.dp))
+            SectionRule(title = "Historial", count = events.take(20).size.takeIf { it > 0 })
             events.take(20).forEach { event ->
                 TextButton(onClick = {}) {
                     Text(

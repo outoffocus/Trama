@@ -40,9 +40,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
-import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -347,6 +347,13 @@ fun HomeScreen(
         SimpleDateFormat("EEEE d 'de' MMMM", Locale("es")).format(Date(startOfDay))
             .replaceFirstChar { it.uppercase() }
     }
+    val greeting = remember(startOfDay) {
+        when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
+            in 6..11 -> "Buenos días"
+            in 12..19 -> "Buenas tardes"
+            else -> "Buenas noches"
+        }
+    }
 
     // Helper: sync a completed entry to watch
     fun syncCompleted(entry: DiaryEntry) {
@@ -501,6 +508,7 @@ fun HomeScreen(
                 )
             } else {
                 HomeHeader(
+                    greeting = greeting,
                     heroDayTitle = heroDayTitle,
                     status = when {
                         isRecording -> TramaStatus.Recording
@@ -830,6 +838,7 @@ fun HomeScreen(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun HomeHeader(
+    greeting: String,
     heroDayTitle: String,
     status: TramaStatus,
     locationRunning: Boolean,
@@ -849,8 +858,8 @@ private fun HomeHeader(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Trama",
-                        style = MaterialTheme.typography.labelMedium,
+                        text = greeting.uppercase(),
+                        style = MaterialTheme.typography.labelSmall,
                         color = t.mutedText,
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -866,7 +875,7 @@ private fun HomeHeader(
                     Icon(Icons.Default.Add, contentDescription = "Añadir nota")
                 }
                 IconButton(onClick = onChatClick) {
-                    Icon(Icons.Default.Chat, contentDescription = "Asistente", tint = t.teal)
+                    Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = "Asistente", tint = t.teal)
                 }
                 IconButton(onClick = onSearchClick) {
                     Icon(Icons.Default.Search, contentDescription = "Buscar")

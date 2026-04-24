@@ -775,6 +775,13 @@ private fun CalendarPlaceCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Box(
+                    modifier = Modifier
+                        .width(3.dp)
+                        .height(22.dp)
+                        .background(t.teal, RoundedCornerShape(2.dp))
+                )
+                Spacer(modifier = Modifier.width(10.dp))
                 Icon(
                     Icons.Default.Place,
                     contentDescription = null,
@@ -782,14 +789,21 @@ private fun CalendarPlaceCard(
                     modifier = Modifier.size(14.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = place.name,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "LUGAR",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = t.teal
+                    )
+                    Text(
+                        text = place.name,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 TextButton(onClick = onOpenDetail) {
                     Text("Ficha", style = MaterialTheme.typography.labelMedium)
                 }
@@ -847,23 +861,32 @@ private fun CalendarPlaceCard(
 
 @Composable
 private fun CalendarHistoryHeader(title: String, subtitle: String = "") {
+    val t = LocalTramaColors.current
     Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Text(
-            text = title,
-            style = MaterialTheme.typography.labelLarge,
+            text = title.uppercase(),
+            style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface
+            color = t.mutedText,
         )
         if (subtitle.isNotBlank()) {
+            Spacer(Modifier.width(6.dp))
             Text(
                 text = subtitle,
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = t.dimText
             )
         }
+        Spacer(Modifier.width(10.dp))
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(1.dp)
+                .background(t.hairline)
+        )
     }
 }
 

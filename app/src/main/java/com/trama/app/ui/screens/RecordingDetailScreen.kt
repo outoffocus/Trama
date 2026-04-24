@@ -228,9 +228,10 @@ fun RecordingDetailScreen(
                             modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            "Acciones extraídas",
-                            style = MaterialTheme.typography.titleSmall,
+                            "Acciones extraídas".uppercase(),
+                            style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold,
+                            color = com.trama.app.ui.theme.LocalTramaColors.current.mutedText,
                             modifier = Modifier.weight(1f)
                         )
                         if (suggested.isNotEmpty()) {
@@ -349,19 +350,19 @@ private fun StatusBadge(recording: Recording) {
 
 @Composable
 private fun SectionCard(title: String, content: @Composable () -> Unit) {
+    val t = com.trama.app.ui.theme.LocalTramaColors.current
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-        )
+        colors = CardDefaults.cardColors(containerColor = t.surface),
+        border = androidx.compose.foundation.BorderStroke(1.dp, t.softBorder),
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Text(
-                text = title,
-                style = MaterialTheme.typography.labelLarge,
+                text = title.uppercase(),
+                style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = t.mutedText,
             )
             Spacer(modifier = Modifier.height(8.dp))
             content()
