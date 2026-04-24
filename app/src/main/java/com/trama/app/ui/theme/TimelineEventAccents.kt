@@ -15,15 +15,13 @@ data class TimelineAccentConfig(
     val calendar: Color
 )
 
+// Reduced to the 5 Trama semantic accents.
 val TimelineAccentPalette = listOf(
-    TimelineAccentOption("Azul", CategoryColors[0]),
-    TimelineAccentOption("Coral", CategoryColors[1]),
-    TimelineAccentOption("Verde", CategoryColors[2]),
-    TimelineAccentOption("Ambar", CategoryColors[3]),
-    TimelineAccentOption("Lavanda", CategoryColors[4]),
-    TimelineAccentOption("Turquesa", CategoryColors[5]),
-    TimelineAccentOption("Rosa", CategoryColors[6]),
-    TimelineAccentOption("Melocoton", CategoryColors[7]),
+    TimelineAccentOption("Ambar", TramaAmber),
+    TimelineAccentOption("Turquesa", TramaTeal),
+    TimelineAccentOption("Rojo", TramaRed),
+    TimelineAccentOption("Dorado", TramaWarn),
+    TimelineAccentOption("Azul", TramaWatch),
 )
 
 fun timelineAccentColor(index: Int): Color {

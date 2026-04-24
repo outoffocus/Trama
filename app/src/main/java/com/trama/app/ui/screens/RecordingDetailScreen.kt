@@ -1,5 +1,8 @@
 package com.trama.app.ui.screens
 
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
@@ -48,13 +52,20 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.trama.app.summary.ActionExecutor
+import com.trama.app.summary.ActionType
+import com.trama.app.summary.CalendarHelper
+import com.trama.app.summary.EntryActionBridge
 import com.trama.app.summary.RecordingProcessor
+import com.trama.app.summary.SuggestedAction
+import com.trama.app.ui.components.CalendarActionDialog
 import com.trama.shared.data.DatabaseProvider
 import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.EntryStatus
@@ -98,6 +109,7 @@ fun RecordingDetailScreen(
     val json = remember { Json { ignoreUnknownKeys = true } }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = { Text(recording?.title ?: "Grabación") },
@@ -106,6 +118,9 @@ fun RecordingDetailScreen(
                         Icon(Icons.Default.ArrowBack, contentDescription = "Volver")
                     }
                 },
+                colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background
+                ),
                 actions = {
                     val rec = recording
                     if (rec != null) {
@@ -232,7 +247,7 @@ fun RecordingDetailScreen(
 
                 if (suggested.isNotEmpty()) {
                     items(suggested, key = { "action_${it.id}" }) { action ->
-                        ActionItemCard(
+                        RecordingActionItem(
                             entry = action,
                             isSuggested = true,
                             duplicateOfText = action.duplicateOfId?.let { duplicateOriginals.value[it] },
@@ -244,7 +259,7 @@ fun RecordingDetailScreen(
                 }
                 if (accepted.isNotEmpty()) {
                     items(accepted, key = { "action_${it.id}" }) { action ->
-                        ActionItemCard(
+                        RecordingActionItem(
                             entry = action,
                             isSuggested = false,
                             duplicateOfText = action.duplicateOfId?.let { duplicateOriginals.value[it] },
@@ -355,13 +370,112 @@ private fun SectionCard(title: String, content: @Composable () -> Unit) {
 }
 
 @Composable
+private fun RecordingActionItem(
+    entry: DiaryEntry,
+    isSuggested: Boolean,
+    duplicateOfText: String? = null,
+    onClick: () -> Unit,
+    onAccept: (() -> Unit)? = null,
+    onDismiss: (() -> Unit)? = null,
+) {
+    val context = LocalContext.current
+    val quickAction = remember(
+        entry.id,
+        entry.actionType,
+        entry.displayText,
+        entry.dueDate,
+        entry.status
+    ) {
+        EntryActionBridge.build(entry)
+    }
+    var editingCalendarAction by remember(entry.id) { mutableStateOf<SuggestedAction?>(null) }
+    var pendingCalendarAction by remember(entry.id) { mutableStateOf<SuggestedAction?>(null) }
+    val calendarPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        val granted = result[Manifest.permission.READ_CALENDAR] == true &&
+            result[Manifest.permission.WRITE_CALENDAR] == true
+        if (granted) {
+            editingCalendarAction = pendingCalendarAction
+        }
+        pendingCalendarAction = null
+    }
+
+    editingCalendarAction?.let { action ->
+        val isReminder = action.type == ActionType.REMINDER
+        CalendarActionDialog(
+            action = action,
+            dialogTitle = if (isReminder) "Crear recordatorio" else "Añadir al calendario",
+            confirmLabel = if (isReminder) "Crear" else "Añadir",
+            onDismiss = { editingCalendarAction = null },
+            onConfirm = { title, description, date, time, calendarId ->
+                val datetime = "${date}T${time}"
+                val updatedAction = action.copy(title = title, description = description, datetime = datetime)
+                val startMillis = try {
+                    SimpleDateFormat("yyyy-MM-dd'T'HH:mm", Locale.getDefault()).parse(datetime)?.time
+                } catch (_: Exception) { null }
+
+                if (startMillis != null && calendarId != null) {
+                    CalendarHelper.insertEventInCalendar(
+                        context = context,
+                        calendarId = calendarId,
+                        title = title,
+                        description = description.ifBlank { null },
+                        startMillis = startMillis,
+                        reminderMinutes = if (isReminder) 15 else 0
+                    )
+                } else {
+                    CalendarHelper.insertEventFromAction(context, updatedAction, isReminder = isReminder)
+                }
+                editingCalendarAction = null
+            }
+        )
+    }
+
+    ActionItemCard(
+        entry = entry,
+        isSuggested = isSuggested,
+        duplicateOfText = duplicateOfText,
+        onClick = onClick,
+        onAccept = onAccept,
+        onDismiss = onDismiss,
+        onQuickActionClick = quickAction
+            ?.takeIf { action ->
+                action.action.type == ActionType.CALENDAR_EVENT ||
+                    action.action.type == ActionType.REMINDER ||
+                    action.action.type == ActionType.TODO
+            }
+            ?.let { action ->
+            {
+                if (action.action.type == ActionType.CALENDAR_EVENT || action.action.type == ActionType.REMINDER) {
+                    if (CalendarHelper.hasWriteCalendarPermission(context)) {
+                        editingCalendarAction = action.action
+                    } else {
+                        pendingCalendarAction = action.action
+                        calendarPermissionLauncher.launch(
+                            arrayOf(
+                                Manifest.permission.READ_CALENDAR,
+                                Manifest.permission.WRITE_CALENDAR
+                            )
+                        )
+                    }
+                } else {
+                    ActionExecutor.execute(context, action.action)
+                }
+            }
+        }
+    )
+}
+
+@Composable
 private fun ActionItemCard(
     entry: DiaryEntry,
     isSuggested: Boolean,
     duplicateOfText: String? = null,
     onClick: () -> Unit,
     onAccept: (() -> Unit)? = null,
-    onDismiss: (() -> Unit)? = null
+    onDismiss: (() -> Unit)? = null,
+    onQuickActionClick: (() -> Unit)? = null
 ) {
     val isDuplicate = duplicateOfText != null
     Card(
@@ -461,6 +575,17 @@ private fun ActionItemCard(
                     Icon(
                         Icons.Default.Add,
                         contentDescription = "Añadir a tareas",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+            if (onQuickActionClick != null) {
+                Spacer(modifier = Modifier.width(2.dp))
+                IconButton(onClick = onQuickActionClick, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        Icons.Default.CalendarMonth,
+                        contentDescription = "Añadir al calendario",
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(20.dp)
                     )

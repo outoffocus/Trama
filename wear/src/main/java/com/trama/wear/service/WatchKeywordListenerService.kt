@@ -118,14 +118,24 @@ class WatchKeywordListenerService : LifecycleService() {
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
+        try {
+            createNotificationChannel()
 
-        // MUST call startForeground immediately in onCreate — before system timeout
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIFICATION_ID, buildNotification("Inicializando..."),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-        } else {
-            startForeground(NOTIFICATION_ID, buildNotification("Inicializando..."))
+            // MUST call startForeground immediately in onCreate — before system timeout.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    buildNotification("Inicializando..."),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, buildNotification("Inicializando..."))
+            }
+            WatchServiceController.notifyStarted()
+        } catch (e: Exception) {
+            Log.e(TAG, "Could not enter foreground; stopping watch listener", e)
+            WatchServiceController.notifyStopped()
+            stopSelf()
         }
     }
 
@@ -207,20 +217,6 @@ class WatchKeywordListenerService : LifecycleService() {
         // Note: MicCoordinator.sendResume is handled by WatchServiceController.stopByUser()
         // not here, because onDestroy also fires when phone pauses us (and we shouldn't
         // send RESUME back in that case).
-
-        // Self-restart with backoff when we die unexpectedly.
-        // Because we use START_NOT_STICKY the OS won't restart us automatically,
-        // so we schedule our own restart — but only if the user still wants the
-        // service running and the phone hasn't taken over the mic.
-        // The 5-second delay gives the system a moment to recover from load spikes
-        // before we try to open AudioRecord again.
-        if (WatchServiceController.isUserEnabled(applicationContext) &&
-            !WatchServiceController.isPhoneActive(applicationContext) &&
-            !isBatteryLow()) {
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                WatchServiceController.resumeIfAllowed(applicationContext)
-            }, RESTART_MAX_BACKOFF_MS)
-        }
 
         WatchServiceController.notifyStopped()
         super.onDestroy()

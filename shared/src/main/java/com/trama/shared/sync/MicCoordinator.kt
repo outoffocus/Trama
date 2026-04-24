@@ -20,23 +20,23 @@ object MicCoordinator {
     const val CMD_START_RECORDING = "START_RECORDING"
 
     /** Tell all connected nodes to pause their mic */
-    suspend fun sendPause(context: Context) {
-        sendCommand(context, CMD_PAUSE)
+    suspend fun sendPause(context: Context): Boolean {
+        return sendCommand(context, CMD_PAUSE)
     }
 
     /** Tell all connected nodes they can resume their mic */
-    suspend fun sendResume(context: Context) {
-        sendCommand(context, CMD_RESUME)
+    suspend fun sendResume(context: Context): Boolean {
+        return sendCommand(context, CMD_RESUME)
     }
 
     /** Tell the other device to start keyword listening */
-    suspend fun sendStartKeyword(context: Context) {
-        sendCommand(context, CMD_START_KEYWORD)
+    suspend fun sendStartKeyword(context: Context): Boolean {
+        return sendCommand(context, CMD_START_KEYWORD)
     }
 
     /** Tell the other device to start continuous recording */
-    suspend fun sendStartRecording(context: Context) {
-        sendCommand(context, CMD_START_RECORDING)
+    suspend fun sendStartRecording(context: Context): Boolean {
+        return sendCommand(context, CMD_START_RECORDING)
     }
 
     /**
@@ -59,22 +59,26 @@ object MicCoordinator {
         }
     }
 
-    private suspend fun sendCommand(context: Context, command: String) {
-        try {
+    private suspend fun sendCommand(context: Context, command: String): Boolean {
+        return try {
             val nodes = Wearable.getNodeClient(context).connectedNodes.await()
             if (nodes.isEmpty()) {
                 Log.d(TAG, "No connected nodes, skipping $command")
-                return
+                return false
             }
             val data = command.toByteArray()
+            var sent = false
             for (node in nodes) {
                 Wearable.getMessageClient(context)
                     .sendMessage(node.id, MIC_PATH, data)
                     .await()
+                sent = true
                 Log.i(TAG, "Sent $command to ${node.displayName}")
             }
+            sent
         } catch (e: Exception) {
             Log.w(TAG, "Failed to send $command", e)
+            false
         }
     }
 }

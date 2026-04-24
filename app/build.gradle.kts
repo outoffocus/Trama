@@ -74,6 +74,7 @@ dependencies {
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.icons.extended)
+    implementation(libs.compose.ui.text.google.fonts)
     debugImplementation(libs.compose.ui.tooling)
 
     // AndroidX

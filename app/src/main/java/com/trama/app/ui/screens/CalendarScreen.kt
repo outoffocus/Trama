@@ -66,6 +66,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.trama.app.location.PlaceMapsLauncher
+import com.trama.app.ui.theme.LocalTramaColors
 import com.trama.shared.data.DatabaseProvider
 import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.EntryStatus
@@ -188,6 +189,7 @@ fun CalendarScreen(
     }
 
     val monthFormat = remember { SimpleDateFormat("MMMM yyyy", Locale("es")) }
+    val t = LocalTramaColors.current
     val selectedDayLabel = remember(selectedDayStart) {
         SimpleDateFormat("EEEE d 'de' MMMM", Locale("es")).format(selectedDayStart)
             .replaceFirstChar { it.uppercase() }
@@ -224,8 +226,16 @@ fun CalendarScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+                    containerColor = MaterialTheme.colorScheme.background
                 )
+            )
+        },
+        bottomBar = {
+            com.trama.app.ui.components.TramaBottomBar(
+                active = com.trama.app.ui.components.TramaTab.Calendar,
+                onTabSelected = { tab ->
+                    if (tab == com.trama.app.ui.components.TramaTab.Home) onBack()
+                }
             )
         }
     ) { paddingValues ->
@@ -288,6 +298,26 @@ fun CalendarScreen(
                     )
                 }
             }
+
+            // ── Always-visible week strip ──────────────────────────────────
+            WeekStrip(
+                selectedDayStart = selectedDayStart,
+                todayStart = todayStart,
+                entriesByDay = entriesByDay,
+                eventEntriesByDay = eventEntriesByDay,
+                completedByDay = completedByDay,
+                displayMonth = displayMonth,
+                onDaySelected = { ms ->
+                    selectedDayStart = ms
+                    val newCal = Calendar.getInstance().apply { timeInMillis = ms }
+                    if (newCal.get(Calendar.MONTH) != displayMonth.get(Calendar.MONTH) ||
+                        newCal.get(Calendar.YEAR) != displayMonth.get(Calendar.YEAR)) {
+                        displayMonth = (newCal.clone() as Calendar).apply {
+                            set(Calendar.DAY_OF_MONTH, 1)
+                        }
+                    }
+                }
+            )
 
             // ── Collapsible month grid ─────────────────────────────────────
             AnimatedVisibility(
@@ -395,11 +425,11 @@ fun CalendarScreen(
                         .padding(horizontal = 14.dp, vertical = 6.dp),
                     shape = RoundedCornerShape(12.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                        containerColor = t.amberBg
                     ),
                     border = androidx.compose.foundation.BorderStroke(
                         0.5.dp,
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                        t.amber.copy(alpha = 0.22f)
                     )
                 ) {
                     Text(
@@ -523,6 +553,7 @@ private fun CalendarHistoryCard(
     isCompleted: Boolean,
     onClick: () -> Unit
 ) {
+    val t = LocalTramaColors.current
     val timeFormat = remember { SimpleDateFormat("d MMM · HH:mm", Locale("es")) }
     Card(
         modifier = Modifier
@@ -531,13 +562,13 @@ private fun CalendarHistoryCard(
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (isCompleted)
-                MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.30f)
+                t.tealBg
             else
-                MaterialTheme.colorScheme.surface
+                t.surface
         ),
         border = androidx.compose.foundation.BorderStroke(
             0.5.dp,
-            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+            if (isCompleted) t.teal.copy(alpha = 0.24f) else t.softBorder
         )
     ) {
         Column(
@@ -579,15 +610,17 @@ private fun CalendarRecordingCard(
     recording: Recording,
     onClick: () -> Unit
 ) {
+    val t = LocalTramaColors.current
     val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onClick() },
         shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = t.surface),
         border = androidx.compose.foundation.BorderStroke(
             0.5.dp,
-            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+            t.red.copy(alpha = 0.20f)
         )
     ) {
         Row(
@@ -600,7 +633,7 @@ private fun CalendarRecordingCard(
             Icon(
                 Icons.Default.Mic,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                tint = t.red,
                 modifier = Modifier.size(16.dp)
             )
             Column(modifier = Modifier.weight(1f)) {
@@ -630,15 +663,17 @@ private fun CalendarPlaceCard(
     onOpenDetail: () -> Unit,
     onOpenMap: () -> Unit
 ) {
+    val t = LocalTramaColors.current
     val scope = rememberCoroutineScope()
     var rating by remember(place.id, place.rating) { mutableStateOf(place.rating ?: 0) }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = t.surface),
         border = androidx.compose.foundation.BorderStroke(
             0.5.dp,
-            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+            t.teal.copy(alpha = 0.18f)
         )
     ) {
         Column(
@@ -654,7 +689,7 @@ private fun CalendarPlaceCard(
                 Icon(
                     Icons.Default.Place,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
+                    tint = t.teal,
                     modifier = Modifier.size(14.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
@@ -683,8 +718,8 @@ private fun CalendarPlaceCard(
                                 .size(36.dp)
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(
-                                    if (selected) MaterialTheme.colorScheme.secondaryContainer
-                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                    if (selected) t.warnBg
+                                    else t.surface2
                                 )
                                 .clickable {
                                     scope.launch {
@@ -697,8 +732,7 @@ private fun CalendarPlaceCard(
                             Icon(
                                 imageVector = Icons.Default.Star,
                                 contentDescription = "$star",
-                                tint = if (selected) MaterialTheme.colorScheme.secondary
-                                       else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+                                tint = if (selected) t.warn else t.dimText,
                                 modifier = Modifier.size(18.dp)
                             )
                         }
@@ -763,21 +797,20 @@ private fun CalendarDay(
     entryCount: Int,
     onClick: () -> Unit
 ) {
+    val t = LocalTramaColors.current
     val bgColor by animateColorAsState(
         targetValue = when {
-            isSelected && isToday -> MaterialTheme.colorScheme.primaryContainer
-            isSelected            -> MaterialTheme.colorScheme.secondaryContainer
-            isToday               -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
-            else                  -> MaterialTheme.colorScheme.surface
+            isSelected -> t.amberBg
+            isToday    -> t.surface2
+            else       -> t.surface
         },
         label = "dayBg"
     )
     val textColor = when {
-        !day.isCurrentMonth -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f)
-        isSelected && isToday -> MaterialTheme.colorScheme.primary
-        isSelected          -> MaterialTheme.colorScheme.secondary
-        isToday             -> MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
-        else                -> MaterialTheme.colorScheme.onSurface
+        !day.isCurrentMonth -> t.dimText
+        isSelected -> t.amber
+        isToday -> MaterialTheme.colorScheme.onSurface
+        else -> MaterialTheme.colorScheme.onSurface
     }
 
     Box(
@@ -805,7 +838,7 @@ private fun CalendarDay(
                             modifier = Modifier
                                 .size(4.dp)
                                 .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
+                                .background(t.amber.copy(alpha = 0.7f))
                         )
                     }
                     if (hasCompleted) {
@@ -813,7 +846,7 @@ private fun CalendarDay(
                             modifier = Modifier
                                 .size(4.dp)
                                 .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.6f))
+                                .background(t.teal.copy(alpha = 0.7f))
                         )
                     }
                 }
@@ -844,5 +877,119 @@ private fun buildCalendarDays(displayMonth: Calendar): List<CalDay> {
             dayOfMonth = if (dayNum in 1..daysInMonth) dayNum else 0,
             isCurrentMonth = dayNum in 1..daysInMonth
         )
+    }
+}
+
+@Composable
+private fun WeekStrip(
+    selectedDayStart: Long,
+    todayStart: Long,
+    entriesByDay: Map<Int, List<com.trama.shared.model.DiaryEntry>>,
+    eventEntriesByDay: Map<Int, List<com.trama.shared.model.TimelineEvent>>,
+    completedByDay: Map<Int, List<com.trama.shared.model.DiaryEntry>>,
+    displayMonth: java.util.Calendar,
+    onDaySelected: (Long) -> Unit,
+) {
+    val t = com.trama.app.ui.theme.LocalTramaColors.current
+    val selCal = java.util.Calendar.getInstance().apply {
+        timeInMillis = selectedDayStart
+        set(java.util.Calendar.HOUR_OF_DAY, 0)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+    }
+    // Move back to Monday (locale-agnostic week start)
+    val dow = selCal.get(java.util.Calendar.DAY_OF_WEEK)
+    val daysFromMonday = when (dow) {
+        java.util.Calendar.MONDAY -> 0
+        java.util.Calendar.TUESDAY -> 1
+        java.util.Calendar.WEDNESDAY -> 2
+        java.util.Calendar.THURSDAY -> 3
+        java.util.Calendar.FRIDAY -> 4
+        java.util.Calendar.SATURDAY -> 5
+        java.util.Calendar.SUNDAY -> 6
+        else -> 0
+    }
+    val weekStart = (selCal.clone() as java.util.Calendar).apply {
+        add(java.util.Calendar.DAY_OF_YEAR, -daysFromMonday)
+    }
+    val labels = listOf("L", "M", "X", "J", "V", "S", "D")
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        for (i in 0..6) {
+            val dayCal = (weekStart.clone() as java.util.Calendar).apply {
+                add(java.util.Calendar.DAY_OF_YEAR, i)
+            }
+            val dayMs = dayCal.timeInMillis
+            val dayOfMonth = dayCal.get(java.util.Calendar.DAY_OF_MONTH)
+            val inDisplayMonth = dayCal.get(java.util.Calendar.MONTH) == displayMonth.get(java.util.Calendar.MONTH) &&
+                dayCal.get(java.util.Calendar.YEAR) == displayMonth.get(java.util.Calendar.YEAR)
+            val isSelected = dayMs == selCal.timeInMillis
+            val isToday = dayMs == todayStart
+            val future = dayMs > todayStart
+            val hasEntries = inDisplayMonth && (
+                (entriesByDay[dayOfMonth]?.isNotEmpty() == true) ||
+                    (eventEntriesByDay[dayOfMonth]?.isNotEmpty() == true)
+            )
+            val hasCompleted = inDisplayMonth && (completedByDay[dayOfMonth]?.isNotEmpty() == true)
+
+            val bg = when {
+                isSelected -> t.amber
+                isToday -> t.surface2
+                else -> androidx.compose.ui.graphics.Color.Transparent
+            }
+            val fg = when {
+                isSelected -> androidx.compose.ui.graphics.Color.White
+                future -> t.dimText
+                else -> MaterialTheme.colorScheme.onSurface
+            }
+            val labelFg = when {
+                isSelected -> androidx.compose.ui.graphics.Color.White.copy(alpha = 0.85f)
+                else -> t.mutedText
+            }
+
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(bg)
+                    .clickable(enabled = !future) { onDaySelected(dayMs) }
+                    .padding(vertical = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = labels[i],
+                    style = MaterialTheme.typography.labelSmall,
+                    color = labelFg,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = dayOfMonth.toString(),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = fg,
+                    fontWeight = if (isSelected || isToday) androidx.compose.ui.text.font.FontWeight.Bold
+                        else androidx.compose.ui.text.font.FontWeight.SemiBold
+                )
+                Spacer(Modifier.height(3.dp))
+                Box(
+                    modifier = Modifier
+                        .size(4.dp)
+                        .clip(CircleShape)
+                        .background(
+                            when {
+                                hasEntries -> if (isSelected) androidx.compose.ui.graphics.Color.White else t.amber
+                                hasCompleted -> if (isSelected) androidx.compose.ui.graphics.Color.White.copy(alpha = 0.6f) else t.teal
+                                else -> androidx.compose.ui.graphics.Color.Transparent
+                            }
+                        )
+                )
+            }
+        }
     }
 }

@@ -3,6 +3,8 @@ package com.trama.app.service
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
+import com.trama.app.sync.SettingsSyncer
+import com.trama.app.ui.SettingsDataStore
 import com.trama.shared.sync.MicCoordinator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -10,6 +12,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicReference
 
@@ -118,8 +122,9 @@ object ServiceController {
      * Transfer active mode to watch. Stops everything locally.
      * Does NOT clear should_run so phone can auto-resume if watch returns control.
      */
-    fun transferToWatch(context: Context) {
+    fun transferToWatch(context: Context, onResult: ((Boolean) -> Unit)? = null) {
         synchronized(transitionLock) {
+            val wasListening = _isRunning.value
             val wasRecording = RecordingState.isRecording.value
 
             if (_isRunning.value) {
@@ -130,15 +135,53 @@ object ServiceController {
                 RecordingState.stopRecording(context)
             }
 
-            _isWatchActive.value = true
-            modeRef.set(ServiceMode.WATCH)
-
             scope.launch {
-                if (wasRecording) {
+                syncSettingsToWatch(context)
+                val sent = if (wasRecording) {
                     MicCoordinator.sendStartRecording(context)
                 } else {
                     MicCoordinator.sendStartKeyword(context)
                 }
+
+                if (!sent) {
+                    restoreAfterFailedWatchTransfer(context, wasListening)
+                    onResult?.invoke(false)
+                    return@launch
+                }
+
+                delay(6_000)
+                if (_isWatchActive.value) {
+                    onResult?.invoke(true)
+                } else {
+                    restoreAfterFailedWatchTransfer(context, wasListening)
+                    onResult?.invoke(false)
+                }
+            }
+        }
+    }
+
+    private suspend fun syncSettingsToWatch(context: Context) {
+        val appContext = context.applicationContext
+        val settings = SettingsDataStore(appContext)
+        runCatching {
+            SettingsSyncer(appContext).syncPatterns(
+                patterns = settings.intentPatterns.first(),
+                customKeywords = settings.customKeywords.first(),
+                force = true
+            )
+        }
+    }
+
+    private fun restoreAfterFailedWatchTransfer(context: Context, wasListening: Boolean) {
+        synchronized(transitionLock) {
+            _isWatchActive.value = false
+            if (wasListening && !RecordingState.isRecording.value) {
+                val intent = Intent(context, KeywordListenerService::class.java)
+                ContextCompat.startForegroundService(context, intent)
+                _isRunning.value = true
+                modeRef.set(ServiceMode.LISTENING)
+            } else if (!RecordingState.isRecording.value) {
+                modeRef.set(ServiceMode.IDLE)
             }
         }
     }

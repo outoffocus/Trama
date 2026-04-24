@@ -23,7 +23,9 @@ object EntryActionBridge {
     private val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm", Locale.getDefault())
 
     fun build(entry: DiaryEntry): EntryQuickAction? {
-        if (entry.status != com.trama.shared.model.EntryStatus.PENDING) return null
+        if (entry.status != com.trama.shared.model.EntryStatus.PENDING &&
+            entry.status != com.trama.shared.model.EntryStatus.SUGGESTED
+        ) return null
 
         val title = entry.displayText.trim().ifBlank { return null }
         val datetime = entry.dueDate?.let { due ->

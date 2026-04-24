@@ -48,11 +48,11 @@ fun WatchHomeScreen() {
     val batteryPct = batteryManager?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
     val batteryLow = batteryPct in 1..20
 
-    val listenColor = Color(0xFF00897B)
-    val recordColor = Color(0xFFD32F2F)
-    val transferColor = Color(0xFF1E88E5)
-    val idleSurface = Color(0xFF2C2C2C)
-    val mutedIcon = Color(0xFF9E9E9E)
+    val listenColor = Color(0xFFC8753A)
+    val recordColor = Color(0xFFD45A4A)
+    val transferColor = Color(0xFF5588EE)
+    val idleSurface = Color(0xFF1C1C1F)
+    val mutedIcon = Color(0xFF6E6D68)
 
     ScalingLazyColumn(
         modifier = Modifier.fillMaxSize()

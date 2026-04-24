@@ -373,10 +373,11 @@ fun SettingsScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+                    containerColor = MaterialTheme.colorScheme.background
                 )
             )
-        }
+        },
+        containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
         Column(
             modifier = Modifier
@@ -420,12 +421,14 @@ fun SettingsScreen(
 
                 Spacer(modifier = Modifier.height(20.dp))
 
+                val tramaColors = com.trama.app.ui.theme.LocalTramaColors.current
                 SettingsNavigationCard(
                     icon = Icons.Default.Mic,
                     title = SettingsSection.CAPTURE_MEMORY.title,
                     subtitle = SettingsSection.CAPTURE_MEMORY.subtitle,
                     summary = "Triggers, diccionario aprendido y ubicación pasiva",
-                    onClick = { onOpenSection(SettingsSection.CAPTURE_MEMORY) }
+                    onClick = { onOpenSection(SettingsSection.CAPTURE_MEMORY) },
+                    accent = tramaColors.amber,
                 )
                 Spacer(modifier = Modifier.height(10.dp))
                 SettingsNavigationCard(
@@ -433,7 +436,8 @@ fun SettingsScreen(
                     title = SettingsSection.IA.title,
                     subtitle = SettingsSection.IA.subtitle,
                     summary = "Resumen diario, Gemini y modelo local",
-                    onClick = { onOpenSection(SettingsSection.IA) }
+                    onClick = { onOpenSection(SettingsSection.IA) },
+                    accent = tramaColors.teal,
                 )
                 Spacer(modifier = Modifier.height(10.dp))
                 SettingsNavigationCard(
@@ -441,7 +445,8 @@ fun SettingsScreen(
                     title = SettingsSection.APPEARANCE.title,
                     subtitle = SettingsSection.APPEARANCE.subtitle,
                     summary = "Acentos visuales y legibilidad del timeline",
-                    onClick = { onOpenSection(SettingsSection.APPEARANCE) }
+                    onClick = { onOpenSection(SettingsSection.APPEARANCE) },
+                    accent = tramaColors.warn,
                 )
                 Spacer(modifier = Modifier.height(10.dp))
                 SettingsNavigationCard(
@@ -449,7 +454,8 @@ fun SettingsScreen(
                     title = SettingsSection.ADVANCED.title,
                     subtitle = SettingsSection.ADVANCED.subtitle,
                     summary = "Diagnóstico, prompts, backup y control fino",
-                    onClick = { onOpenSection(SettingsSection.ADVANCED) }
+                    onClick = { onOpenSection(SettingsSection.ADVANCED) },
+                    accent = tramaColors.watch,
                 )
 
                 Spacer(modifier = Modifier.height(32.dp))
@@ -1890,32 +1896,34 @@ private fun SettingsNavigationCard(
     title: String,
     subtitle: String,
     summary: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    accent: Color? = null,
 ) {
-    Card(
+    val t = com.trama.app.ui.theme.LocalTramaColors.current
+    val c = accent ?: MaterialTheme.colorScheme.primary
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-        ),
-        shape = RoundedCornerShape(16.dp)
+        color = t.surface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, t.softBorder),
+        shape = RoundedCornerShape(14.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 16.dp),
+                .padding(horizontal = 14.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                shape = RoundedCornerShape(12.dp),
+                color = c.copy(alpha = 0.14f)
             ) {
                 Icon(
                     icon,
                     contentDescription = null,
-                    modifier = Modifier.padding(10.dp).size(20.dp),
-                    tint = MaterialTheme.colorScheme.primary
+                    modifier = Modifier.padding(10.dp).size(18.dp),
+                    tint = c
                 )
             }
 
@@ -1925,7 +1933,8 @@ private fun SettingsNavigationCard(
                 Text(
                     text = subtitle.uppercase(),
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
+                    color = c,
+                    fontWeight = FontWeight.SemiBold
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(

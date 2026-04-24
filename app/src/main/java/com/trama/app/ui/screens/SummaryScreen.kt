@@ -146,6 +146,7 @@ fun SummaryScreen(
         ?: "Todavia no hay una pagina diaria consolidada. Puedes regenerarla manualmente."
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = { Text("Revision del dia") },
@@ -160,7 +161,7 @@ fun SummaryScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+                    containerColor = MaterialTheme.colorScheme.background
                 )
             )
         }

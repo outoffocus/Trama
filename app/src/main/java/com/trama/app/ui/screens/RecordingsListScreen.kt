@@ -58,6 +58,7 @@ fun RecordingsListScreen(
     var selectedIds by remember { mutableStateOf(setOf<Long>()) }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             if (selectionMode) {
                 TopAppBar(
@@ -85,7 +86,7 @@ fun RecordingsListScreen(
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                        containerColor = MaterialTheme.colorScheme.background
                     )
                 )
             } else {
@@ -124,7 +125,7 @@ fun RecordingsListScreen(
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surface
+                        containerColor = MaterialTheme.colorScheme.background
                     )
                 )
             }

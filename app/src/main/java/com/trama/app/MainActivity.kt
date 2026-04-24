@@ -96,7 +96,8 @@ class MainActivity : ComponentActivity() {
         CoroutineScope(Dispatchers.IO).launch {
             val settings = SettingsDataStore(applicationContext)
             val kwList = settings.customKeywords.first()
-            SettingsSyncer(applicationContext).syncSettings(kwList)
+            val patterns = settings.intentPatterns.first()
+            SettingsSyncer(applicationContext).syncPatterns(patterns, kwList)
         }
     }
 

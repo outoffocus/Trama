@@ -46,9 +46,25 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.unit.dp
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material3.Surface
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import com.trama.app.speech.PersonalDictionary
 import com.trama.app.summary.ManualActionSuggestion
 import com.trama.app.summary.ManualActionSuggestionExtractor
+import com.trama.app.ui.components.SectionRule
+import com.trama.app.ui.components.SoftCard
+import com.trama.app.ui.theme.LocalTramaColors
 import com.trama.shared.data.DatabaseProvider
 import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.EntryActionType
@@ -165,10 +181,12 @@ fun EntryDetailScreen(
 
     val dateFormat = SimpleDateFormat("dd MMMM yyyy, HH:mm", Locale("es"))
 
+    var diagnosticExpanded by remember { mutableStateOf(false) }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Detalle") },
+                title = { Text("Detalle", style = MaterialTheme.typography.titleMedium) },
                 navigationIcon = {
                     IconButton(onClick = {
                         if (isEditing) {
@@ -184,6 +202,9 @@ fun EntryDetailScreen(
                         )
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background
+                ),
                 actions = {
                     if (isEditing) {
                         IconButton(onClick = {
@@ -233,79 +254,112 @@ fun EntryDetailScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(16.dp)
                 .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+                .padding(top = 8.dp, bottom = 24.dp)
         ) {
+            // Type + priority chip row
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val accent = when (currentEntry.priority) {
+                    EntryPriority.URGENT -> MaterialTheme.colorScheme.error
+                    EntryPriority.HIGH -> LocalTramaColors.current.warn
+                    else -> MaterialTheme.colorScheme.primary
+                }
+                Surface(
+                    shape = RoundedCornerShape(5.dp),
+                    color = accent.copy(alpha = 0.14f),
+                ) {
+                    Text(
+                        text = EntryActionType.label(currentEntry.actionType).uppercase(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = accent,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+                if (currentEntry.priority == EntryPriority.URGENT ||
+                    currentEntry.priority == EntryPriority.HIGH
+                ) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (currentEntry.priority == EntryPriority.URGENT) "↑ Urgente" else "↑ Alta",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = accent,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                Text(
+                    text = dateFormat.format(Date(currentEntry.createdAt)),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = LocalTramaColors.current.mutedText,
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Hero text
             if (isEditing) {
                 OutlinedTextField(
                     value = editedText,
                     onValueChange = { editedText = it },
                     modifier = Modifier.fillMaxWidth(),
-                    minLines = 4
+                    minLines = 4,
+                    textStyle = MaterialTheme.typography.titleLarge
                 )
             } else {
                 Text(
                     text = currentEntry.displayText,
-                    style = MaterialTheme.typography.bodyLarge
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onBackground,
                 )
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    DetailRow("Fecha", dateFormat.format(Date(currentEntry.createdAt)))
-                    DetailRow("Palabra clave", currentEntry.keyword)
+            // Meta compact
+            SoftCard(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                    DetailRow("Capturado", dateFormat.format(Date(currentEntry.createdAt)))
                     DetailRow("Fuente", if (currentEntry.source == Source.PHONE) "Teléfono" else "Reloj")
+                    DetailRow("Palabra clave", currentEntry.keyword.ifBlank { "—" })
                     DetailRow("Confianza", "${(currentEntry.confidence * 100).toInt()}%")
-                    DetailRow("Duración grabación", "${currentEntry.duration}s")
+                    DetailRow("Duración", "${currentEntry.duration}s")
                 }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Diagnóstico de texto",
-                        style = MaterialTheme.typography.titleSmall
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Text(
-                        text = "rawWhisperText",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = currentEntry.text.ifBlank { "-" },
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Text(
-                        text = "correctedText",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = currentEntry.correctedText?.ifBlank { "-" } ?: "-",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Text(
-                        text = "cleanText",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = currentEntry.cleanText?.ifBlank { "-" } ?: "-",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
+            // Collapsible diagnostic
+            SectionRule(
+                title = "Diagnóstico de texto",
+                expanded = diagnosticExpanded,
+                onToggle = { diagnosticExpanded = !diagnosticExpanded },
+                dimmed = !diagnosticExpanded,
+                modifier = Modifier.padding(horizontal = 0.dp)
+            )
+            AnimatedVisibility(visible = diagnosticExpanded) {
+                SoftCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        DiagnosticLabel("rawWhisperText")
+                        Text(
+                            text = currentEntry.text.ifBlank { "—" },
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        DiagnosticLabel("correctedText")
+                        Text(
+                            text = currentEntry.correctedText?.ifBlank { "—" } ?: "—",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        DiagnosticLabel("cleanText")
+                        Text(
+                            text = currentEntry.cleanText?.ifBlank { "—" } ?: "—",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
                 }
             }
         }
@@ -375,6 +429,17 @@ fun EntryDetailScreen(
             }
         )
     }
+}
+
+@Composable
+private fun DiagnosticLabel(label: String) {
+    Text(
+        text = label.uppercase(),
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.SemiBold,
+        color = LocalTramaColors.current.mutedText,
+        modifier = Modifier.padding(bottom = 4.dp)
+    )
 }
 
 @Composable

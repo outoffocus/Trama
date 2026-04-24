@@ -407,10 +407,12 @@ object CalendarHelper {
             Log.e(TAG, "Failed to query calendars", e)
         }
 
-        // Only Google Calendar accounts
         return calendars
-            .filter { it.accountType == "com.google" }
-            .sortedWith(compareByDescending<WritableCalendar> { it.isPrimary }.thenBy { it.displayName })
+            .sortedWith(
+                compareByDescending<WritableCalendar> { it.accountType == "com.google" }
+                    .thenByDescending { it.isPrimary }
+                    .thenBy { it.displayName }
+            )
     }
 
     /**

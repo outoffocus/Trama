@@ -5,6 +5,7 @@ package com.trama.app.ui.screens
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -64,7 +65,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -108,6 +108,12 @@ import com.trama.app.ui.components.CalendarActionDialog
 import com.trama.app.ui.components.RecordingCard
 import com.trama.app.ui.components.RecordingIndicatorBar
 import com.trama.app.ui.components.SwipeableReminderCard
+import com.trama.app.ui.components.TramaBottomBar
+import com.trama.app.ui.components.TramaTab
+import com.trama.app.ui.components.StatusPill
+import com.trama.app.ui.components.TramaStatus
+import com.trama.app.ui.components.SectionRule
+import com.trama.app.ui.theme.LocalTramaColors
 import com.trama.app.ui.theme.TimelineAccentConfig
 import com.trama.app.ui.theme.timelineAccentColor
 import com.trama.shared.model.DiaryEntry
@@ -277,17 +283,6 @@ fun HomeScreen(
         if (granted) ServiceController.start(context)
     }
 
-    val locationPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        scope.launch {
-            settings.setLocationEnabled(granted)
-        }
-        if (granted) {
-            ServiceController.startLocationTracking(context)
-        }
-    }
-
     val recordPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -364,14 +359,10 @@ fun HomeScreen(
         storedTimelineEventsState == null ||
         todayCalendarEvents == null
 
-    val dateFormat = SimpleDateFormat("dd MMM", Locale("es"))
     val heroDayTitle = remember(startOfDay) {
         SimpleDateFormat("EEEE d 'de' MMMM", Locale("es")).format(Date(startOfDay))
             .replaceFirstChar { it.uppercase() }
     }
-    // FAB colors
-    val teal = Color(0xFF00897B)
-    val recRed = Color(0xFFD32F2F)
 
     // Helper: sync a completed entry to watch
     fun syncCompleted(entry: DiaryEntry) {
@@ -525,99 +516,96 @@ fun HomeScreen(
                     )
                 )
             } else {
-                TopAppBar(
-                    title = {
-                        Column {
-                            Text(
-                                "Trama",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                heroDayTitle,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                HomeHeader(
+                    heroDayTitle = heroDayTitle,
+                    status = when {
+                        isRecording -> TramaStatus.Recording
+                        watchActive -> TramaStatus.Watch
+                        serviceRunning -> TramaStatus.Listening
+                        else -> TramaStatus.Idle
                     },
-                    actions = {
-                        // Add note
-                        IconButton(onClick = { showAddDialog = true }) {
-                            Icon(Icons.Default.Add, contentDescription = "Añadir nota")
-                        }
-                        IconButton(onClick = onChatClick) {
-                            Icon(Icons.Default.Chat, contentDescription = "Asistente")
-                        }
-                        IconButton(onClick = onSearchClick) {
-                            Icon(Icons.Default.Search, contentDescription = "Buscar")
-                        }
-                        IconButton(onClick = onCalendarClick) {
-                            Icon(Icons.Default.CalendarMonth, contentDescription = "Calendario")
-                        }
-                        IconButton(onClick = onSettingsClick) {
-                            Icon(Icons.Default.Settings, contentDescription = "Ajustes")
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
+                    locationRunning = locationRunning,
+                    onAddClick = { showAddDialog = true },
+                    onChatClick = onChatClick,
+                    onSearchClick = onSearchClick,
+                    onSettingsClick = onSettingsClick,
                 )
             }
         },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        floatingActionButton = {
+        bottomBar = {
             if (!selectionMode) {
-                MicControlFabGroup(
-                    serviceRunning = serviceRunning,
-                    isRecording = isRecording,
-                    watchActive = watchActive,
-                    quickActionsVisible = quickActionsVisible,
-                    onQuickActionsVisibleChange = { quickActionsVisible = it },
-                    onPrimaryClick = {
-                        val hasPermission = ContextCompat.checkSelfPermission(
-                            context, Manifest.permission.RECORD_AUDIO
-                        ) == PackageManager.PERMISSION_GRANTED
-                        if (!hasPermission) {
-                            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                            return@MicControlFabGroup
-                        }
-                        when {
-                            isRecording -> {
-                                quickActionsVisible = false
-                                RecordingState.stopRecording(context)
-                            }
-                            watchActive -> {
-                                quickActionsVisible = false
-                                scope.launch(Dispatchers.IO) { MicCoordinator.sendPause(context) }
-                                ServiceController.notifyWatchInactive()
-                            }
-                            serviceRunning -> {
-                                quickActionsVisible = false
-                                ServiceController.stop(context)
-                            }
-                            else -> {
-                                quickActionsVisible = false
-                                ServiceController.start(context)
-                            }
-                        }
+                TramaBottomBar(
+                    active = TramaTab.Home,
+                    onTabSelected = { tab ->
+                        if (tab == TramaTab.Calendar) onCalendarClick()
                     },
-                    onStartRecording = {
-                        val hasPermission = ContextCompat.checkSelfPermission(
-                            context, Manifest.permission.RECORD_AUDIO
-                        ) == PackageManager.PERMISSION_GRANTED
-                        if (!hasPermission) {
-                            recordPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                            return@MicControlFabGroup
-                        }
-                        quickActionsVisible = false
-                        resumeListeningAfterRecording = serviceRunning
-                        ServiceController.startRecording(context)
-                    },
-                    onTransferToWatch = {
-                        quickActionsVisible = false
-                        ServiceController.transferToWatch(context)
+                    centerSlot = {
+                        HomeCenterMic(
+                            serviceRunning = serviceRunning,
+                            isRecording = isRecording,
+                            watchActive = watchActive,
+                            quickActionsVisible = quickActionsVisible,
+                            onQuickActionsVisibleChange = { quickActionsVisible = it },
+                            onPrimaryClick = {
+                                val hasPermission = ContextCompat.checkSelfPermission(
+                                    context, Manifest.permission.RECORD_AUDIO
+                                ) == PackageManager.PERMISSION_GRANTED
+                                if (!hasPermission) {
+                                    permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                    return@HomeCenterMic
+                                }
+                                when {
+                                    isRecording -> {
+                                        quickActionsVisible = false
+                                        RecordingState.stopRecording(context)
+                                    }
+                                    watchActive -> {
+                                        quickActionsVisible = false
+                                        scope.launch(Dispatchers.IO) { MicCoordinator.sendPause(context) }
+                                        ServiceController.notifyWatchInactive()
+                                    }
+                                    serviceRunning -> {
+                                        quickActionsVisible = false
+                                        ServiceController.stop(context)
+                                    }
+                                    else -> {
+                                        quickActionsVisible = false
+                                        ServiceController.start(context)
+                                    }
+                                }
+                            },
+                            onStartRecording = {
+                                val hasPermission = ContextCompat.checkSelfPermission(
+                                    context, Manifest.permission.RECORD_AUDIO
+                                ) == PackageManager.PERMISSION_GRANTED
+                                if (!hasPermission) {
+                                    recordPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                    return@HomeCenterMic
+                                }
+                                quickActionsVisible = false
+                                resumeListeningAfterRecording = serviceRunning
+                                ServiceController.startRecording(context)
+                            },
+                            onTransferToWatch = {
+                                quickActionsVisible = false
+                                ServiceController.transferToWatch(context) { accepted ->
+                                    if (!accepted) {
+                                        scope.launch(Dispatchers.Main) {
+                                            Toast.makeText(
+                                                context,
+                                                "El reloj no ha podido tomar la escucha",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    }
+                                }
+                            }
+                        )
                     }
                 )
             }
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         Column(modifier = Modifier.padding(padding)) {
             // Recording indicator bar (visible while recording)
@@ -630,66 +618,6 @@ fun HomeScreen(
                     elapsedSeconds = recElapsed,
                     onStop = { RecordingState.stopRecording(context) },
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                )
-            }
-
-            if (!selectionMode && (locationRunning || serviceRunning || isRecording || watchActive)) {
-                StatusOverviewRow(
-                    serviceRunning = serviceRunning,
-                    isRecording = isRecording,
-                    watchActive = watchActive,
-                    locationRunning = locationRunning,
-                    onLocationToggle = {
-                        quickActionsVisible = false
-                        if (locationRunning) {
-                            scope.launch {
-                                settings.setLocationEnabled(false)
-                            }
-                            ServiceController.stopLocationTracking(context)
-                        } else {
-                            val hasLocationPermission = ContextCompat.checkSelfPermission(
-                                context,
-                                Manifest.permission.ACCESS_FINE_LOCATION
-                            ) == PackageManager.PERMISSION_GRANTED
-                            if (hasLocationPermission) {
-                                scope.launch {
-                                    settings.setLocationEnabled(true)
-                                }
-                                ServiceController.startLocationTracking(context)
-                            } else {
-                                locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
-                            }
-                        }
-                    },
-                    onMicroToggle = {
-                        quickActionsVisible = false
-                        val isMicroActive = isRecording || watchActive || serviceRunning
-                        if (isMicroActive) {
-                            ServiceController.stop(context)
-                            if (watchActive) {
-                                scope.launch(Dispatchers.IO) { MicCoordinator.sendPause(context) }
-                                ServiceController.notifyWatchInactive()
-                            }
-                            if (isRecording) {
-                                RecordingState.stopRecording(context)
-                            }
-                        } else {
-                            val hasPermission = ContextCompat.checkSelfPermission(
-                                context,
-                                Manifest.permission.RECORD_AUDIO
-                            ) == PackageManager.PERMISSION_GRANTED
-                            if (hasPermission) {
-                                ServiceController.start(context)
-                            } else {
-                                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                            }
-                        }
-                    },
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                )
-                HorizontalDivider(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
                 )
             }
 
@@ -913,6 +841,72 @@ fun HomeScreen(
 
 }
 
+// ── Home header ──────────────────────────────────────────────────────────────
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun HomeHeader(
+    heroDayTitle: String,
+    status: TramaStatus,
+    locationRunning: Boolean,
+    onAddClick: () -> Unit,
+    onChatClick: () -> Unit,
+    onSearchClick: () -> Unit,
+    onSettingsClick: () -> Unit,
+) {
+    val t = LocalTramaColors.current
+    Surface(color = MaterialTheme.colorScheme.background) {
+        Column(modifier = Modifier.padding(top = 12.dp, bottom = 6.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Trama",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = t.mutedText,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = heroDayTitle,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                }
+                IconButton(onClick = onAddClick) {
+                    Icon(Icons.Default.Add, contentDescription = "Añadir nota")
+                }
+                IconButton(onClick = onChatClick) {
+                    Icon(Icons.Default.Chat, contentDescription = "Asistente", tint = t.teal)
+                }
+                IconButton(onClick = onSearchClick) {
+                    Icon(Icons.Default.Search, contentDescription = "Buscar")
+                }
+                IconButton(onClick = onSettingsClick) {
+                    Icon(Icons.Default.Settings, contentDescription = "Ajustes")
+                }
+            }
+            FlowRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                StatusPill(status = status)
+                if (locationRunning) {
+                    StatusPill(status = TramaStatus.Location)
+                }
+            }
+        }
+    }
+}
+
 // ── Entry Card Item wrapper ──────────────────────────────────────────────────
 
 @Composable
@@ -1032,107 +1026,19 @@ private fun SectionHeader(
     onToggle: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Column(modifier = modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onToggle)
-                .padding(horizontal = 2.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Colored dot accent
-            Box(
-                modifier = Modifier
-                    .size(5.dp)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(color)
-            )
-            Spacer(modifier = Modifier.width(7.dp))
-            Text(
-                title,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f)
-            )
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(3.dp)
-            ) {
-                Text(
-                    "$count",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = color.copy(alpha = 0.85f),
-                    fontWeight = FontWeight.SemiBold
-                )
-                Icon(
-                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                    contentDescription = null,
-                    modifier = Modifier.size(13.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                )
-            }
-        }
-        HorizontalDivider(
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.18f)
-        )
-    }
-}
-
-// ── Duplicate Card ──────────────────────────────────────────────────────────
-
-@Composable
-private fun StatusOverviewRow(
-    serviceRunning: Boolean,
-    isRecording: Boolean,
-    watchActive: Boolean,
-    locationRunning: Boolean,
-    onLocationToggle: () -> Unit,
-    onMicroToggle: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val enabledStatusColor = Color(0xFF2F7D4A)
-
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.End,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            StatusIconChip(
-                active = locationRunning,
-                activeColor = enabledStatusColor,
-                icon = Icons.Default.Place,
-                contentDescription = if (locationRunning) "Desactivar ubicación" else "Activar ubicación",
-                onClick = onLocationToggle
-            )
-            StatusIconChip(
-                active = isRecording || watchActive || serviceRunning,
-                activeColor = enabledStatusColor,
-                icon = when {
-                    isRecording -> Icons.Default.Mic
-                    watchActive -> Icons.Default.Watch
-                    serviceRunning -> Icons.Default.Mic
-                    else -> Icons.Default.MicOff
-                },
-                contentDescription = when {
-                    isRecording -> "Desactivar micro"
-                    watchActive -> "Desactivar micro"
-                    serviceRunning -> "Desactivar micro"
-                    else -> "Activar micro"
-                },
-                onClick = onMicroToggle
-            )
-        }
-    }
+    SectionRule(
+        title = title,
+        count = count,
+        accent = color,
+        expanded = expanded,
+        onToggle = onToggle,
+        modifier = modifier
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MicControlFabGroup(
+private fun HomeCenterMic(
     serviceRunning: Boolean,
     isRecording: Boolean,
     watchActive: Boolean,
@@ -1140,49 +1046,46 @@ private fun MicControlFabGroup(
     onQuickActionsVisibleChange: (Boolean) -> Unit,
     onPrimaryClick: () -> Unit,
     onStartRecording: () -> Unit,
-    onTransferToWatch: () -> Unit
+    onTransferToWatch: () -> Unit,
 ) {
-    val activeFabContainer = Color(0xFFDDF3E3)
-    val activeFabContent = Color(0xFF2F7D4A)
-    val recordingFabContainer = Color(0xFFD32F2F)
-    val recordingFabContent = Color.White
-    val inactiveFabContainer = MaterialTheme.colorScheme.surfaceVariant
-    val inactiveFabContent = MaterialTheme.colorScheme.onSurfaceVariant
-
+    val t = com.trama.app.ui.theme.LocalTramaColors.current
     Column(
-        horizontalAlignment = Alignment.End,
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         AnimatedVisibility(
             visible = quickActionsVisible && !isRecording && !watchActive,
             enter = fadeIn() + scaleIn(),
             exit = fadeOut() + scaleOut()
         ) {
-            Column(
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 MiniFabIcon(
                     icon = Icons.Default.Watch,
-                    containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.95f),
-                    contentColor = MaterialTheme.colorScheme.tertiary,
+                    containerColor = t.watchBg,
+                    contentColor = t.watch,
                     contentDescription = "Transferir al reloj",
                     onClick = onTransferToWatch
                 )
                 MiniFabIcon(
                     icon = Icons.Default.FiberManualRecord,
-                    containerColor = Color(0xFFFDE7E9),
-                    contentColor = Color(0xFFD32F2F),
+                    containerColor = t.redBg,
+                    contentColor = t.red,
                     contentDescription = "Grabar continuamente",
                     onClick = onStartRecording
                 )
             }
         }
 
-        val fabInteractionSource = remember { MutableInteractionSource() }
+        val micInteraction = remember { MutableInteractionSource() }
+        val bg = when {
+            isRecording -> t.red
+            watchActive -> t.watch
+            serviceRunning -> t.amber
+            else -> t.dimText
+        }
         Surface(
             modifier = Modifier.combinedClickable(
-                interactionSource = fabInteractionSource,
+                interactionSource = micInteraction,
                 indication = null,
                 onClick = onPrimaryClick,
                 onLongClick = {
@@ -1192,17 +1095,10 @@ private fun MicControlFabGroup(
                 }
             ),
             shape = CircleShape,
-            color = when {
-                isRecording -> recordingFabContainer
-                watchActive || serviceRunning -> activeFabContainer
-                else -> inactiveFabContainer
-            },
-            shadowElevation = 8.dp
+            color = bg,
+            shadowElevation = 6.dp,
         ) {
-            Box(
-                modifier = Modifier.size(58.dp),
-                contentAlignment = Alignment.Center
-            ) {
+            Box(modifier = Modifier.size(58.dp), contentAlignment = Alignment.Center) {
                 Icon(
                     imageVector = when {
                         isRecording -> Icons.Default.Stop
@@ -1217,11 +1113,7 @@ private fun MicControlFabGroup(
                         else -> "Activar escucha"
                     },
                     modifier = Modifier.size(26.dp),
-                    tint = when {
-                        isRecording -> recordingFabContent
-                        watchActive || serviceRunning -> activeFabContent
-                        else -> inactiveFabContent
-                    }
+                    tint = Color.White
                 )
             }
         }
@@ -1256,54 +1148,7 @@ private fun MiniFabIcon(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun StatusIconChip(
-    active: Boolean,
-    activeColor: Color,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    contentDescription: String,
-    onClick: (() -> Unit)? = null,
-    onLongClick: (() -> Unit)? = null
-) {
-    val inactiveContainer = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f)
-    val inactiveBorder = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
-    val inactiveIcon = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f)
-    val activeContainer = activeColor.copy(alpha = 0.2f)
-    val activeBorder = activeColor.copy(alpha = 0.85f)
-    val chipInteractionSource = remember { MutableInteractionSource() }
-
-    Surface(
-        modifier = if (onClick != null) {
-            Modifier.combinedClickable(
-                interactionSource = chipInteractionSource,
-                indication = null,
-                onClick = onClick,
-                onLongClick = onLongClick
-            )
-        } else {
-            Modifier
-        },
-        shape = CircleShape,
-        color = if (active) activeContainer else inactiveContainer,
-        border = androidx.compose.foundation.BorderStroke(
-            if (active) 1.5.dp else 1.dp,
-            if (active) activeBorder else inactiveBorder
-        )
-    ) {
-        Box(
-            modifier = Modifier.size(36.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = contentDescription,
-                modifier = Modifier.size(17.dp),
-                tint = if (active) activeColor else inactiveIcon
-            )
-        }
-    }
-}
+// ── Duplicate Card ──────────────────────────────────────────────────────────
 
 @Composable
 private fun DuplicateCard(
@@ -1354,11 +1199,16 @@ private fun SuggestedCard(
     onDiscard: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val t = LocalTramaColors.current
     Card(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f)
+            containerColor = t.tealBg
+        ),
+        border = androidx.compose.foundation.BorderStroke(
+            0.5.dp,
+            t.teal.copy(alpha = 0.22f)
         )
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
