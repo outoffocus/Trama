@@ -22,6 +22,8 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
+import androidx.wear.ongoing.OngoingActivity
+import androidx.wear.ongoing.Status
 import com.trama.shared.audio.VoskGateAsr
 import com.trama.wear.audio.WatchTriggeredAudioCapture
 import com.trama.wear.NotificationConfig
@@ -366,16 +368,23 @@ class WatchKeywordListenerService : LifecycleService() {
             } catch (_: Exception) {}
             recognizer = null
 
-            delay(ERROR_RETRY_DELAY_MS)
-
-            try {
-                recognizer = SpeechRecognizer.createSpeechRecognizer(applicationContext)
-                Log.i(TAG, "Recognizer recreated")
-                startListening()
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to recreate recognizer", e)
-                stopSelf()
+            // Retry recreation in place before giving up — the Android
+            // SpeechRecognizer service can take a moment to recycle internally.
+            repeat(3) { attempt ->
+                delay(ERROR_RETRY_DELAY_MS)
+                try {
+                    recognizer = SpeechRecognizer.createSpeechRecognizer(applicationContext)
+                    Log.i(TAG, "Recognizer recreated on attempt ${attempt + 1}")
+                    startListening()
+                    return@launch
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to recreate recognizer (attempt ${attempt + 1}/3)", e)
+                }
             }
+            Log.e(TAG, "Recognizer unrecoverable; handing mic to phone")
+            MicCoordinator.sendWatchDebug(applicationContext, "reconocedor no disponible · teléfono toma relevo")
+            WatchServiceController.sendResumeToPhone(applicationContext)
+            stopSelf()
         }
     }
 
@@ -571,28 +580,38 @@ class WatchKeywordListenerService : LifecycleService() {
                 sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
             ).coerceAtLeast(gateWindowSamples * 2)
 
-            val record = try {
-                AudioRecord(
-                    MediaRecorder.AudioSource.MIC, sampleRate,
-                    AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, minBuffer
-                )
-            } catch (e: Exception) {
-                Log.e(TAG, "Cannot open AudioRecord for Vosk", e)
-                MicCoordinator.sendWatchDebug(applicationContext, "error micro · Vosk")
+            // Retry mic init in place — transient contention (the recognizer just
+            // released the mic, Bluetooth SCO just tore down, etc.) usually clears
+            // within 1–2s. Dying and relying on a watchdog is worse on Wear OS.
+            var record: AudioRecord? = null
+            repeat(3) { attempt ->
+                val candidate = try {
+                    AudioRecord(
+                        MediaRecorder.AudioSource.MIC, sampleRate,
+                        AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, minBuffer
+                    )
+                } catch (e: Exception) {
+                    Log.w(TAG, "AudioRecord open failed (attempt ${attempt + 1}/3): ${e.message}")
+                    null
+                }
+                if (candidate != null && candidate.state == AudioRecord.STATE_INITIALIZED) {
+                    record = candidate
+                    return@repeat
+                }
+                candidate?.release()
+                if (attempt < 2) delay(1_000L shl attempt) // 1s, 2s
+            }
+            val activeRecord = record
+            if (activeRecord == null) {
+                Log.e(TAG, "AudioRecord unusable after retries; handing mic to phone")
+                MicCoordinator.sendWatchDebug(applicationContext, "micro no disponible · teléfono toma relevo")
+                WatchServiceController.sendResumeToPhone(applicationContext)
                 stopSelf()
                 return@launch
             }
 
-            if (record.state != AudioRecord.STATE_INITIALIZED) {
-                record.release()
-                Log.e(TAG, "AudioRecord not initialized")
-                MicCoordinator.sendWatchDebug(applicationContext, "micro no inicializado · Vosk")
-                stopSelf()
-                return@launch
-            }
-
-            voskAudioRecord = record
-            record.startRecording()
+            voskAudioRecord = activeRecord
+            activeRecord.startRecording()
             Log.i(TAG, "Vosk loop started")
             MicCoordinator.sendWatchDebug(applicationContext, "escuchando · Vosk")
 
@@ -609,7 +628,7 @@ class WatchKeywordListenerService : LifecycleService() {
 
                     var samplesRead = 0
                     while (samplesRead < stepSamples && listening && !captureInFlight) {
-                        val n = record.read(readBuffer, samplesRead, stepSamples - samplesRead)
+                        val n = activeRecord.read(readBuffer, samplesRead, stepSamples - samplesRead)
                         if (n > 0) samplesRead += n else break
                     }
 
@@ -633,14 +652,14 @@ class WatchKeywordListenerService : LifecycleService() {
                         processVoskTextWithActiveMic(
                             text = text,
                             preRollPcm = preRollPcm,
-                            record = record,
+                            record = activeRecord,
                             sampleRateHz = sampleRate
                         )
                     }
                 }
             } finally {
-                runCatching { record.stop() }
-                record.release()
+                runCatching { activeRecord.stop() }
+                activeRecord.release()
                 voskAudioRecord = null
                 Log.i(TAG, "Vosk loop stopped")
             }
@@ -923,13 +942,27 @@ class WatchKeywordListenerService : LifecycleService() {
     private fun buildNotification(text: String): Notification {
         val pi = PendingIntent.getActivity(this, 0,
             Intent(this, WatchMainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Trama")
             .setContentText(text)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentIntent(pi)
             .setOngoing(true)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+
+        // Ongoing Activity: marks this FGS as a first-class running activity on
+        // the watch face. The system treats it as higher priority and is far
+        // less likely to kill the process, which removes the need for a
+        // background-restart watchdog (and the FGS-from-background crash class).
+        val ongoing = OngoingActivity.Builder(applicationContext, NOTIFICATION_ID, builder)
+            .setAnimatedIcon(R.drawable.ic_launcher_foreground)
+            .setStaticIcon(R.drawable.ic_launcher_foreground)
+            .setTouchIntent(pi)
+            .setStatus(Status.Builder().addTemplate(text).build())
             .build()
+        ongoing.apply(applicationContext)
+
+        return builder.build()
     }
 
     private fun updateNotificationIfChanged(text: String) {

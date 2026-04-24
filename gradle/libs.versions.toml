@@ -4,6 +4,7 @@ kotlin = "2.2.10"
 ksp = "2.2.10-2.0.2"
 composeBom = "2024.12.01"
 wearCompose = "1.4.0"
+wearOngoing = "1.0.0"
 room = "2.7.0-alpha11"
 
 playServicesWearable = "18.2.0"
@@ -41,6 +42,7 @@ wear-compose-material = { group = "androidx.wear.compose", name = "compose-mater
 wear-compose-foundation = { group = "androidx.wear.compose", name = "compose-foundation", version.ref = "wearCompose" }
 wear-compose-navigation = { group = "androidx.wear.compose", name = "compose-navigation", version.ref = "wearCompose" }
 horologist-compose-layout = { group = "com.google.android.horologist", name = "horologist-compose-layout", version.ref = "horologist" }
+wear-ongoing = { group = "androidx.wear", name = "wear-ongoing", version.ref = "wearOngoing" }
 
 # Room
 room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }

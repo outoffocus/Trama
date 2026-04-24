@@ -80,6 +80,7 @@ dependencies {
     implementation(libs.compose.ui.tooling.preview)
     debugImplementation(libs.compose.ui.tooling)
     implementation(libs.horologist.compose.layout)
+    implementation(libs.wear.ongoing)
 
     // AndroidX
     implementation(libs.core.ktx)

@@ -347,6 +347,7 @@ No rechaces una nota solo porque contenga nombres poco comunes, lugares, telefon
 Si corriges el texto, preserva TODA la informacion: nombres propios, lugares, telefonos, numeros, fechas, motivos y contexto.
 Mejor aceptar una nota ambigua que perder una nota personal real.
 Error ASR frecuente — infinitivo como sustantivo: si un infinitivo español común (aceptar, completar, cancelar, pagar, enviar, comprar, borrar, guardar, llamar, gestionar, revisar, firmar, entregar, recoger, actualizar, confirmar, etc.) aparece como destino de "ir a", nombre de lugar, nombre de persona o sigla (ej: "ir a aceptar", "en aceptar", "llegar a cancelar"), es casi seguro un error ASR donde el modelo sustituyó un nombre propio o acrónimo. En ese caso, sustituye esa palabra por "[inaudible]" en la correccion y baja confianza a 0.4.
+Error ASR frecuente — verbo "ser" donde debería haber compañía/contacto: si aparece una construcción gramaticalmente rara como "ir ... soy Elena", "pasar ... soy Marcos", "al corte inglés soy Elena", y por contexto encaja claramente "con Elena/Marcos", corrige SOLO esa palabra funcional. Ejemplo: "tengo pendiente ir pasado mañana al corte inglés soy Elena" → "tengo pendiente ir pasado mañana al corte inglés con Elena". Hazlo solo si el resto de la frase lo hace evidente; si no, deja el texto tal cual o usa "[inaudible]" antes que inventar.
 
 RESPONDE SOLO con el objeto JSON. No uses backticks ni bloques ``` ni texto fuera del JSON.
 

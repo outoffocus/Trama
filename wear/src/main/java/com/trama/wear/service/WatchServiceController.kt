@@ -1,6 +1,5 @@
 package com.trama.wear.service
 
-import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
@@ -11,9 +10,7 @@ import com.trama.shared.sync.MicCoordinator
 import com.trama.wear.sync.WatchToPhoneSyncer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,13 +23,12 @@ object WatchServiceController {
     private const val KEY_USER_ENABLED = "user_enabled"
     private const val KEY_PHONE_ACTIVE = "phone_active"
     private const val START_COOLDOWN_MS = 15_000L
-    private const val UNEXPECTED_STOP_RESTART_DELAY_MS = 30_000L
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var lastStartAttemptMs = 0L
     @Volatile private var startInFlight = false
     @Volatile private var expectedStop = false
-    private var restartJob: Job? = null
+    @Volatile private var appInForeground = false
 
     private val _isRunning = MutableStateFlow(false)
     val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()
@@ -46,7 +42,6 @@ object WatchServiceController {
      */
     fun start(context: Context) {
         expectedStop = false
-        restartJob?.cancel()
         // Stop recording if active — modes are exclusive
         if (RecordingController.isRecording.value) {
             RecordingController.stopRecording(context)
@@ -58,18 +53,54 @@ object WatchServiceController {
             .putBoolean(KEY_PHONE_ACTIVE, false)
             .apply()
 
-        startListenerService(context, reason = "user-start", bypassCooldown = true)
+        startListenerService(
+            context = context,
+            reason = "user-start",
+            bypassCooldown = true,
+            allowBackgroundStart = true
+        )
+    }
+
+    /**
+     * Remote handoff from the phone. If the watch app is not already visible,
+     * Wear OS may deny starting a microphone foreground service; keep the phone
+     * in charge instead of crashing the watch process.
+     */
+    fun startFromRemote(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_USER_ENABLED, true)
+            .putBoolean(KEY_PHONE_ACTIVE, false)
+            .apply()
+
+        startListenerService(
+            context = context,
+            reason = "remote-start",
+            bypassCooldown = true,
+            allowBackgroundStart = false
+        )
     }
 
     /**
      * Start recording. Stops keyword listener if active (modes are exclusive).
      */
-    fun startRecording(context: Context) {
+    fun startRecording(context: Context, allowBackgroundStart: Boolean = true) {
         // Stop keyword listener — modes are exclusive
         if (_isRunning.value) {
             expectedStop = true
             context.stopService(Intent(context, WatchKeywordListenerService::class.java))
             _isRunning.value = false
+        }
+        if (!allowBackgroundStart && !appInForeground) {
+            Log.w(TAG, "Skipping watch recording start: app is background/stopped")
+            scope.launch {
+                MicCoordinator.sendWatchDebug(
+                    context.applicationContext,
+                    "grabación no iniciada · app en segundo plano"
+                )
+                sendResumeToPhone(context.applicationContext)
+            }
+            return
         }
         _isPhoneActive.value = false
         RecordingController.startRecording(context)
@@ -81,12 +112,19 @@ object WatchServiceController {
     fun resumeIfAllowed(context: Context) {
         if (isPhoneActive(context)) return
         if (!isUserEnabled(context)) return
-        startListenerService(context, reason = "resume", bypassCooldown = true)
+        // Phone-coordinated RESUME arrives via MessageClient; we're briefly allowed
+        // to start a mic FGS from background. If Wear OS denies, startListenerService
+        // falls back to notifying the phone.
+        startListenerService(
+            context,
+            reason = "resume",
+            bypassCooldown = true,
+            allowBackgroundStart = true
+        )
     }
 
     fun stop(context: Context) {
         expectedStop = true
-        restartJob?.cancel()
         context.stopService(Intent(context, WatchKeywordListenerService::class.java))
         _isRunning.value = false
         startInFlight = false
@@ -163,41 +201,33 @@ object WatchServiceController {
     }
 
     /**
-     * Called when the listener service is destroyed. If this was not a known
-     * user/phone transition, re-arm the listener while the user still wants it.
+     * Called when the listener service is destroyed. We intentionally do NOT
+     * try to self-restart from a delayed coroutine: by the time the delay
+     * fires we are outside any FGS launch grant window and Wear OS crashes us
+     * with ForegroundServiceDidNotStartInTimeException. Instead, the listener
+     * is kept alive via Ongoing Activity (rarely killed), and if it does die
+     * recovery paths are:
+     *   - user opens the app → TramaWearApplication.notifyAppForeground restarts
+     *   - phone sends RESUME/START_KEYWORD → startFromRemote/resumeIfAllowed
+     *   - this method hands the mic back to the phone as a last resort so the
+     *     user never ends up with both sides silent.
      */
     fun notifyServiceDestroyed(context: Context) {
-        val shouldRestart = !expectedStop && isUserEnabled(context) && !isPhoneActive(context)
+        val shouldHandOff = !expectedStop && isUserEnabled(context) && !isPhoneActive(context)
         notifyStopped()
-        if (!shouldRestart) {
-            expectedStop = false
-            return
-        }
+        expectedStop = false
+        if (!shouldHandOff) return
 
-        restartJob?.cancel()
-        restartJob = scope.launch {
-            Log.w(TAG, "Watch listener stopped unexpectedly; scheduling restart")
-            MicCoordinator.sendWatchDebug(context.applicationContext, "escucha parada · reintentando")
-            delay(UNEXPECTED_STOP_RESTART_DELAY_MS)
-            if (isUserEnabled(context) && !isPhoneActive(context)) {
-                if (isAppInForeground(context)) {
-                    startListenerService(context, reason = "watchdog", bypassCooldown = true)
-                } else {
-                    Log.w(TAG, "Watchdog restart skipped: app is background/stopped")
-                    MicCoordinator.sendWatchDebug(
-                        context.applicationContext,
-                        "escucha parada · app en segundo plano"
-                    )
-                    sendResumeToPhone(context.applicationContext)
-                }
-            }
+        scope.launch {
+            Log.w(TAG, "Watch listener stopped unexpectedly; handing mic to phone")
+            MicCoordinator.sendWatchDebug(context.applicationContext, "escucha parada · teléfono toma relevo")
+            MicCoordinator.sendResume(context.applicationContext)
         }
     }
 
     /** Called after WatchKeywordListenerService has successfully entered foreground. */
     fun notifyStarted() {
         expectedStop = false
-        restartJob?.cancel()
         _isRunning.value = true
         _isPhoneActive.value = false
         startInFlight = false
@@ -220,7 +250,6 @@ object WatchServiceController {
 
     fun notifyPhoneActive(context: Context) {
         expectedStop = true
-        restartJob?.cancel()
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().putBoolean(KEY_PHONE_ACTIVE, true).apply()
         _isPhoneActive.value = true
@@ -232,7 +261,28 @@ object WatchServiceController {
         _isPhoneActive.value = false
     }
 
-    private fun startListenerService(context: Context, reason: String, bypassCooldown: Boolean = false) {
+    fun notifyAppForeground(context: Context) {
+        appInForeground = true
+        if (isUserEnabled(context) && !isPhoneActive(context) && !_isRunning.value) {
+            startListenerService(
+                context = context,
+                reason = "app-foreground",
+                bypassCooldown = true,
+                allowBackgroundStart = true
+            )
+        }
+    }
+
+    fun notifyAppBackground() {
+        appInForeground = false
+    }
+
+    private fun startListenerService(
+        context: Context,
+        reason: String,
+        bypassCooldown: Boolean = false,
+        allowBackgroundStart: Boolean = false
+    ) {
         val now = SystemClock.elapsedRealtime()
         if (_isRunning.value || startInFlight) {
             Log.d(TAG, "Skipping listener start ($reason): already running/starting")
@@ -242,9 +292,21 @@ object WatchServiceController {
             Log.w(TAG, "Skipping listener start ($reason): cooldown")
             return
         }
+        if (!allowBackgroundStart && !appInForeground) {
+            Log.w(TAG, "Skipping listener start ($reason): app is background/stopped")
+            startInFlight = false
+            _isRunning.value = false
+            scope.launch {
+                MicCoordinator.sendWatchDebug(
+                    context.applicationContext,
+                    "escucha no iniciada · app en segundo plano"
+                )
+                sendResumeToPhone(context.applicationContext)
+            }
+            return
+        }
 
         expectedStop = false
-        restartJob?.cancel()
         lastStartAttemptMs = now
         startInFlight = true
         try {
@@ -256,16 +318,15 @@ object WatchServiceController {
             startInFlight = false
             _isRunning.value = false
             Log.w(TAG, "Failed to start watch listener ($reason)", e)
-        }
-    }
-
-    private fun isAppInForeground(context: Context): Boolean {
-        val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
-            ?: return false
-        val packageName = context.packageName
-        return manager.runningAppProcesses.orEmpty().any { process ->
-            process.processName == packageName &&
-                process.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+            // If Wear OS refused a background FGS start, hand the mic back to
+            // the phone so the user doesn't end up with both sides silent.
+            scope.launch {
+                MicCoordinator.sendWatchDebug(
+                    context.applicationContext,
+                    "escucha no arrancó · teléfono toma relevo"
+                )
+                sendResumeToPhone(context.applicationContext)
+            }
         }
     }
 }

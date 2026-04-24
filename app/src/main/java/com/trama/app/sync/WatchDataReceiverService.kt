@@ -9,6 +9,8 @@ import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
 import com.trama.app.audio.SherpaWhisperAsrEngine
+import com.trama.app.speech.EntryValidator
+import com.trama.app.speech.PersonalDictionary
 import com.trama.app.ui.SettingsDataStore
 import com.trama.shared.audio.CapturedAudioWindow
 import com.trama.app.service.RecordingState
@@ -30,6 +32,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlin.math.sqrt
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 
 /**
@@ -57,10 +60,22 @@ class WatchDataReceiverService : WearableListenerService() {
 
         /** Whisper tokens generated for silence/music — not real speech content. */
         private val WHISPER_NOISE_TOKENS_RE = Regex(
-            """\[(música|musica|silencio|inaudible|ruido|audio vacío|blank_audio|music|noise|silence)\]""" +
+            """\[(música|musica|silencio|inaudible|ruido|audio vacío|blank_audio|""" +
+            """music|noise|silence|motor|engine|car|vehicle|wind|viento|""" +
+            """applause|aplausos|laughter|risas|coughing|tos|breathing|""" +
+            """respiración|crowd|multitud|background[_ ]?noise|ambient)\]""" +
             """|\(Música\)|\(música\)""",
             RegexOption.IGNORE_CASE
         )
+
+        /**
+         * Any remaining single bracketed tag after known-noise stripping is almost
+         * certainly a Whisper descriptor for non-speech audio (e.g. "[Motor]", "[Wind]").
+         * Short tags (≤40 chars) with no alphanumeric content outside the brackets
+         * mean the whole recording was non-speech — treat as empty so the LLM is
+         * not fed meaningless context that becomes a garbage summary.
+         */
+        private val ONLY_BRACKETED_TAG_RE = Regex("""^\s*[\[(][^\]\)]{1,40}[\])]\s*$""")
 
         /**
          * Whisper's encoder operates on a fixed 30-second mel spectrogram window.
@@ -200,7 +215,12 @@ class WatchDataReceiverService : WearableListenerService() {
             try {
                 val metadataJson = dataMap.getString("metadata") ?: return@launch
                 val asset = dataMap.getAsset("audio_pcm16") ?: return@launch
-                val metadata = Json.decodeFromString<WatchAudioSyncMetadata>(metadataJson)
+                val rawMetadata = Json.decodeFromString<WatchAudioSyncMetadata>(metadataJson)
+                // Guard against corrupted/zero sampleRateHz — would cause divide-by-zero in
+                // duration/RMS math and the capture would be silently discarded.
+                val sampleRateHz = rawMetadata.sampleRateHz.coerceIn(8_000, 48_000)
+                val metadata = if (sampleRateHz == rawMetadata.sampleRateHz) rawMetadata
+                    else rawMetadata.copy(sampleRateHz = sampleRateHz)
 
                 if (repository.existsRecordingByCreatedAt(metadata.createdAt)) {
                     Log.i(TAG, "Watch audio already imported for ${metadata.createdAt}")
@@ -224,7 +244,15 @@ class WatchDataReceiverService : WearableListenerService() {
                 // which then fools the LLM into thinking the recording has content.
                 val rms = sqrt(pcm.sumOf { it.toLong() * it.toLong() }.toDouble() / pcm.size)
                 val durationSec = pcm.size.toFloat() / metadata.sampleRateHz
-                Log.d(TAG, "Watch audio: ${pcm.size} samples (${durationSec}s), RMS=${"%.1f".format(rms)}")
+                // Peak amplitude reveals silent-with-noise-floor captures that still
+                // meet the RMS threshold (low signal + constant low noise).
+                val peak = pcm.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+                Log.i(
+                    TAG,
+                    "Watch audio received: ${pcm.size} samples (${"%.1f".format(durationSec)}s) " +
+                        "@${metadata.sampleRateHz}Hz, RMS=${"%.1f".format(rms)}, peak=$peak, " +
+                        "kind=${metadata.kind}, source=${metadata.source}"
+                )
 
                 if (rms < MIN_AUDIO_RMS) {
                     Log.w(TAG, "Watch audio too quiet (RMS=${"%.1f".format(rms)} < $MIN_AUDIO_RMS), skipping — mic may not be capturing speech")
@@ -239,9 +267,20 @@ class WatchDataReceiverService : WearableListenerService() {
                 }
 
                 // Strip Whisper noise/hallucination tokens (generated for silence or music)
-                val transcript = WHISPER_NOISE_TOKENS_RE.replace(rawTranscript, "").trim()
+                val stripped = WHISPER_NOISE_TOKENS_RE.replace(rawTranscript, "").trim()
+                val transcript = if (ONLY_BRACKETED_TAG_RE.matches(stripped)) {
+                    Log.w(TAG, "Watch audio transcript was a single descriptor tag: '$stripped' — treating as empty")
+                    ""
+                } else {
+                    stripped
+                }
                 if (rawTranscript.isNotBlank() && transcript.isBlank()) {
                     Log.w(TAG, "Watch audio transcript was only noise tokens: '$rawTranscript' — treating as empty")
+                }
+
+                if (metadata.kind == "CONTEXTUAL_TRIGGER") {
+                    handleContextualWatchCapture(metadata, transcript, repository)
+                    return@launch
                 }
 
                 val effectiveTranscript = transcript.ifBlank { metadata.triggerText.orEmpty() }
@@ -270,6 +309,67 @@ class WatchDataReceiverService : WearableListenerService() {
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to process watch audio payload", e)
             }
+        }
+    }
+
+    private suspend fun handleContextualWatchCapture(
+        metadata: WatchAudioSyncMetadata,
+        transcript: String,
+        repository: DiaryRepository
+    ) {
+        val text = transcript.trim()
+        if (text.isBlank()) {
+            Log.w(TAG, "Contextual watch capture produced empty transcript; not creating recording or entry")
+            return
+        }
+
+        if (repository.existsByCreatedAtAndText(metadata.createdAt, text)) {
+            Log.i(TAG, "Contextual watch entry already imported for ${metadata.createdAt}")
+            return
+        }
+
+        val detector = com.trama.shared.speech.IntentDetector()
+        val detection = detector.detect(text)
+        val intentId = detection?.pattern?.id
+            ?: detection?.customKeyword
+            ?: metadata.intentId
+            ?: "nota"
+        val label = detection?.label
+            ?: metadata.label
+            ?: "Reloj"
+
+        val validation = runCatching {
+            // Cap the validator at 5s so a slow/unreachable Gemini call can't stall
+            // the entire audio pipeline; fall back to accepting the raw transcript.
+            withTimeoutOrNull(5_000) { EntryValidator(applicationContext).validate(text) }
+        }.getOrElse { error ->
+            Log.w(TAG, "Watch contextual validation failed, proceeding without correction", error)
+            null
+        }
+        val correctedText = PersonalDictionary(applicationContext).correct(
+            validation?.correctedText ?: text
+        )
+
+        val entry = DiaryEntry(
+            text = text,
+            keyword = intentId,
+            category = label,
+            confidence = validation?.confidence ?: 0.9f,
+            source = Source.valueOf(metadata.source),
+            duration = metadata.durationSeconds,
+            correctedText = correctedText,
+            wasReviewedByLLM = validation?.correctedText != null ||
+                validation?.reason?.contains("IA") == true,
+            llmConfidence = validation?.confidence
+        )
+
+        val entryId = repository.insert(entry)
+        Log.i(TAG, "Imported contextual watch capture as diary entry (id=$entryId): '${text.take(80)}'")
+
+        try {
+            ActionItemProcessor(applicationContext).process(entryId, correctedText, repository)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to process contextual watch entry $entryId", e)
         }
     }
 

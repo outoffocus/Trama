@@ -28,6 +28,11 @@ class EntryValidator(private val context: Context) {
     companion object {
         private const val TAG = "EntryValidator"
         private val json = Json { ignoreUnknownKeys = true }
+        private val SUSPICIOUS_ASR_PATTERNS = listOf(
+            Regex("""\b(a|al|hacia|hasta|por|para|en|con)\s+(soy|eres|es|somos|son)\s+[a-záéíóúñ]+"""),
+            Regex("""\b(ir|pasar|quedar|reunirme|reunirnos|comer|cenar|comprar)\s+[^.]{0,80}\bsoy\s+[a-záéíóúñ]+"""),
+            Regex("""\b(el|la|los|las)\s+(soy|eres|es|son)\b""")
+        )
     }
 
     /**
@@ -48,6 +53,14 @@ class EntryValidator(private val context: Context) {
         // Stage 1: Fast heuristics
         val heuristicResult = heuristicCheck(text)
         if (heuristicResult != null) {
+            if (heuristicResult.isValid && shouldAttemptAsrRepair(text)) {
+                val repair = runCatching { llmValidate(text) }
+                    .onFailure { Log.w(TAG, "ASR repair failed, keeping heuristic result", it) }
+                    .getOrNull()
+                if (repair?.correctedText?.isNotBlank() == true) {
+                    return repair.copy(isValid = true)
+                }
+            }
             return heuristicResult
         }
 
@@ -118,6 +131,11 @@ class EntryValidator(private val context: Context) {
             PromptTemplateStore.ENTRY_VALIDATION,
             mapOf("text" to text)
         )
+
+    private fun shouldAttemptAsrRepair(text: String): Boolean {
+        val lower = text.lowercase()
+        return SUSPICIOUS_ASR_PATTERNS.any { it.containsMatchIn(lower) }
+    }
 
     private suspend fun callCloudGemini(prompt: String, apiKey: String): ValidationResult {
         val model = GenerativeModel(

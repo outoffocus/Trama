@@ -10,7 +10,9 @@ import com.trama.shared.model.SyncEntry
 import com.trama.shared.model.SyncPayload
 import com.trama.shared.model.SyncRecording
 import com.trama.shared.model.WatchAudioSyncMetadata
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -22,6 +24,7 @@ class WatchToPhoneSyncer(
         private const val TAG = "WatchToPhoneSyncer"
         private const val SYNC_PATH = "/trama/sync"
         private const val AUDIO_RECORDING_PATH_PREFIX = "/trama/audio-recording"
+        private const val AUDIO_SYNC_TIMEOUT_MS = 10_000L
     }
 
     suspend fun syncUnsentEntries() {
@@ -48,7 +51,9 @@ class WatchToPhoneSyncer(
                 dataMap.putLong("timestamp", System.currentTimeMillis())
             }.asPutDataRequest()
 
-            Wearable.getDataClient(context).putDataItem(request).await()
+            withTimeout(AUDIO_SYNC_TIMEOUT_MS) {
+                Wearable.getDataClient(context).putDataItem(request).await()
+            }
 
             if (unsyncedEntries.isNotEmpty()) {
                 repository.markSynced(unsyncedEntries.map { it.id })
@@ -75,7 +80,26 @@ class WatchToPhoneSyncer(
             dataMap.putLong("timestamp", System.currentTimeMillis())
         }.asPutDataRequest()
 
-        Wearable.getDataClient(context).putDataItem(request).await()
-        Log.i(TAG, "Synced watch audio (${pcmBytes.size} bytes)")
+        // BLE transfers can stall silently when the phone is out of range; without
+        // a timeout the coroutine would hang forever and freeze the next capture.
+        // Retry with exponential backoff before surfacing the failure to the caller.
+        var lastError: Throwable? = null
+        val maxAttempts = 3
+        for (attempt in 1..maxAttempts) {
+            try {
+                withTimeout(AUDIO_SYNC_TIMEOUT_MS) {
+                    Wearable.getDataClient(context).putDataItem(request).await()
+                }
+                Log.i(TAG, "Synced watch audio (${pcmBytes.size} bytes) on attempt $attempt")
+                return
+            } catch (e: Exception) {
+                lastError = e
+                Log.w(TAG, "Audio sync attempt $attempt/$maxAttempts failed: ${e.message}")
+                if (attempt < maxAttempts) {
+                    delay(1_000L shl (attempt - 1)) // 1s, 2s
+                }
+            }
+        }
+        throw lastError ?: IllegalStateException("Audio sync failed without error")
     }
 }

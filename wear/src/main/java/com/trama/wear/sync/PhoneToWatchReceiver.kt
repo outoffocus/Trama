@@ -164,12 +164,12 @@ class PhoneToWatchReceiver : WearableListenerService() {
             }
             CMD_START_KEYWORD -> {
                 WatchServiceController.notifyPhoneInactive(applicationContext)
-                WatchServiceController.start(applicationContext)
+                WatchServiceController.startFromRemote(applicationContext)
                 Log.i(TAG, "Watch started keyword listening (phone transferred)")
             }
             CMD_START_RECORDING -> {
                 WatchServiceController.notifyPhoneInactive(applicationContext)
-                WatchServiceController.startRecording(applicationContext)
+                WatchServiceController.startRecording(applicationContext, allowBackgroundStart = false)
                 Log.i(TAG, "Watch started recording (phone transferred)")
             }
         }

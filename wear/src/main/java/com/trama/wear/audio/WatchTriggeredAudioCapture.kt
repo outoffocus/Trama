@@ -18,7 +18,7 @@ class WatchTriggeredAudioCapture {
         private const val SILENCE_RMS_THRESHOLD = 700.0
         // Minimum RMS for the full capture to be considered real audio.
         // Captures below this are likely mic-contention artifacts (all-zero PCM).
-        private const val MIN_CAPTURE_RMS = 200.0
+        private const val MIN_CAPTURE_RMS = 300.0
     }
 
     suspend fun capture(): ShortArray = withContext(Dispatchers.IO) {
