@@ -347,13 +347,6 @@ fun HomeScreen(
         SimpleDateFormat("EEEE d 'de' MMMM", Locale("es")).format(Date(startOfDay))
             .replaceFirstChar { it.uppercase() }
     }
-    val greeting = remember(startOfDay) {
-        when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
-            in 6..11 -> "Buenos días"
-            in 12..19 -> "Buenas tardes"
-            else -> "Buenas noches"
-        }
-    }
 
     // Helper: sync a completed entry to watch
     fun syncCompleted(entry: DiaryEntry) {
@@ -508,7 +501,6 @@ fun HomeScreen(
                 )
             } else {
                 HomeHeader(
-                    greeting = greeting,
                     heroDayTitle = heroDayTitle,
                     status = when {
                         isRecording -> TramaStatus.Recording
@@ -838,7 +830,6 @@ fun HomeScreen(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun HomeHeader(
-    greeting: String,
     heroDayTitle: String,
     status: TramaStatus,
     locationRunning: Boolean,
@@ -857,13 +848,6 @@ private fun HomeHeader(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = greeting.uppercase(),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = t.mutedText,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = heroDayTitle,
                         style = MaterialTheme.typography.headlineSmall,
