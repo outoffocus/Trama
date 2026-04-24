@@ -55,8 +55,19 @@ class ManualActionSuggestionExtractorTest {
         )
 
         assertEquals(2, suggestions.size)
-        assertEquals("Revisar el presupuesto", suggestions[0].text)
-        assertEquals("Escribir a Marta", suggestions[1].text)
+        assertEquals("Tengo que revisar el presupuesto", suggestions[0].text)
+        assertEquals("Tengo que escribir a Marta", suggestions[1].text)
+    }
+
+    @Test
+    fun `extract accepts recoger after tengo que trigger`() {
+        val suggestions = ManualActionSuggestionExtractor.extract(
+            "Tengo que recoger el coche en el taller mañana"
+        )
+
+        assertEquals(1, suggestions.size)
+        assertEquals("Tengo que recoger el coche en el taller mañana", suggestions[0].text)
+        assertNotNull(suggestions[0].dueDate)
     }
 
     @Test

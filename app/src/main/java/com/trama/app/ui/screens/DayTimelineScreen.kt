@@ -16,7 +16,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -28,14 +27,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
-import com.trama.app.summary.CalendarHelper
 import com.trama.app.service.EntryProcessingState
 import com.trama.app.ui.SettingsDataStore
 import com.trama.app.ui.theme.TimelineAccentConfig
 import com.trama.app.ui.theme.timelineAccentColor
 import com.trama.shared.data.DatabaseProvider
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -61,18 +57,6 @@ fun DayTimelineScreen(
         dayStartMillis,
         dayEndMillis
     ).collectAsState(initial = emptyList())
-    var calendarEvents by remember(dayStartMillis) {
-        mutableStateOf(emptyList<CalendarHelper.CalendarEvent>())
-    }
-    LaunchedEffect(dayStartMillis) {
-        calendarEvents = withContext(Dispatchers.IO) {
-            CalendarHelper.getEventsForRange(
-                context = context,
-                startMillis = dayStartMillis,
-                endMillis = dayEndMillis - 1L
-            )
-        }
-    }
     val processingEntryIds by EntryProcessingState.processingIds.collectAsState()
     val pendingColorIndex by settings.timelineColorPending.collectAsState(
         initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PENDING
@@ -107,7 +91,6 @@ fun DayTimelineScreen(
     val timelineEvents = remember(
         entries,
         recordings,
-        calendarEvents,
         dayStartMillis,
         dayEndMillis,
         storedTimelineEvents
@@ -116,7 +99,6 @@ fun DayTimelineScreen(
             createdEntries = entries.filter { it.createdAt in dayStartMillis until dayEndMillis },
             completedEntries = entries.filter { (it.completedAt ?: -1L) in dayStartMillis until dayEndMillis },
             recordings = recordings.filter { it.createdAt in dayStartMillis until dayEndMillis },
-            calendarEvents = calendarEvents.filter { it.startMillis in dayStartMillis until dayEndMillis },
             storedEvents = storedTimelineEvents
         )
     }

@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.trama.app.audio.OfflineDictationCapture
 import com.trama.app.audio.SherpaWhisperAsrEngine
+import com.trama.app.location.DwellDurationFormatter
 import com.trama.app.location.PlaceMapsLauncher
 import com.trama.app.summary.PlaceOpinionSummarizer
 import com.trama.shared.data.DatabaseProvider
@@ -456,7 +457,7 @@ fun PlaceDetailScreen(
             events.take(20).forEach { event ->
                 TextButton(onClick = {}) {
                     Text(
-                        "${dateFormat.format(Date(event.timestamp))} · ${event.subtitle ?: "Evento"}",
+                        "${dateFormat.format(Date(event.timestamp))} · ${DwellDurationFormatter.formatHours(event.timestamp, event.endTimestamp)}",
                         modifier = Modifier.fillMaxWidth()
                     )
                 }

@@ -1,5 +1,9 @@
 package com.trama.wear.ui.screens
 
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.BatteryManager
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -18,8 +22,12 @@ import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -43,9 +51,7 @@ fun WatchHomeScreen() {
     val phoneActive by WatchServiceController.isPhoneActive.collectAsState()
     val isRecording by RecordingController.isRecording.collectAsState()
     val elapsedSeconds by RecordingController.elapsedSeconds.collectAsState()
-
-    val batteryManager = context.getSystemService(BatteryManager::class.java)
-    val batteryPct = batteryManager?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
+    val batteryPct = rememberBatteryPercentage(context)
     val batteryLow = batteryPct in 1..20
 
     val listenColor = Color(0xFFC8753A)
@@ -227,6 +233,51 @@ fun WatchHomeScreen() {
             )
         }
     }
+}
+
+@Composable
+private fun rememberBatteryPercentage(context: Context): Int {
+    var batteryPct by remember { mutableIntStateOf(readBatteryPercentage(context)) }
+
+    DisposableEffect(context) {
+        val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(receiverContext: Context?, intent: Intent?) {
+                val nextPct = intent.toBatteryPercentage()
+                if (nextPct > 0) {
+                    batteryPct = nextPct
+                }
+            }
+        }
+
+        val sticky = context.registerReceiver(receiver, filter)
+        val stickyPct = sticky.toBatteryPercentage()
+        if (stickyPct > 0) {
+            batteryPct = stickyPct
+        }
+
+        onDispose {
+            context.unregisterReceiver(receiver)
+        }
+    }
+
+    return batteryPct
+}
+
+private fun readBatteryPercentage(context: Context): Int {
+    val sticky = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+    val stickyPct = sticky.toBatteryPercentage()
+    if (stickyPct > 0) return stickyPct
+
+    return context.getSystemService(BatteryManager::class.java)
+        ?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        ?: -1
+}
+
+private fun Intent?.toBatteryPercentage(): Int {
+    val level = this?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+    val scale = this?.getIntExtra(BatteryManager.EXTRA_SCALE, -1)?.coerceAtLeast(1) ?: 1
+    return if (level >= 0) (level * 100) / scale else -1
 }
 
 @Composable

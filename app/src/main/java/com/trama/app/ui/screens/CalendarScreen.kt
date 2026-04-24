@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Mic
@@ -66,12 +67,14 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.trama.app.location.PlaceMapsLauncher
+import com.trama.app.location.DwellDurationFormatter
 import com.trama.app.ui.theme.LocalTramaColors
 import com.trama.shared.data.DatabaseProvider
 import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.EntryStatus
 import com.trama.shared.model.Place
 import com.trama.shared.model.Recording
+import com.trama.shared.model.TimelineEventType
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -186,6 +189,19 @@ fun CalendarScreen(
     val selectedPlaces = remember(selectedDayEvents, places) {
         val placeIds = selectedDayEvents.mapNotNull { it.placeId }.toSet()
         places.filter { it.id in placeIds }.sortedBy { it.name.lowercase(Locale.getDefault()) }
+    }
+    val selectedCalendarEvents = remember(selectedDayEvents) {
+        selectedDayEvents
+            .filter { it.type == TimelineEventType.CALENDAR }
+            .sortedBy { it.timestamp }
+    }
+    val selectedPlaceDurations = remember(selectedDayEvents) {
+        selectedDayEvents
+            .filter { it.type == TimelineEventType.DWELL && it.placeId != null && it.endTimestamp != null }
+            .groupBy { it.placeId!! }
+            .mapValues { (_, events) ->
+                events.sumOf { event -> (event.endTimestamp!! - event.timestamp).coerceAtLeast(0L) }
+            }
     }
 
     val monthFormat = remember { SimpleDateFormat("MMMM yyyy", Locale("es")) }
@@ -508,6 +524,18 @@ fun CalendarScreen(
                         }
                     }
 
+                    if (selectedCalendarEvents.isNotEmpty()) {
+                        item("calendar_header") {
+                            CalendarHistoryHeader(
+                                title = "Calendario",
+                                subtitle = "(${selectedCalendarEvents.size})"
+                            )
+                        }
+                        items(selectedCalendarEvents, key = { "calendar_${it.id}" }) { event ->
+                            CalendarImportedEventCard(event)
+                        }
+                    }
+
                     // ── Lugares ─────────────────────────────────────────────
                     if (selectedPlaces.isNotEmpty()) {
                         item("places_header") {
@@ -516,6 +544,7 @@ fun CalendarScreen(
                         items(selectedPlaces, key = { "place_${it.id}" }) { place ->
                             CalendarPlaceCard(
                                 place = place,
+                                durationLabel = selectedPlaceDurations[place.id]?.let(DwellDurationFormatter::formatHours),
                                 onRate = { rating ->
                                     scope.launch {
                                         repository.updatePlaceOpinion(
@@ -539,6 +568,65 @@ fun CalendarScreen(
                             )
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CalendarImportedEventCard(event: com.trama.shared.model.TimelineEvent) {
+    val t = LocalTramaColors.current
+    val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = t.surface),
+        border = androidx.compose.foundation.BorderStroke(
+            0.5.dp,
+            t.amber.copy(alpha = 0.20f)
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(
+                Icons.Default.CalendarMonth,
+                contentDescription = null,
+                tint = t.amber,
+                modifier = Modifier.size(16.dp)
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = event.title,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = buildString {
+                        append(timeFormat.format(Date(event.timestamp)))
+                        event.endTimestamp?.let {
+                            append(" – ")
+                            append(timeFormat.format(Date(it)))
+                        }
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                event.subtitle?.takeIf { it.isNotBlank() }?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
         }
@@ -659,6 +747,7 @@ private fun CalendarRecordingCard(
 @Composable
 private fun CalendarPlaceCard(
     place: Place,
+    durationLabel: String?,
     onRate: (Int?) -> Unit,
     onOpenDetail: () -> Unit,
     onOpenMap: () -> Unit
@@ -704,6 +793,14 @@ private fun CalendarPlaceCard(
                 TextButton(onClick = onOpenDetail) {
                     Text("Ficha", style = MaterialTheme.typography.labelMedium)
                 }
+            }
+            durationLabel?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = t.teal,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),

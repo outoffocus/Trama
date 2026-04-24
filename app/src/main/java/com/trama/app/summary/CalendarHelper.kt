@@ -32,6 +32,7 @@ object CalendarHelper {
 
     data class CalendarEvent(
         val id: Long,
+        val calendarId: Long,
         val title: String,
         val description: String?,
         val startMillis: Long,
@@ -86,12 +87,17 @@ object CalendarHelper {
         return queryEvents(context, startCal.timeInMillis, endCal.timeInMillis)
     }
 
-    fun getEventsForRange(context: Context, startMillis: Long, endMillis: Long): List<CalendarEvent> {
+    fun getEventsForRange(
+        context: Context,
+        startMillis: Long,
+        endMillis: Long,
+        calendarIds: Set<Long>? = null
+    ): List<CalendarEvent> {
         if (!hasCalendarPermission(context)) {
             Log.w(TAG, "No READ_CALENDAR permission")
             return emptyList()
         }
-        return queryEvents(context, startMillis, endMillis)
+        return queryEvents(context, startMillis, endMillis, calendarIds)
     }
 
     fun openEvent(context: Context, event: CalendarEvent) {
@@ -216,11 +222,20 @@ object CalendarHelper {
         return Pair(todayEvents, tomorrowEvents)
     }
 
-    private fun queryEvents(context: Context, startMs: Long, endMs: Long): List<CalendarEvent> {
+    private fun queryEvents(
+        context: Context,
+        startMs: Long,
+        endMs: Long,
+        calendarIds: Set<Long>? = null
+    ): List<CalendarEvent> {
         val events = mutableListOf<CalendarEvent>()
+        if (calendarIds != null && calendarIds.isEmpty()) {
+            return emptyList()
+        }
 
         val projection = arrayOf(
             CalendarContract.Instances.EVENT_ID,
+            CalendarContract.Instances.CALENDAR_ID,
             CalendarContract.Instances.TITLE,
             CalendarContract.Instances.DESCRIPTION,
             CalendarContract.Instances.BEGIN,
@@ -236,20 +251,32 @@ object CalendarHelper {
             .build()
 
         try {
+            val selection = calendarIds
+                ?.takeIf { it.isNotEmpty() }
+                ?.joinToString(
+                    separator = ",",
+                    prefix = "${CalendarContract.Instances.CALENDAR_ID} IN (",
+                    postfix = ")"
+                ) { "?" }
+            val selectionArgs = calendarIds
+                ?.takeIf { it.isNotEmpty() }
+                ?.map { it.toString() }
+                ?.toTypedArray()
             context.contentResolver.query(
-                uri, projection, null, null,
+                uri, projection, selection, selectionArgs,
                 "${CalendarContract.Instances.BEGIN} ASC"
             )?.use { cursor ->
                 while (cursor.moveToNext()) {
                     events.add(
                         CalendarEvent(
                             id = cursor.getLong(0),
-                            title = cursor.getString(1) ?: "(sin título)",
-                            description = cursor.getString(2),
-                            startMillis = cursor.getLong(3),
-                            endMillis = cursor.getLong(4),
-                            location = cursor.getString(5),
-                            allDay = cursor.getInt(6) == 1
+                            calendarId = cursor.getLong(1),
+                            title = cursor.getString(2) ?: "(sin título)",
+                            description = cursor.getString(3),
+                            startMillis = cursor.getLong(4),
+                            endMillis = cursor.getLong(5),
+                            location = cursor.getString(6),
+                            allDay = cursor.getInt(7) == 1
                         )
                     )
                 }
@@ -368,6 +395,16 @@ object CalendarHelper {
         val label: String get() = if (accountName.isNotBlank()) "$displayName ($accountName)" else displayName
     }
 
+    data class ReadableCalendar(
+        val id: Long,
+        val displayName: String,
+        val accountName: String,
+        val accountType: String,
+        val isPrimary: Boolean
+    ) {
+        val label: String get() = if (accountName.isNotBlank()) "$displayName ($accountName)" else displayName
+    }
+
     /**
      * Get all writable calendars for the calendar picker UI.
      * Returns sorted: Google calendars first, then primary, then alphabetical.
@@ -412,6 +449,55 @@ object CalendarHelper {
                 compareByDescending<WritableCalendar> { it.accountType == "com.google" }
                     .thenByDescending { it.isPrimary }
                     .thenBy { it.displayName }
+            )
+    }
+
+    fun getReadableCalendars(context: Context): List<ReadableCalendar> {
+        if (!hasCalendarPermission(context)) return emptyList()
+
+        val projection = arrayOf(
+            CalendarContract.Calendars._ID,
+            CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
+            CalendarContract.Calendars.ACCOUNT_NAME,
+            CalendarContract.Calendars.ACCOUNT_TYPE,
+            CalendarContract.Calendars.IS_PRIMARY
+        )
+
+        val selection = "${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} >= " +
+            "${CalendarContract.Calendars.CAL_ACCESS_READ}"
+
+        val calendars = mutableListOf<ReadableCalendar>()
+
+        try {
+            context.contentResolver.query(
+                CalendarContract.Calendars.CONTENT_URI,
+                projection,
+                selection,
+                null,
+                null
+            )?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    calendars.add(
+                        ReadableCalendar(
+                            id = cursor.getLong(0),
+                            displayName = cursor.getString(1) ?: "(sin nombre)",
+                            accountName = cursor.getString(2) ?: "",
+                            accountType = cursor.getString(3) ?: "",
+                            isPrimary = cursor.getInt(4) == 1
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to query readable calendars", e)
+        }
+
+        return calendars
+            .distinctBy { it.id }
+            .sortedWith(
+                compareByDescending<ReadableCalendar> { it.accountType == "com.google" }
+                    .thenByDescending { it.isPrimary }
+                    .thenBy { it.displayName.lowercase(Locale.getDefault()) }
             )
     }
 
@@ -549,4 +635,5 @@ object CalendarHelper {
 
         return sb.toString()
     }
+
 }

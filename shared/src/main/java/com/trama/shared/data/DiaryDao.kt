@@ -28,7 +28,7 @@ interface DiaryDao {
     fun getPending(): Flow<List<DiaryEntry>>
 
     /** Suggested items awaiting user review (low-confidence LLM extractions). */
-    @Query("SELECT * FROM diary_entries WHERE status = 'SUGGESTED' ORDER BY createdAt DESC")
+    @Query("SELECT * FROM diary_entries WHERE status = 'SUGGESTED' AND duplicateOfId IS NULL ORDER BY createdAt DESC")
     fun getSuggested(): Flow<List<DiaryEntry>>
 
     /** Completed items, most recent first */
@@ -193,6 +193,10 @@ interface DiaryDao {
     /** Get recent pending entries for dedup comparison (last 50) */
     @Query("SELECT * FROM diary_entries WHERE status = 'PENDING' AND duplicateOfId IS NULL ORDER BY createdAt DESC LIMIT 50")
     suspend fun getRecentPendingForDedup(): List<DiaryEntry>
+
+    /** Get recent pending/suggested entries for dedup comparison (last 80). */
+    @Query("SELECT * FROM diary_entries WHERE status IN ('PENDING', 'SUGGESTED') AND duplicateOfId IS NULL ORDER BY createdAt DESC LIMIT 80")
+    suspend fun getRecentActiveForDedup(): List<DiaryEntry>
 
     /** Mark entry as completed by createdAt+text (for cross-device sync where IDs differ) */
     @Query("UPDATE diary_entries SET status = 'COMPLETED', completedAt = :completedAt WHERE createdAt = :createdAt AND text = :text")

@@ -22,6 +22,12 @@ data class DwellDetectorConfig(
     val entryRadiusMeters: Float = 80f,
     val exitRadiusMeters: Float = 200f,
     val dwellThresholdMillis: Long = 15 * 60 * 1000L,
+    /**
+     * A dwell is not closed on the first sample outside the exit radius. That
+     * first sample is treated as a pending exit and must remain outside long
+     * enough to avoid shortening visits because of a single GPS jump.
+     */
+    val exitConfirmationMillis: Long = 2 * 60 * 1000L,
     /** Window during which re-entering the radius of a just-closed dwell does NOT
      *  start a new candidate; instead it is ignored (treated as GPS drift). */
     val reentryCooldownMillis: Long = 5 * 60 * 1000L
@@ -146,12 +152,45 @@ class DwellDetector(
         )
 
         if (distanceFromAnchor <= config.exitRadiusMeters) {
-            return DwellDetectorResult(nextState = state.copy(updatedAt = updatedAt))
+            return DwellDetectorResult(
+                nextState = state.copy(
+                    candidateLat = null,
+                    candidateLon = null,
+                    candidateStartedAt = null,
+                    candidateLastSeenAt = null,
+                    updatedAt = updatedAt
+                )
+            )
+        }
+
+        val pendingExitStartedAt = state.candidateStartedAt
+        if (pendingExitStartedAt == null) {
+            return DwellDetectorResult(
+                nextState = state.copy(
+                    candidateLat = sample.latitude,
+                    candidateLon = sample.longitude,
+                    candidateStartedAt = sample.timestamp,
+                    candidateLastSeenAt = sample.timestamp,
+                    updatedAt = updatedAt
+                )
+            )
+        }
+
+        val pendingExitElapsed = sample.timestamp - pendingExitStartedAt
+        if (pendingExitElapsed < config.exitConfirmationMillis) {
+            return DwellDetectorResult(
+                nextState = state.copy(
+                    candidateLat = sample.latitude,
+                    candidateLon = sample.longitude,
+                    candidateLastSeenAt = sample.timestamp,
+                    updatedAt = updatedAt
+                )
+            )
         }
 
         val closed = splitAcrossDays(
             startTimestamp = state.dwellStartedAt ?: sample.timestamp,
-            endTimestamp = sample.timestamp,
+            endTimestamp = pendingExitStartedAt,
             latitude = state.anchorLat ?: sample.latitude,
             longitude = state.anchorLon ?: sample.longitude
         )

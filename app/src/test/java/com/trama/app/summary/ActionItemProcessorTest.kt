@@ -66,6 +66,75 @@ class ActionItemProcessorTest {
     }
 
     @Test
+    fun `event entries can be accepted without an explicit action verb`() {
+        val result = callPrivate<ActionItemProcessor.ProcessingResult>(
+            "buildProcessingResult",
+            "Cita con el medico mañana",
+            "EVENT",
+            null,
+            "NORMAL",
+            0.82f,
+            true,
+            null
+        )
+
+        assertTrue(result.isActionable)
+        assertEquals("EVENT", result.actionType)
+        assertEquals(0.82f, result.confidence, 0.001f)
+    }
+
+    @Test
+    fun `recoger tasks are accepted as actionable`() {
+        val result = callPrivate<ActionItemProcessor.ProcessingResult>(
+            "buildProcessingResult",
+            "Recoger el coche en el taller mañana",
+            "GENERIC",
+            null,
+            "NORMAL",
+            0.82f,
+            true,
+            null
+        )
+
+        assertTrue(result.isActionable)
+        assertEquals(0.82f, result.confidence, 0.001f)
+    }
+
+    @Test
+    fun `display trigger is added to cleaned task text`() {
+        val result = callPrivate<ActionItemProcessor.ProcessingResult>(
+            "buildProcessingResult",
+            "Recoger el coche en el taller mañana",
+            "GENERIC",
+            null,
+            "NORMAL",
+            0.82f,
+            true,
+            "Tengo que"
+        )
+
+        assertTrue(result.isActionable)
+        assertEquals("Tengo que recoger el coche en el taller mañana", result.cleanText)
+    }
+
+    @Test
+    fun `generic verbless fragments are still rejected`() {
+        val result = callPrivate<ActionItemProcessor.ProcessingResult>(
+            "buildProcessingResult",
+            "Contrato de Marta mañana",
+            "GENERIC",
+            null,
+            "NORMAL",
+            0.82f,
+            true,
+            null
+        )
+
+        assertTrue(!result.isActionable)
+        assertEquals(0.29f, result.confidence, 0.001f)
+    }
+
+    @Test
     fun `buildPrompt embeds the original note and output contract`() {
         val prompt = callPrivate<String>(
             "buildPrompt",

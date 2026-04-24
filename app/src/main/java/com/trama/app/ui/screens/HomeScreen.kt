@@ -314,19 +314,6 @@ fun HomeScreen(
         endOfDay
     ).collectAsState(initial = null)
     val storedTimelineEvents = storedTimelineEventsState ?: emptyList()
-    var todayCalendarEvents by remember(startOfDay) {
-        mutableStateOf<List<CalendarHelper.CalendarEvent>?>(null)
-    }
-    LaunchedEffect(startOfDay) {
-        todayCalendarEvents = withContext(Dispatchers.IO) {
-            CalendarHelper.getEventsForRange(
-                context = context,
-                startMillis = startOfDay,
-                endMillis = endOfDay
-            )
-        }
-    }
-    val resolvedCalendarEvents = todayCalendarEvents ?: emptyList()
     val visiblePendingEntries = pendingEntries
     val pastDayEntries = visiblePendingEntries.filter { entry ->
         val due = entry.dueDate
@@ -340,14 +327,12 @@ fun HomeScreen(
     val timelineEvents = remember(
         todayEntries,
         todayRecordings,
-        resolvedCalendarEvents,
         storedTimelineEvents
     ) {
         buildTimelineEvents(
             createdEntries = todayEntries,
             completedEntries = emptyList(),
             recordings = todayRecordings,
-            calendarEvents = resolvedCalendarEvents.filter { it.startMillis in startOfDay..endOfDay },
             storedEvents = storedTimelineEvents
         )
     }
@@ -356,8 +341,7 @@ fun HomeScreen(
         duplicateEntriesState == null ||
         completedEntriesState == null ||
         recordingsState == null ||
-        storedTimelineEventsState == null ||
-        todayCalendarEvents == null
+        storedTimelineEventsState == null
 
     val heroDayTitle = remember(startOfDay) {
         SimpleDateFormat("EEEE d 'de' MMMM", Locale("es")).format(Date(startOfDay))

@@ -45,6 +45,7 @@ object ManualActionSuggestionExtractor {
         "pagar",
         "reservar",
         "pedir",
+        "recoger",
         "escribir",
         "contestar",
         "avisar",
@@ -93,6 +94,8 @@ object ManualActionSuggestionExtractor {
         val trimmed = text.trim()
         if (trimmed.isBlank()) return emptyList()
 
+        val hasTrigger = hasLeadingActionTrigger(trimmed)
+        val displayTrigger = leadingDisplayTrigger(trimmed)
         val normalized = trimmed.replaceFirst(leadingTriggerRegex, "").trim()
 
         val parts = sentenceSplitRegex
@@ -106,8 +109,8 @@ object ManualActionSuggestionExtractor {
 
         val suggestions = linkedMapOf<String, ManualActionSuggestion>()
         for (part in parts) {
-            val cleanText = cleanText(part)
-            if (!isLikelyActionable(cleanText)) continue
+            val cleanText = cleanText(part, displayTrigger)
+            if (!isLikelyActionable(cleanText, hasTrigger)) continue
             val suggestion = ManualActionSuggestion(
                 text = cleanText,
                 actionType = inferActionType(part),
@@ -120,7 +123,23 @@ object ManualActionSuggestionExtractor {
         return suggestions.values.take(8)
     }
 
-    private fun isLikelyActionable(cleanText: String): Boolean {
+    fun hasLeadingActionTrigger(text: String): Boolean =
+        leadingTriggerRegex.containsMatchIn(text.trim())
+
+    fun leadingDisplayTrigger(text: String): String? {
+        val trigger = leadingTriggerRegex.find(text.trim())?.value?.trim()?.lowercase(Locale.getDefault())
+            ?: return null
+        return when (trigger) {
+            "tengo que" -> "Tengo que"
+            "hay que" -> "Hay que"
+            "debo" -> "Debo"
+            "deberia", "debería" -> "Debería"
+            "necesito" -> "Necesito"
+            else -> null
+        }
+    }
+
+    private fun isLikelyActionable(cleanText: String, hasTrigger: Boolean): Boolean {
         if (cleanText.isBlank()) return false
         val normalized = cleanText.lowercase(Locale.getDefault()).trim()
         if (normalized.length < MIN_SUGGESTION_LENGTH) return false
@@ -131,19 +150,23 @@ object ManualActionSuggestionExtractor {
             val root = verb.split(" ").first()
             tokens.any { it.startsWith(root) }
         }
-        if (!hasActionVerb) return false
         val hasComplement = tokens.any { it.length >= 4 && it !in FILLER_TOKENS && !isTemporal(it) }
-        return hasComplement
+        return hasComplement && (hasActionVerb || hasTrigger)
     }
 
     private fun isTemporal(token: String): Boolean = token in TEMPORAL_TOKENS
 
-    private fun cleanText(raw: String): String {
+    private fun cleanText(raw: String, displayTrigger: String?): String {
         val noTrigger = raw.trim().replaceFirst(leadingTriggerRegex, "")
-        return noTrigger
+        val cleaned = noTrigger
             .trim()
             .trimStart(',', ':', ';', '-', ' ')
             .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
+        return if (displayTrigger != null) {
+            "$displayTrigger ${cleaned.replaceFirstChar { it.lowercase(Locale.getDefault()) }}"
+        } else {
+            cleaned
+        }
     }
 
     private fun inferActionType(text: String): String {

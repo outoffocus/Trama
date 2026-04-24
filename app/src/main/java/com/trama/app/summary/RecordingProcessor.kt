@@ -107,7 +107,7 @@ class RecordingProcessor(private val context: Context) {
             val result = parseResponse(responseText)
             // Delete previous actions only when we have new ones to replace them
             repository.deleteByRecordingId(recordingId)
-            saveResult(recordingId, result, source, "CLOUD", 0.9f, repository)
+            saveResult(recordingId, result, transcription, source, "CLOUD", 0.9f, repository)
 
             Log.i(TAG, "Recording $recordingId processed via Cloud: '${result.title}', ${result.actionItems.size} actions")
             CaptureLog.event(
@@ -152,7 +152,7 @@ class RecordingProcessor(private val context: Context) {
             }
 
             repository.deleteByRecordingId(recordingId)
-            saveResult(recordingId, result, source, "LOCAL", 0.8f, repository)
+            saveResult(recordingId, result, transcription, source, "LOCAL", 0.8f, repository)
 
             Log.i(TAG, "Recording $recordingId processed via local model: '${result.title}', ${result.actionItems.size} actions")
             CaptureLog.event(
@@ -297,6 +297,7 @@ class RecordingProcessor(private val context: Context) {
     private suspend fun saveResult(
         recordingId: Long,
         result: RecordingAnalysis,
+        transcription: String,
         source: Source,
         processedBy: String,
         confidence: Float,
@@ -312,29 +313,56 @@ class RecordingProcessor(private val context: Context) {
         )
 
         val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val activeDedupEntries = repository.getRecentActiveForDedup().toMutableList()
+        val displayTrigger = ManualActionSuggestionExtractor.leadingDisplayTrigger(transcription)
         for (action in result.actionItems) {
+            val actionText = withDisplayTrigger(action.text, displayTrigger)
             val dueDate = action.dueDate?.let {
                 try { dateFormat.parse(it)?.time } catch (_: Exception) { null }
             }
-            repository.insert(
-                DiaryEntry(
-                    text = action.text,
-                    keyword = "grabación",
-                    category = "Grabación",
-                    confidence = confidence,
-                    source = source,
-                    duration = 0,
-                    cleanText = action.text,
-                    actionType = validateActionType(action.actionType),
-                    priority = validatePriority(action.priority),
-                    dueDate = dueDate,
-                    wasReviewedByLLM = true,
-                    llmConfidence = confidence,
-                    sourceRecordingId = recordingId,
-                    status = EntryStatus.PENDING
-                )
+
+            val duplicate = DuplicateHeuristics.findLikelyDuplicate(
+                text = actionText,
+                existing = activeDedupEntries,
+                newDueDate = dueDate
             )
+            if (duplicate != null && duplicate.status == EntryStatus.PENDING) {
+                Log.i(TAG, "Skipping recording action duplicate of pending entry ${duplicate.id}: '$actionText'")
+                continue
+            }
+
+            val entry = DiaryEntry(
+                text = actionText,
+                keyword = "grabación",
+                category = "Grabación",
+                confidence = confidence,
+                source = source,
+                duration = 0,
+                cleanText = actionText,
+                actionType = validateActionType(action.actionType),
+                priority = validatePriority(action.priority),
+                dueDate = dueDate,
+                wasReviewedByLLM = true,
+                llmConfidence = confidence,
+                sourceRecordingId = recordingId,
+                status = EntryStatus.PENDING
+            )
+            val insertedId = repository.insert(entry)
+            val insertedEntry = entry.copy(id = insertedId)
+            activeDedupEntries += insertedEntry
+
+            if (duplicate != null && duplicate.status == EntryStatus.SUGGESTED) {
+                repository.markDuplicate(duplicate.id, insertedId)
+                Log.i(TAG, "Hiding suggested duplicate ${duplicate.id} in favor of recording action $insertedId")
+            }
         }
+    }
+
+    private fun withDisplayTrigger(text: String, displayTrigger: String?): String {
+        val trimmed = text.trim()
+        if (displayTrigger == null || trimmed.isBlank()) return trimmed
+        if (trimmed.startsWith(displayTrigger, ignoreCase = true)) return trimmed
+        return "$displayTrigger ${trimmed.replaceFirstChar { it.lowercase(Locale.getDefault()) }}"
     }
 
     // ── Duplicate detection (LLM-based when possible) ──

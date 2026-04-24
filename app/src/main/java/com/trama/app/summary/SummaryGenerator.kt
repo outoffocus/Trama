@@ -5,7 +5,9 @@ import android.util.Log
 import com.google.ai.client.generativeai.GenerativeModel
 import com.trama.app.GeminiConfig
 import com.google.ai.client.generativeai.type.generationConfig
+import com.trama.shared.data.DatabaseProvider
 import com.trama.shared.model.DiaryEntry
+import com.trama.shared.model.TimelineEventType
 import kotlinx.serialization.json.Json
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -141,7 +143,7 @@ class SummaryGenerator(private val context: Context) {
         }
 
     /** Prompt for Gemini Cloud (powerful model, understands structure from description). */
-    private fun buildPrompt(entries: List<DiaryEntry>, dateStr: String): String {
+    private suspend fun buildPrompt(entries: List<DiaryEntry>, dateStr: String): String {
         val entriesText = buildEntriesText(entries)
         val calendarContext = buildCalendarContext()
         return PromptTemplateStore.render(
@@ -156,16 +158,47 @@ class SummaryGenerator(private val context: Context) {
     }
 
 
-    private fun buildCalendarContext(): String {
-        if (!CalendarHelper.hasCalendarPermission(context)) {
-            return "\n(Sin acceso al calendario)"
-        }
-
-        val (todayEvents, tomorrowEvents) = CalendarHelper.getUpcomingEvents(context)
+    private suspend fun buildCalendarContext(): String {
+        val repository = DatabaseProvider.getRepository(context)
+        val todayRange = com.trama.shared.util.DayRange.today()
         val tomorrow = java.util.Calendar.getInstance().apply { add(java.util.Calendar.DAY_OF_YEAR, 1) }
+        val tomorrowRange = com.trama.shared.util.DayRange.of(
+            java.util.Calendar.getInstance().apply {
+                add(java.util.Calendar.DAY_OF_YEAR, 1)
+                set(java.util.Calendar.HOUR_OF_DAY, 0)
+                set(java.util.Calendar.MINUTE, 0)
+                set(java.util.Calendar.SECOND, 0)
+                set(java.util.Calendar.MILLISECOND, 0)
+            }.timeInMillis
+        )
+        val todayEvents = repository.getTimelineEventsByDateRangeOnce(
+            todayRange.startMs,
+            todayRange.endInclusiveMs
+        ).filter { it.type == TimelineEventType.CALENDAR }
+        val tomorrowEvents = repository.getTimelineEventsByDateRangeOnce(
+            tomorrowRange.startMs,
+            tomorrowRange.endInclusiveMs
+        ).filter { it.type == TimelineEventType.CALENDAR }
         val tomorrowStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(tomorrow.time)
 
-        return CalendarHelper.formatEventsForPrompt(todayEvents, tomorrowEvents, tomorrowStr)
+        if (todayEvents.isEmpty() && tomorrowEvents.isEmpty()) {
+            return "\nNo hay eventos importados de calendario para hoy ni mañana."
+        }
+
+        val sb = StringBuilder()
+        if (todayEvents.isNotEmpty()) {
+            sb.appendLine("\nEventos de hoy en el calendario:")
+            todayEvents.forEach { event ->
+                sb.appendLine("- ${timeFormat.format(Date(event.timestamp))} \"${event.title}\"")
+            }
+        }
+        if (tomorrowEvents.isNotEmpty()) {
+            sb.appendLine("\nEventos de mañana ($tomorrowStr) en el calendario:")
+            tomorrowEvents.forEach { event ->
+                sb.appendLine("- ${timeFormat.format(Date(event.timestamp))} \"${event.title}\"")
+            }
+        }
+        return sb.toString()
     }
 
     private fun parseResponse(

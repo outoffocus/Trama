@@ -29,12 +29,13 @@ class DwellDetectorHysteresisTest {
         GeoSample(latitude = x, longitude = y, accuracyMeters = acc, timestamp = t)
 
     @Test
-    fun gpsOscillation_doesNotOpenSecondDwell() {
+    fun gpsOscillation_doesNotCloseOrOpenSecondDwell() {
         val detector = DwellDetector(
             config = DwellDetectorConfig(
                 entryRadiusMeters = 80f,
                 exitRadiusMeters = 200f,
                 dwellThresholdMillis = 15 * minute,
+                exitConfirmationMillis = 2 * minute,
                 reentryCooldownMillis = 5 * minute
             ),
             distance = planarDistance
@@ -69,11 +70,9 @@ class DwellDetectorHysteresisTest {
             closed += r.closedDwells
         }
 
-        assertEquals("Expected exactly one closed dwell, got ${closed.size}", 1, closed.size)
-        assertTrue(
-            "Closed dwell anchor should be near (0,0), was (${closed[0].latitude}, ${closed[0].longitude})",
-            closed[0].latitude == 0.0 && closed[0].longitude == 0.0
-        )
+        assertEquals("GPS oscillation should not close the dwell", 0, closed.size)
+        assertTrue("Dwell should remain active at the original place", state?.active == true)
+        assertEquals(0.0, state?.anchorLat)
     }
 
     @Test
@@ -83,6 +82,7 @@ class DwellDetectorHysteresisTest {
                 entryRadiusMeters = 80f,
                 exitRadiusMeters = 200f,
                 dwellThresholdMillis = 15 * minute,
+                exitConfirmationMillis = 2 * minute,
                 reentryCooldownMillis = 5 * minute
             ),
             distance = planarDistance
@@ -110,6 +110,7 @@ class DwellDetectorHysteresisTest {
         }
 
         assertEquals("Expected one closed dwell at the first spot", 1, closed.size)
+        assertEquals("The dwell should end at the first outside sample, not after confirmation delay", 21 * minute, closed[0].endTimestamp)
         assertTrue(state?.active == true)
         assertEquals(1000.0, state?.anchorLat)
     }

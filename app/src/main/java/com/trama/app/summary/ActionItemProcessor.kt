@@ -93,7 +93,7 @@ class ActionItemProcessor(private val context: Context) {
                     priority = result.priority,
                     confidence = result.confidence
                 )
-                repository.markSuggested(entryId)
+                markSuggestedOrDuplicate(entryId, result, repository)
                 Log.i(
                     TAG,
                     "Routing entry $entryId to review queue: '${result.cleanText}' " +
@@ -132,7 +132,7 @@ class ActionItemProcessor(private val context: Context) {
                     priority = heuristicFallback.priority,
                     confidence = heuristicFallback.confidence
                 )
-                repository.markSuggested(entryId)
+                markSuggestedOrDuplicate(entryId, heuristicFallback, repository)
                 Log.i(
                     TAG,
                     "Routing heuristic fallback to review queue for entry $entryId: " +
@@ -369,7 +369,11 @@ class ActionItemProcessor(private val context: Context) {
 
         // Without an LLM we can't reliably judge actionability, so the heuristic
         // only proposes — the deterministic validator below is the final gate.
-        val passesGate = isActionableAfterValidation(suggestion.text, modelIsActionable = true)
+        val passesGate = isActionableAfterValidation(
+            cleanText = suggestion.text,
+            actionType = suggestion.actionType,
+            modelIsActionable = true
+        )
         return ProcessingResult(
             cleanText = suggestion.text,
             actionType = suggestion.actionType,
@@ -402,7 +406,7 @@ class ActionItemProcessor(private val context: Context) {
             ?: throw Exception("Empty Gemini response")
 
         Log.d(TAG, "Cloud OK: $responseText")
-        return parseResult(responseText, 1.0f)
+        return parseResult(responseText, 1.0f, normalizedInput)
     }
 
     private suspend fun processWithLocalModel(
@@ -417,18 +421,26 @@ class ActionItemProcessor(private val context: Context) {
 
         return try {
             // Try parsing as JSON (same format as Cloud)
-            parseResult(responseText, 0.85f)
+            parseResult(responseText, 0.85f, normalizedInput)
         } catch (e: Exception) {
             // Fallback: use response as clean text + keyword-based inference
             Log.d(TAG, "Local model JSON parse failed, using text fallback", e)
             val cleanText = JsonRepair.extractAndRepair(responseText).trim().removeSurrounding("\"")
             val validatedCleanText = cleanText.takeIf { it.isNotBlank() } ?: return null
-            val truncated = validatedCleanText.take(200)
-            val passesGate = isActionableAfterValidation(truncated, modelIsActionable = true)
+            val truncated = withDisplayTrigger(
+                validatedCleanText.take(200),
+                ManualActionSuggestionExtractor.leadingDisplayTrigger(normalizedInput)
+            )
+            val inferredActionType = inferActionType(normalizedInput)
+            val passesGate = isActionableAfterValidation(
+                cleanText = truncated,
+                actionType = inferredActionType,
+                modelIsActionable = true
+            )
             LLMOutcome(
                 primary = ProcessingResult(
                     cleanText = truncated,
-                    actionType = inferActionType(normalizedInput),
+                    actionType = inferredActionType,
                     dueDate = null,
                     priority = "NORMAL",
                     confidence = if (passesGate) 0.7f else 0.25f,
@@ -477,9 +489,14 @@ class ActionItemProcessor(private val context: Context) {
     }
 
 
-    private fun parseResult(responseText: String, confidenceMultiplier: Float): LLMOutcome {
+    private fun parseResult(
+        responseText: String,
+        confidenceMultiplier: Float,
+        triggerSourceText: String = ""
+    ): LLMOutcome {
         val parsed = json.decodeFromString<LLMResponse>(JsonRepair.extractAndRepair(responseText))
         require(parsed.cleanText.isNotBlank()) { "LLM returned blank cleanText" }
+        val displayTrigger = ManualActionSuggestionExtractor.leadingDisplayTrigger(triggerSourceText)
 
         val primary = buildProcessingResult(
             cleanText = parsed.cleanText.trim(),
@@ -487,7 +504,8 @@ class ActionItemProcessor(private val context: Context) {
             dueDate = parsed.dueDate,
             priority = parsed.priority,
             confidence = parsed.confidence * confidenceMultiplier,
-            modelIsActionable = parsed.isActionable
+            modelIsActionable = parsed.isActionable,
+            displayTrigger = displayTrigger
         )
         val extras = parsed.extraActions
             .filter { it.cleanText.isNotBlank() }
@@ -500,7 +518,8 @@ class ActionItemProcessor(private val context: Context) {
                     // Extras inherit the primary's confidence — the model only
                     // signals actionability at the top level.
                     confidence = parsed.confidence * confidenceMultiplier,
-                    modelIsActionable = true
+                    modelIsActionable = true,
+                    displayTrigger = displayTrigger
                 )
             }
         return LLMOutcome(primary = primary, extras = extras)
@@ -512,13 +531,20 @@ class ActionItemProcessor(private val context: Context) {
         dueDate: String?,
         priority: String,
         confidence: Float,
-        modelIsActionable: Boolean
+        modelIsActionable: Boolean,
+        displayTrigger: String? = null
     ): ProcessingResult {
-        val passesGate = isActionableAfterValidation(cleanText, modelIsActionable)
+        val displayText = withDisplayTrigger(cleanText, displayTrigger)
+        val validatedActionType = validateActionType(actionType)
+        val passesGate = isActionableAfterValidation(
+            cleanText = displayText,
+            actionType = validatedActionType,
+            modelIsActionable = modelIsActionable
+        )
         val effectiveConfidence = if (!passesGate) minOf(confidence, 0.29f) else confidence
         return ProcessingResult(
-            cleanText = cleanText,
-            actionType = validateActionType(actionType),
+            cleanText = displayText,
+            actionType = validatedActionType,
             dueDate = parseDateString(dueDate),
             priority = validatePriority(priority),
             confidence = effectiveConfidence,
@@ -526,8 +552,33 @@ class ActionItemProcessor(private val context: Context) {
         )
     }
 
+    private fun withDisplayTrigger(text: String, displayTrigger: String?): String {
+        val trimmed = text.trim()
+        if (displayTrigger == null || trimmed.isBlank()) return trimmed
+        if (trimmed.startsWith(displayTrigger, ignoreCase = true)) return trimmed
+        return "$displayTrigger ${trimmed.replaceFirstChar { it.lowercase(Locale.getDefault()) }}"
+    }
+
     private fun shouldAcceptAsTask(result: ProcessingResult): Boolean =
         result.isActionable && result.confidence >= ACTIONABLE_CONFIDENCE_THRESHOLD
+
+    private suspend fun markSuggestedOrDuplicate(
+        entryId: Long,
+        result: ProcessingResult,
+        repository: DiaryRepository
+    ) {
+        val duplicate = DuplicateHeuristics.findLikelyDuplicate(
+            text = result.cleanText,
+            existing = repository.getRecentActiveForDedup(),
+            ignoreId = entryId,
+            newDueDate = result.dueDate
+        )
+        if (duplicate != null) {
+            repository.markDuplicate(entryId, duplicate.id)
+            Log.i(TAG, "Suggested entry $entryId hidden as duplicate of ${duplicate.id}: '${result.cleanText}'")
+        }
+        repository.markSuggested(entryId)
+    }
 
     /**
      * Inserts additional actions the LLM extracted from the same note as sibling
@@ -584,7 +635,11 @@ class ActionItemProcessor(private val context: Context) {
      * failure modes — temporal-only fragments, verbless stubs, ASR noise — where
      * the model's textual rules are ignored.
      */
-    private fun isActionableAfterValidation(cleanText: String, modelIsActionable: Boolean): Boolean {
+    private fun isActionableAfterValidation(
+        cleanText: String,
+        actionType: String,
+        modelIsActionable: Boolean
+    ): Boolean {
         if (!modelIsActionable) return false
         val normalized = cleanText
             .lowercase(Locale.getDefault())
@@ -597,6 +652,7 @@ class ActionItemProcessor(private val context: Context) {
         // At least one non-temporal, non-stopword token of length ≥ 3
         val meaningful = tokens.filter { it.length >= 3 && it !in TEMPORAL_TOKENS }
         if (meaningful.isEmpty()) return false
+        if (actionType == EntryActionType.EVENT && hasEventSignal(normalized, tokens)) return true
         // Must contain at least one known action verb — a reminder without a verb
         // ("esa reunión mañana") is almost always a fragment, not a task.
         if (!hasActionVerb(normalized)) return false
@@ -607,6 +663,19 @@ class ActionItemProcessor(private val context: Context) {
         ManualActionSuggestionExtractor.ACTION_VERBS.any { verb ->
             Regex("(?<![\\p{L}])${Regex.escape(verb)}(?![\\p{L}])").containsMatchIn(normalized)
         }
+
+    private fun hasEventSignal(normalized: String, tokens: List<String>): Boolean {
+        val hasEventNoun = EVENT_NOUNS.any { noun ->
+            Regex("(?<![\\p{L}])${Regex.escape(noun)}(?![\\p{L}])").containsMatchIn(normalized)
+        }
+        if (!hasEventNoun) return false
+        return tokens.any { token ->
+            token.length >= 4 &&
+                token !in TEMPORAL_TOKENS &&
+                token !in EVENT_NOUNS &&
+                token !in EVENT_FILLER_TOKENS
+        }
+    }
 
     // ── Duplicate detection ──
 
@@ -762,6 +831,15 @@ Reglas:
             "todos", "todas", "cada", "los", "las", "el", "la",
             "por", "de", "en", "a", "al", "del",
             "que", "y", "o", "u"
+        )
+
+        private val EVENT_NOUNS = setOf(
+            "cita", "reunion", "reunión", "evento", "quedada", "reserva", "visita"
+        )
+
+        private val EVENT_FILLER_TOKENS = setOf(
+            "con", "para", "una", "uno", "unos", "unas",
+            "ese", "esa", "eso", "aquel", "aquella", "otro", "otra"
         )
     }
 

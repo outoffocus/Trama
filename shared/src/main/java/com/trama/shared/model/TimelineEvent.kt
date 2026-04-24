@@ -29,9 +29,11 @@ data class TimelineEvent(
 
 object TimelineEventType {
     const val DWELL = "DWELL"
+    const val CALENDAR = "CALENDAR"
 }
 
 object TimelineEventSource {
     const val AUTO = "AUTO"
     const val MANUAL = "MANUAL"
+    const val CALENDAR_IMPORT = "CALENDAR_IMPORT"
 }

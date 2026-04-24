@@ -25,6 +25,7 @@ import com.trama.app.NotificationConfig
 import com.trama.app.R
 import com.trama.app.location.DwellDetector
 import com.trama.app.location.DwellDetectorConfig
+import com.trama.app.location.DwellDurationFormatter
 import com.trama.app.location.GeoSample
 import com.trama.app.location.PlaceResolver
 import com.trama.app.ui.SettingsDataStore
@@ -184,7 +185,6 @@ class LocationForegroundService : LifecycleService() {
                     longitude = dwell.longitude,
                     visitedAt = dwell.endTimestamp
                 )
-                val durationMinutes = ((dwell.endTimestamp - dwell.startTimestamp) / 60_000L).coerceAtLeast(1L)
                 val dataJson = JSONObject()
                     .put("lat", dwell.latitude)
                     .put("lon", dwell.longitude)
@@ -198,7 +198,7 @@ class LocationForegroundService : LifecycleService() {
                         timestamp = dwell.startTimestamp,
                         endTimestamp = dwell.endTimestamp,
                         title = place.name,
-                        subtitle = "$durationMinutes min",
+                        subtitle = DwellDurationFormatter.formatHours(dwell.startTimestamp, dwell.endTimestamp),
                         dataJson = dataJson,
                         isHighlight = !place.isHome && !place.isWork && place.visitCount < 3,
                         placeId = place.id,

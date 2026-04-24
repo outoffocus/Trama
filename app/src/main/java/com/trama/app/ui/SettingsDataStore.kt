@@ -50,6 +50,7 @@ class SettingsDataStore(private val context: Context) {
         val TIMELINE_COLOR_RECORDING = intPreferencesKey("timeline_color_recording")
         val TIMELINE_COLOR_PLACE = intPreferencesKey("timeline_color_place")
         val TIMELINE_COLOR_CALENDAR = intPreferencesKey("timeline_color_calendar")
+        val VISIBLE_CALENDAR_IDS = stringPreferencesKey("visible_calendar_ids")
         val THEME_MODE = intPreferencesKey("theme_mode") // 0=system, 1=light, 2=dark
         val SHOW_OLD_ENTRIES_EXPANDED = booleanPreferencesKey("show_old_entries_expanded")
         const val DEFAULT_DURATION = 30
@@ -224,12 +225,32 @@ class SettingsDataStore(private val context: Context) {
         prefs[SHOW_OLD_ENTRIES_EXPANDED] ?: false
     }
 
+    /**
+     * Null means "use all readable calendars" for backward compatibility.
+     * Empty set means the user explicitly disabled every calendar source.
+     */
+    val visibleCalendarIds: Flow<Set<Long>?> = context.dataStore.data.map { prefs ->
+        prefs[VISIBLE_CALENDAR_IDS]?.let { raw ->
+            raw.split(",")
+                .mapNotNull { it.trim().takeIf(String::isNotEmpty)?.toLongOrNull() }
+                .toSet()
+        }
+    }
+
     suspend fun setThemeMode(mode: Int) {
         context.dataStore.edit { it[THEME_MODE] = mode }
     }
 
     suspend fun setShowOldEntriesExpanded(expanded: Boolean) {
         context.dataStore.edit { it[SHOW_OLD_ENTRIES_EXPANDED] = expanded }
+    }
+
+    suspend fun setVisibleCalendarIds(ids: Set<Long>) {
+        context.dataStore.edit { prefs ->
+            prefs[VISIBLE_CALENDAR_IDS] = ids
+                .sorted()
+                .joinToString(",")
+        }
     }
 
     suspend fun setRecordingDuration(seconds: Int) {

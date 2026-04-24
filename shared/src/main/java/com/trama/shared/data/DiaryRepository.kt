@@ -112,6 +112,8 @@ class DiaryRepository(
 
     suspend fun getRecentPendingForDedup(): List<DiaryEntry> = dao.getRecentPendingForDedup()
 
+    suspend fun getRecentActiveForDedup(): List<DiaryEntry> = dao.getRecentActiveForDedup()
+
     suspend fun <T> withTransaction(block: suspend DiaryRepository.() -> T): T {
         val db = database
         return if (db != null) {
@@ -198,6 +200,12 @@ class DiaryRepository(
 
     suspend fun getTimelineEventByIdOnce(id: Long): TimelineEvent? =
         timelineEventDao?.getByIdOnce(id)
+
+    suspend fun getTimelineEventByTypeSourceAndDataJson(
+        type: String,
+        source: String,
+        dataJson: String
+    ): TimelineEvent? = timelineEventDao?.getByTypeSourceAndDataJson(type, source, dataJson)
 
     fun getTimelineEventsByPlaceId(placeId: Long): Flow<List<TimelineEvent>> =
         timelineEventDao?.getByPlaceId(placeId)?.distinctUntilChanged()

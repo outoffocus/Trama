@@ -6,6 +6,7 @@ import android.content.res.Configuration
 import android.util.Log
 import com.trama.app.diagnostics.CaptureLog
 import com.trama.app.summary.GemmaClient
+import com.trama.app.summary.GoogleCalendarSyncManager
 import com.trama.app.summary.SummaryScheduler
 import com.trama.app.ui.SettingsDataStore
 import kotlinx.coroutines.CoroutineScope
@@ -22,6 +23,7 @@ class TramaApplication : Application() {
         super.onCreate()
         CaptureLog.init(applicationContext)
         scheduleDailySummaryIfEnabled()
+        syncSelectedCalendars()
         registerMemoryCallback()
     }
 
@@ -33,6 +35,12 @@ class TramaApplication : Application() {
                 val hour = settings.summaryHour.first()
                 SummaryScheduler.schedule(applicationContext, hour)
             }
+        }
+    }
+
+    private fun syncSelectedCalendars() {
+        appScope.launch {
+            GoogleCalendarSyncManager(applicationContext).syncSelectedCalendars()
         }
     }
 

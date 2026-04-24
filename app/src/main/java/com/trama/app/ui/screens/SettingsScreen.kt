@@ -3,6 +3,7 @@
 //  lifecycle-aware state management and enable testability. Requires dependency injection setup (Hilt).
 package com.trama.app.ui.screens
 
+import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.widget.Toast
@@ -98,7 +99,9 @@ import com.trama.app.speech.speaker.SherpaSpeakerVerificationManager
 import com.trama.app.speech.speaker.SpeakerEnrollmentStep
 import com.trama.app.service.ServiceController
 import com.trama.app.speech.IntentPattern
+import com.trama.app.summary.CalendarHelper
 import com.trama.app.summary.GemmaClient
+import com.trama.app.summary.GoogleCalendarSyncManager
 import com.trama.app.summary.GemmaModelManager
 import com.trama.app.summary.PromptTemplateStore
 import com.trama.app.summary.SummaryScheduler
@@ -139,6 +142,7 @@ fun SettingsScreen(
     val autoStart by settings.autoStart.collectAsState(initial = false)
     val summaryEnabled by settings.summaryEnabled.collectAsState(initial = true)
     val summaryHour by settings.summaryHour.collectAsState(initial = SettingsDataStore.DEFAULT_SUMMARY_HOUR)
+    val visibleCalendarIds by settings.visibleCalendarIds.collectAsState(initial = null)
     val intentPatterns by settings.intentPatterns.collectAsState(initial = IntentPattern.DEFAULTS)
 
     // Gemini API key
@@ -222,6 +226,11 @@ fun SettingsScreen(
     var modelExpanded by remember { mutableStateOf(false) }
     var speakerExpanded by remember { mutableStateOf(false) }
     var backupExpanded by remember { mutableStateOf(false) }
+    var readableCalendars by remember { mutableStateOf(emptyList<CalendarHelper.ReadableCalendar>()) }
+    var hasCalendarReadPermission by remember {
+        mutableStateOf(CalendarHelper.hasCalendarPermission(context))
+    }
+    var calendarImportInProgress by remember { mutableStateOf(false) }
     var speakerStateVersion by remember { mutableIntStateOf(0) }
     var speakerTrainingInProgress by remember { mutableStateOf(false) }
     var speakerRecordingInProgress by remember { mutableStateOf(false) }
@@ -311,6 +320,24 @@ fun SettingsScreen(
             }
         } else {
             Toast.makeText(context, "Permiso de ubicación denegado", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    val calendarPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        hasCalendarReadPermission = result[Manifest.permission.READ_CALENDAR] == true
+        if (!hasCalendarReadPermission) {
+            Toast.makeText(context, "Necesito acceso al calendario para filtrarlo", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    LaunchedEffect(hasCalendarReadPermission) {
+        if (hasCalendarReadPermission) {
+            readableCalendars = CalendarHelper.getReadableCalendars(context)
+                .filter { it.accountType == "com.google" }
+        } else {
+            readableCalendars = emptyList()
         }
     }
 
@@ -1125,6 +1152,156 @@ fun SettingsScreen(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
                     )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    SectionHeader("Google Calendar")
+
+                    if (!hasCalendarReadPermission) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                            ),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Text(
+                                    "Activa el acceso al calendario",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    "Así podrás elegir qué calendarios de Google importan eventos a Trama.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+                                FilledTonalButton(
+                                    onClick = {
+                                        calendarPermissionLauncher.launch(
+                                            arrayOf(
+                                                Manifest.permission.READ_CALENDAR,
+                                                Manifest.permission.WRITE_CALENDAR
+                                            )
+                                        )
+                                    },
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Text("Dar acceso")
+                                }
+                            }
+                        }
+                    } else {
+                        val effectiveSelectedIds = visibleCalendarIds ?: readableCalendars.map { it.id }.toSet()
+
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                            ),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Text(
+                                    "Elige qué calendarios se importan",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    "Los cambios solo aplican hacia adelante. Lo ya importado no se borra.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    FilledTonalButton(
+                                        onClick = {
+                                            scope.launch {
+                                                settings.setVisibleCalendarIds(readableCalendars.map { it.id }.toSet())
+                                                GoogleCalendarSyncManager(context).syncSelectedCalendars()
+                                            }
+                                        },
+                                        shape = RoundedCornerShape(10.dp)
+                                    ) {
+                                        Text("Todos")
+                                    }
+                                    OutlinedButton(
+                                        onClick = {
+                                            scope.launch {
+                                                settings.setVisibleCalendarIds(emptySet())
+                                            }
+                                        },
+                                        shape = RoundedCornerShape(10.dp)
+                                    ) {
+                                        Text("Ninguno")
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                OutlinedButton(
+                                    onClick = {
+                                        scope.launch {
+                                            calendarImportInProgress = true
+                                            try {
+                                                GoogleCalendarSyncManager(context).syncSelectedCalendars()
+                                                Toast.makeText(
+                                                    context,
+                                                    "Calendario sincronizado",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            } finally {
+                                                calendarImportInProgress = false
+                                            }
+                                        }
+                                    },
+                                    enabled = !calendarImportInProgress,
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    if (calendarImportInProgress) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(16.dp),
+                                            strokeWidth = 2.dp
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                    }
+                                    Text(if (calendarImportInProgress) "Importando..." else "Importar ahora")
+                                }
+
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                if (readableCalendars.isEmpty()) {
+                                    Text(
+                                        "No he encontrado calendarios legibles en el dispositivo.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                } else {
+                                    readableCalendars.forEach { calendar ->
+                                        CalendarSourceRow(
+                                            title = calendar.displayName,
+                                            subtitle = calendar.accountName.ifBlank { calendar.accountType.ifBlank { "Calendario local" } },
+                                            checked = calendar.id in effectiveSelectedIds,
+                                            onCheckedChange = { checked ->
+                                                val next = effectiveSelectedIds.toMutableSet().apply {
+                                                    if (checked) add(calendar.id) else remove(calendar.id)
+                                                }
+                                                scope.launch {
+                                                    settings.setVisibleCalendarIds(next)
+                                                    GoogleCalendarSyncManager(context).syncSelectedCalendars()
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -2035,6 +2212,39 @@ private fun SettingToggle(
             checked = checked,
             onCheckedChange = onCheckedChange,
             enabled = enabled
+        )
+    }
+}
+
+@Composable
+private fun CalendarSourceRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onCheckedChange(!checked) }
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium
+            )
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange
         )
     }
 }

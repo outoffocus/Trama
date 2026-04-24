@@ -77,7 +77,12 @@
       "Bash(tar -xf design -C extracted)",
       "Bash(./gradlew :app:testDebugUnitTest)",
       "Bash(./gradlew :app:testDebugUnitTest --tests \"*.IntentDetectorTest\" --tests \"*.IntentPatternTest\" --tests \"*.EntryCardLogicTest\")",
-      "Bash(./gradlew :app:testDebugUnitTest --tests \"*.RecordingProcessorTest.buildPrompt*\")"
+      "Bash(./gradlew :app:testDebugUnitTest --tests \"*.RecordingProcessorTest.buildPrompt*\")",
+      "Bash(./gradlew :app:testDebugUnitTest :shared:testDebugUnitTest)",
+      "Bash(./gradlew :app:testDebugUnitTest --tests \"com.trama.app.speech.IntentDetectorTest.custom keyword matching is case insensitive\" -i)",
+      "Bash(cp \"/Users/pabmon/.claude/projects/-Users-pabmon-Documents-Projects-TRAMA-Trama/f2071cf5-e528-4db9-9a9e-fedaf2cc5275/tool-results/webfetch-1776986158029-38251e.bin\" design.gz)",
+      "Bash(rm -rf extracted)",
+      "Bash(mkdir extracted *)"
     ]
   }
 }

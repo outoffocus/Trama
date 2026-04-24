@@ -9,6 +9,7 @@ import com.trama.shared.model.EntryStatus
 import com.trama.shared.model.Place
 import com.trama.shared.model.Recording
 import com.trama.shared.model.TimelineEvent
+import com.trama.shared.model.TimelineEventType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -72,7 +73,7 @@ class DailyPageGenerator(
         val duplicates = repository.getDuplicates().first()
         val recordings = repository.getAllRecordingsOnce().filter { it.createdAt in dayStartMillis..endOfDay }
         val timelineEvents = repository.getTimelineEventsByDateRangeOnce(dayStartMillis, endOfDay)
-        val calendarEvents = CalendarHelper.getEventsForRange(appContext, dayStartMillis, endOfDay)
+        val calendarEvents = timelineEvents.filter { it.type == TimelineEventType.CALENDAR }
         val places = resolveVisitedPlaces(dayStartMillis, endOfDay, timelineEvents)
 
         val tasksToReview = pending
@@ -169,10 +170,13 @@ class DailyPageGenerator(
                 appendLine("- Ninguno destacado")
             } else {
                 snapshot.calendarEvents.forEach { event ->
-                    appendLine("- ${event.toContextString()}")
+                    val timeLabel = event.endTimestamp?.let { end ->
+                        "${timeFormat.format(Date(event.timestamp))}-${timeFormat.format(Date(end))}"
+                    } ?: timeFormat.format(Date(event.timestamp))
+                    appendLine("- $timeLabel ${event.title}")
                 }
                 snapshot.timelineEvents
-                    .filter { it.placeId == null }
+                    .filter { it.placeId == null && it.type != TimelineEventType.CALENDAR }
                     .forEach { event ->
                         val time = timeFormat.format(Date(event.timestamp))
                         appendLine("- $time ${event.title}")
@@ -207,6 +211,6 @@ data class DailyReviewSnapshot(
     val placesToReview: List<Place>,
     val recordings: List<Recording>,
     val timelineEvents: List<TimelineEvent>,
-    val calendarEvents: List<CalendarHelper.CalendarEvent>,
+    val calendarEvents: List<TimelineEvent>,
     val summaryEntries: List<DiaryEntry>
 )

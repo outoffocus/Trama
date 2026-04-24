@@ -60,6 +60,7 @@ import com.trama.app.summary.ActionType
 import com.trama.app.summary.CalendarHelper
 import com.trama.app.summary.CalendarHelper.CalendarEvent
 import com.trama.app.summary.EntryActionBridge
+import com.trama.app.location.DwellDurationFormatter
 import com.trama.app.location.PlaceMapsLauncher
 import com.trama.app.ui.components.CalendarActionDialog
 import com.trama.app.ui.components.EntryCard
@@ -70,6 +71,7 @@ import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.EntryStatus
 import com.trama.shared.model.Recording
 import com.trama.shared.model.TimelineEvent
+import com.trama.shared.model.TimelineEventSource
 import com.trama.shared.model.TimelineEventType
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -446,6 +448,43 @@ internal fun LazyListScope.timelineListContent(
                 val context = LocalContext.current
                 val title = event.event.title
                 val isSelected = event.event.id in selectedEventIds
+                if (event.event.type == TimelineEventType.CALENDAR) {
+                    val body = buildString {
+                        event.event.endTimestamp?.let { end ->
+                            append(hourFormat.format(Date(event.timestamp)))
+                            append(" – ")
+                            append(hourFormat.format(Date(end)))
+                        }
+                        event.event.subtitle?.takeIf { it.isNotBlank() }?.let {
+                            if (isNotEmpty()) append("\n")
+                            append(it)
+                        }
+                    }
+                    TimelineStatusCard(
+                        modifier = itemModifier,
+                        eyebrow = if (event.event.source == TimelineEventSource.CALENDAR_IMPORT) "Google Calendar" else "Calendario",
+                        title = title,
+                        body = body,
+                        accent = accentConfig.calendar,
+                        meta = if (event.event.endTimestamp == null) hourFormat.format(Date(event.timestamp)) else null,
+                        isSelectionMode = isSelectionMode,
+                        isSelected = isSelected,
+                        onLongClick = if (onEnterEventSelectionMode != null && !isSelectionMode) {
+                            { onEnterEventSelectionMode(event.event.id) }
+                        } else null,
+                        onClick = if (isSelectionMode && onEventSelectionChange != null) {
+                            { onEventSelectionChange(event.event.id, !isSelected) }
+                        } else null,
+                        icon = {
+                            Icon(
+                                Icons.Default.CalendarMonth,
+                                contentDescription = null,
+                                tint = accentConfig.calendar
+                            )
+                        }
+                    )
+                    return@items
+                }
                 val accent = if (event.event.isHighlight) accentConfig.place
                              else accentConfig.place.copy(alpha = 0.82f)
                 TimelineStatusCard(
@@ -455,7 +494,11 @@ internal fun LazyListScope.timelineListContent(
                         else -> "Evento"
                     },
                     title = title,
-                    body = event.event.subtitle ?: "Evento automático",
+                    body = if (event.event.type == TimelineEventType.DWELL) {
+                        DwellDurationFormatter.formatHours(event.event.timestamp, event.event.endTimestamp)
+                    } else {
+                        event.event.subtitle ?: "Evento automático"
+                    },
                     accent = accent,
                     meta = hourFormat.format(Date(event.timestamp)),
                     isSelectionMode = isSelectionMode,
