@@ -132,4 +132,27 @@ class IntentDetectorTest {
             assertNotEquals("recordatorios", result.pattern?.id)
         }
     }
+
+    @Test
+    fun `rejects broad default triggers that caused ambient false positives`() {
+        assertNull(detector.detect("vamos a poner una luz"))
+        assertNull(detector.detect("voy a hablar como sale"))
+        assertNull(detector.detect("quiero mirar esto un momento"))
+    }
+
+    @Test
+    fun `detects explicit useful task triggers`() {
+        assertEquals("tareas", detector.detect("tienes que llamar a Pedro")?.pattern?.id)
+        assertEquals("tareas", detector.detect("hay que ir a Ourense mañana")?.pattern?.id)
+        assertEquals("recordatorios", detector.detect("tengo que acordarme de comprar leche")?.pattern?.id)
+    }
+
+    @Test
+    fun `detects explicit commitment triggers`() {
+        assertEquals("compromisos", detector.detect("pasado mañana tengo ITV")?.pattern?.id)
+        assertEquals("compromisos", detector.detect("tenemos reunión por la tarde")?.pattern?.id)
+        assertEquals("compromisos", detector.detect("quedé con Elena el viernes")?.pattern?.id)
+        assertEquals("compromisos", detector.detect("Lara tiene médico mañana")?.pattern?.id)
+        assertEquals("compromisos", detector.detect("tiene dentista el lunes")?.pattern?.id)
+    }
 }

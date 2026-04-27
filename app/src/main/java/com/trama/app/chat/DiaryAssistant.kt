@@ -8,6 +8,7 @@ import com.google.ai.client.generativeai.type.content
 import com.google.ai.client.generativeai.type.generationConfig
 import com.trama.app.GeminiConfig
 import com.trama.app.summary.GemmaClient
+import com.trama.shared.data.DiaryRepository
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -25,8 +26,14 @@ import java.util.Locale
  */
 class DiaryAssistant(
     private val context: Context,
-    private val contextBuilder: DiaryContextBuilder
+    private val contextBuilder: DiaryContextBuilder,
+    repository: DiaryRepository
 ) {
+
+    private val queryInterpreter = ChatQueryInterpreter()
+    private val contextRetriever = ChatContextRetriever(repository)
+    private val answerComposer = ChatAnswerComposer()
+    private val factsFormatter = ChatFactsFormatter()
 
     private val prefs
         get() = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -45,6 +52,9 @@ class DiaryAssistant(
     // ── Public API ────────────────────────────────────────────────────────────
 
     suspend fun send(userMessage: String): String {
+        val deterministic = tryDeterministicAnswer(userMessage)
+        if (deterministic != null) return deterministic
+
         // 1. Try Gemini Cloud
         val apiKey = getApiKey()
         if (!apiKey.isNullOrBlank()) {
@@ -78,6 +88,55 @@ class DiaryAssistant(
         cloudSession = null
         localHistory.clear()
         contextBuilder.invalidate()
+    }
+
+    private suspend fun tryDeterministicAnswer(userMessage: String): String? {
+        val query = queryInterpreter.interpret(userMessage)
+        if (query.intent == ChatIntent.UNKNOWN) return null
+
+        val retrieved = contextRetriever.retrieve(query) ?: return null
+        val factualAnswer = answerComposer.compose(query, retrieved) ?: return null
+        return tryGroundedLocalAnswer(query, retrieved, factualAnswer) ?: factualAnswer
+    }
+
+    private suspend fun tryGroundedLocalAnswer(
+        query: ChatQuery,
+        retrieved: ChatRetrievedContext,
+        factualAnswer: String
+    ): String? {
+        if (!GemmaClient.isModelAvailable(context)) return null
+
+        val facts = factsFormatter.format(query, retrieved)
+        val prompt = buildString {
+            appendLine("Responde en español usando SOLO los hechos proporcionados.")
+            appendLine("No inventes lugares, tiempos, fechas, opiniones ni tareas.")
+            appendLine("Si los hechos no bastan, dilo claramente.")
+            appendLine("Puedes inferir una conclusion suave como si un sitio gustó o no SOLO si hay rating u opinion.")
+            appendLine()
+            appendLine("[PREGUNTA]")
+            appendLine(query.rawQuestion)
+            appendLine()
+            appendLine("[HECHOS]")
+            appendLine(facts)
+            appendLine()
+            appendLine("[RESPUESTA FACTUAL BASE]")
+            appendLine(factualAnswer)
+            appendLine()
+            append("Respuesta final:")
+        }
+
+        return try {
+            GemmaClient.generate(
+                context = context,
+                prompt = prompt,
+                maxTokens = 256,
+                systemInstruction = "Eres un asistente personal riguroso. Resume y redacta usando solo hechos verificados."
+            )?.trim()
+                ?.takeIf { it.isNotBlank() }
+        } catch (t: Throwable) {
+            Log.w(TAG, "Grounded local answer failed: ${t.javaClass.simpleName}: ${t.message}")
+            null
+        }
     }
 
     // ── Gemini Cloud ──────────────────────────────────────────────────────────

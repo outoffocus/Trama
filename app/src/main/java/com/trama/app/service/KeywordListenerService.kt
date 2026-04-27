@@ -87,6 +87,7 @@ class KeywordListenerService : LifecycleService() {
         private const val BATTERY_THRESHOLD = 15
         private const val DEEP_SLEEP_THRESHOLD = 15
         private const val HIBERNATE_THRESHOLD = 30
+        private const val SERVICE_HEARTBEAT_MS = 15L * 60L * 1000L
 
     }
 
@@ -103,6 +104,7 @@ class KeywordListenerService : LifecycleService() {
     private lateinit var gateAsr: LightweightGateAsr
     private var contextualCaptureEngine: ContextualAudioCaptureEngine? = null
     private var contextualCaptureJob: Job? = null
+    private var serviceHeartbeatJob: Job? = null
     private var startupJob: Job? = null
     private var contextPreRollSeconds: Int = SettingsDataStore.DEFAULT_CONTEXT_PRE_ROLL
     private var contextPostRollSeconds: Int = SettingsDataStore.DEFAULT_CONTEXT_POST_ROLL
@@ -186,6 +188,7 @@ class KeywordListenerService : LifecycleService() {
 
     override fun onCreate() {
         super.onCreate()
+        logServiceEvent("onCreate")
         notifier.createChannels()
         initDatabase()
         settings = SettingsDataStore(applicationContext)
@@ -203,6 +206,7 @@ class KeywordListenerService : LifecycleService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
+        logServiceEvent("onStartCommand", meta = mapOf("startId" to startId, "flags" to flags))
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(
@@ -216,6 +220,7 @@ class KeywordListenerService : LifecycleService() {
 
         if (!ServiceController.shouldBeRunning(this)) {
             Log.i(TAG, "Service started but user toggled off — stopping")
+            logServiceEvent("stop_user_toggle_off", result = CaptureLog.Result.REJECT)
             stopSelf()
             return START_NOT_STICKY
         }
@@ -231,12 +236,14 @@ class KeywordListenerService : LifecycleService() {
             prewarmAsr()
             initRecognizerAndStart()
             MicCoordinator.sendPause(applicationContext)
+            startServiceHeartbeat()
         }
 
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     override fun onDestroy() {
+        logServiceEvent("onDestroy", result = CaptureLog.Result.REJECT)
         listening = false
         screenOff = false
         stopContextualCapture()
@@ -248,6 +255,8 @@ class KeywordListenerService : LifecycleService() {
         } catch (_: Exception) {}
         startupJob?.cancel()
         startupJob = null
+        serviceHeartbeatJob?.cancel()
+        serviceHeartbeatJob = null
         recognizer?.destroy()
         recognizer = null
 
@@ -431,6 +440,9 @@ class KeywordListenerService : LifecycleService() {
                 if (state == "gating" || state == "capturing") {
                     detectionState.resetForRearm()
                 }
+                if (state == "stalled") {
+                    logServiceEvent("audio_record_stalled", result = CaptureLog.Result.REJECT)
+                }
                 publishAsrDebug(engine = "${gateAsr.name} -> ${asrEngine.name}", status = humanReadableAsrState(state))
                 when (state) {
                     "capturing" -> notifier.updateForegroundIfChanged("Capturando contexto...")
@@ -456,6 +468,15 @@ class KeywordListenerService : LifecycleService() {
                 } else {
                     "gate descartado"
                 }
+                CaptureLog.event(
+                    gate = CaptureLog.Gate.ASR_GATE,
+                    result = if (matched) CaptureLog.Result.OK else CaptureLog.Result.NO_MATCH,
+                    text = transcript.ifBlank { null },
+                    meta = mapOf(
+                        "summary" to debugSummary,
+                        "reason" to reason
+                    )
+                )
                 publishAsrDebug(
                     status = if (matched) "trigger detectado" else "esperando trigger",
                     gateText = debugSummary.ifBlank { transcript.ifBlank { "sin transcripcion en gate" } },
@@ -611,6 +632,10 @@ class KeywordListenerService : LifecycleService() {
         if (dedicatedAsrFailedOver || !listening) return
         dedicatedAsrFailedOver = true
         Log.w(TAG, "Falling back to SpeechRecognizer after dedicated ASR failure", error)
+        logServiceEvent(
+            "fallback_to_speechrecognizer",
+            meta = mapOf("error" to error.javaClass.simpleName)
+        )
         asrEngine = NoOpAsrEngine()
         stopContextualCapture()
         notifier.updateForegroundIfChanged("Escuchando (fallback Android)")
@@ -966,6 +991,11 @@ class KeywordListenerService : LifecycleService() {
 
     private fun stopForLowBattery(reason: String) {
         Log.w(TAG, "Battery low ($batteryPct%), stopping listener [$reason]")
+        logServiceEvent(
+            "stop_low_battery",
+            result = CaptureLog.Result.REJECT,
+            meta = mapOf("reason" to reason)
+        )
         notifier.updateForegroundIfChanged("Pausado: batería baja")
         if (!batteryLowNoticeShown) {
             batteryLowNoticeShown = true
@@ -981,9 +1011,40 @@ class KeywordListenerService : LifecycleService() {
         stopSelf()
     }
 
+    private fun startServiceHeartbeat() {
+        if (serviceHeartbeatJob?.isActive == true) return
+        serviceHeartbeatJob = lifecycleScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                logServiceEvent("heartbeat")
+                delay(SERVICE_HEARTBEAT_MS)
+            }
+        }
+    }
+
+    private fun logServiceEvent(
+        state: String,
+        result: CaptureLog.Result = CaptureLog.Result.OK,
+        meta: Map<String, Any?> = emptyMap()
+    ) {
+        CaptureLog.event(
+            gate = CaptureLog.Gate.SERVICE,
+            result = result,
+            text = state,
+            meta = mapOf(
+                "listening" to listening,
+                "screenOff" to screenOff,
+                "speechRecognizerActive" to speechRecognizerActive,
+                "contextualJobActive" to (contextualCaptureJob?.isActive == true),
+                "batteryPct" to batteryPct,
+                "dedicatedAsrFailedOver" to dedicatedAsrFailedOver
+            ) + meta
+        )
+    }
+
     private fun isBatteryLow(): Boolean {
         val bm = getSystemService(BatteryManager::class.java)
         val level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         return level in 1 until BATTERY_THRESHOLD
     }
+
 }

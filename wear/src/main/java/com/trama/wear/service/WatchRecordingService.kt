@@ -188,12 +188,16 @@ class WatchRecordingService : LifecycleService() {
             ioScope.launch {
                 val repository = DatabaseProvider.getRepository(applicationContext)
                 val syncer = WatchToPhoneSyncer(applicationContext, repository)
+                val sampleCount = pcmBytes.size / 2
                 val metadata = WatchAudioSyncMetadata(
                     createdAt = startTimeMs,
                     durationSeconds = elapsed,
                     sampleRateHz = SAMPLE_RATE_HZ,
                     source = Source.WATCH.name,
-                    kind = "MANUAL_RECORDING"
+                    kind = "MANUAL_RECORDING",
+                    pcmByteCount = pcmBytes.size,
+                    pcmSampleCount = sampleCount,
+                    rms = rms(pcmBytes)
                 )
 
                 val success = runCatching {
@@ -295,5 +299,20 @@ class WatchRecordingService : LifecycleService() {
             chunk.forEach { sample -> buffer.putShort(sample) }
         }
         return buffer.array()
+    }
+
+    private fun rms(pcmBytes: ByteArray): Double {
+        val sampleCount = pcmBytes.size / 2
+        if (sampleCount <= 0) return 0.0
+        var sum = 0.0
+        var byteIndex = 0
+        repeat(sampleCount) {
+            val lo = pcmBytes[byteIndex].toInt() and 0xFF
+            val hi = pcmBytes[byteIndex + 1].toInt()
+            val sample = ((hi shl 8) or lo).toShort().toInt()
+            sum += sample.toDouble() * sample.toDouble()
+            byteIndex += 2
+        }
+        return kotlin.math.sqrt(sum / sampleCount)
     }
 }

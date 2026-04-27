@@ -11,5 +11,8 @@ data class WatchAudioSyncMetadata(
     val kind: String,
     val triggerText: String? = null,
     val intentId: String? = null,
-    val label: String? = null
+    val label: String? = null,
+    val pcmByteCount: Int? = null,
+    val pcmSampleCount: Int? = null,
+    val rms: Double? = null
 )

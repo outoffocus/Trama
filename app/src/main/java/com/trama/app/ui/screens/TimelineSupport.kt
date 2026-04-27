@@ -60,6 +60,7 @@ import com.trama.app.summary.ActionType
 import com.trama.app.summary.CalendarHelper
 import com.trama.app.summary.CalendarHelper.CalendarEvent
 import com.trama.app.summary.EntryActionBridge
+import com.trama.app.service.EntryProcessingState
 import com.trama.app.location.DwellDurationFormatter
 import com.trama.app.location.PlaceMapsLauncher
 import com.trama.app.ui.components.CalendarActionDialog
@@ -143,6 +144,7 @@ internal fun buildTimelineEvents(
 internal fun TimelineList(
     events: List<TimelineEventUi>,
     processingEntryIds: Set<Long>,
+    processingBackends: Map<Long, EntryProcessingState.Backend> = emptyMap(),
     accentConfig: TimelineAccentConfig,
     onEntryClick: (Long) -> Unit,
     onRecordingClick: (Long) -> Unit,
@@ -192,6 +194,7 @@ internal fun TimelineList(
         timelineListContent(
             events = events,
             processingEntryIds = processingEntryIds,
+            processingBackends = processingBackends,
             hourFormat = hourFormat,
             accentConfig = accentConfig,
             itemModifier = Modifier,
@@ -218,6 +221,7 @@ internal fun TimelineList(
 internal fun LazyListScope.timelineListContent(
     events: List<TimelineEventUi>,
     processingEntryIds: Set<Long>,
+    processingBackends: Map<Long, EntryProcessingState.Backend> = emptyMap(),
     hourFormat: SimpleDateFormat,
     accentConfig: TimelineAccentConfig,
     itemModifier: Modifier = Modifier,
@@ -351,6 +355,7 @@ internal fun LazyListScope.timelineListContent(
                             { onToggleComplete(event.entry) }
                         } else null,
                         isProcessing = event.entry.id in processingEntryIds,
+                        processingBackend = processingBackends[event.entry.id],
                         isSelectionMode = isSelectionMode,
                         isSelected = event.entry.id in selectedEntryIds
                     )

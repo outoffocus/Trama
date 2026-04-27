@@ -508,7 +508,10 @@ class WatchKeywordListenerService : LifecycleService() {
                     kind = "CONTEXTUAL_TRIGGER",
                     triggerText = capturedText,
                     intentId = intentId,
-                    label = label
+                    label = label,
+                    pcmByteCount = pcm.size * 2,
+                    pcmSampleCount = pcm.size,
+                    rms = rms(pcm)
                 )
 
                 runCatching {
@@ -735,7 +738,10 @@ class WatchKeywordListenerService : LifecycleService() {
                 kind = "CONTEXTUAL_TRIGGER",
                 triggerText = result.capturedText,
                 intentId = intentId,
-                label = result.label
+                label = result.label,
+                pcmByteCount = pcm.size * 2,
+                pcmSampleCount = pcm.size,
+                rms = rms(pcm)
             )
 
             runCatching {

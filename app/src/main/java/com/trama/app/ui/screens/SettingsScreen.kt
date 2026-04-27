@@ -78,6 +78,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import com.trama.app.diagnostics.CaptureLog
+import com.trama.app.diagnostics.DiagnosticsExportManager
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -252,6 +253,7 @@ fun SettingsScreen(
     // Backup state
     var backupInProgress by remember { mutableStateOf(false) }
     var backupLocationName by remember { mutableStateOf(AutoBackupWorker.getBackupFileName(context)) }
+    var diagnosticsExportInProgress by remember { mutableStateOf(false) }
 
     // SAF launchers — CreateDocument works with Google Drive (OpenDocumentTree doesn't)
     val backupFileSetupLauncher = rememberLauncherForActivityResult(
@@ -291,6 +293,26 @@ fun SettingsScreen(
                 Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
             }
             backupInProgress = false
+        }
+    }
+
+    val diagnosticsExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        scope.launch {
+            diagnosticsExportInProgress = true
+            try {
+                val summary = DiagnosticsExportManager.exportToUri(context, uri, repository)
+                Toast.makeText(
+                    context,
+                    "Diagnóstico exportado: ${summary.totalEntries} entradas, ${summary.totalEvents} eventos",
+                    Toast.LENGTH_LONG
+                ).show()
+            } catch (e: Exception) {
+                Toast.makeText(context, "Error diagnóstico: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+            diagnosticsExportInProgress = false
         }
     }
 
@@ -728,7 +750,12 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            CaptureDiagnosticsCard()
+            CaptureDiagnosticsCard(
+                exportInProgress = diagnosticsExportInProgress,
+                onExport = {
+                    diagnosticsExportLauncher.launch(DiagnosticsExportManager.fileName())
+                }
+            )
 
             SectionDivider()
             }
@@ -2738,7 +2765,10 @@ private fun TestPhraseDialog(
 }
 
 @Composable
-private fun CaptureDiagnosticsCard() {
+private fun CaptureDiagnosticsCard(
+    exportInProgress: Boolean,
+    onExport: () -> Unit
+) {
     var tick by remember { mutableIntStateOf(0) }
     val events = remember(tick) {
         CaptureLog.recentEvents(System.currentTimeMillis() - 24L * 60 * 60 * 1000)
@@ -2747,6 +2777,8 @@ private fun CaptureDiagnosticsCard() {
     val rows: List<Triple<String, String, Int>> = remember(events) {
         val grouped = events.groupingBy { it.gate to it.result }.eachCount()
         val order = listOf(
+            "ASR_GATE" to "OK",
+            "ASR_GATE" to "NO_MATCH",
             "ASR_FINAL" to "OK",
             "SPEAKER" to "OK",
             "SPEAKER" to "REJECT",
@@ -2754,6 +2786,8 @@ private fun CaptureDiagnosticsCard() {
             "INTENT" to "NO_MATCH",
             "DEDUP_MEM" to "DUP",
             "DEDUP_SEM" to "DUP",
+            "SERVICE" to "OK",
+            "SERVICE" to "REJECT",
             "LLM" to "OK",
             "LLM" to "REJECT",
             "SAVE" to "OK",
@@ -2764,6 +2798,8 @@ private fun CaptureDiagnosticsCard() {
     }
 
     val labels = mapOf(
+        "ASR_GATE" to "OK" to "Gate ligero con trigger",
+        "ASR_GATE" to "NO_MATCH" to "Gate ligero sin trigger",
         "ASR_FINAL" to "OK" to "Transcripciones ASR",
         "SPEAKER" to "OK" to "Speaker verificado",
         "SPEAKER" to "REJECT" to "Speaker rechazado",
@@ -2771,6 +2807,8 @@ private fun CaptureDiagnosticsCard() {
         "INTENT" to "NO_MATCH" to "Sin intent (ignorado)",
         "DEDUP_MEM" to "DUP" to "Duplicado (memoria)",
         "DEDUP_SEM" to "DUP" to "Duplicado (semántico)",
+        "SERVICE" to "OK" to "Servicio activo/heartbeat",
+        "SERVICE" to "REJECT" to "Servicio parado",
         "LLM" to "OK" to "LLM acepta tarea",
         "LLM" to "REJECT" to "LLM → revisión",
         "SAVE" to "OK" to "Entradas guardadas",
@@ -2802,7 +2840,15 @@ private fun CaptureDiagnosticsCard() {
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                TextButton(onClick = { tick++ }) { Text("Actualizar") }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TextButton(onClick = { tick++ }) { Text("Actualizar") }
+                    TextButton(
+                        onClick = onExport,
+                        enabled = !exportInProgress
+                    ) {
+                        Text(if (exportInProgress) "Exportando..." else "Exportar 72h")
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(10.dp))

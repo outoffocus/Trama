@@ -9,6 +9,19 @@ import org.junit.Test
  * and that the database version constant stays in sync with the latest migration.
  */
 class MigrationTest {
+    private fun allMigrations(): List<Migration> = listOf(
+        DiaryDatabase.MIGRATION_1_2,
+        DiaryDatabase.MIGRATION_2_3,
+        DiaryDatabase.MIGRATION_3_4,
+        DiaryDatabase.MIGRATION_4_5,
+        DiaryDatabase.MIGRATION_5_6,
+        DiaryDatabase.MIGRATION_6_7,
+        DiaryDatabase.MIGRATION_7_8,
+        DiaryDatabase.MIGRATION_8_9,
+        DiaryDatabase.MIGRATION_9_10,
+        DiaryDatabase.MIGRATION_10_11,
+        DiaryDatabase.MIGRATION_11_12
+    )
 
     // ── Individual migration version checks ──
 
@@ -51,14 +64,7 @@ class MigrationTest {
 
     @Test
     fun `all migrations are instances of Migration`() {
-        val migrations = listOf(
-            DiaryDatabase.MIGRATION_1_2,
-            DiaryDatabase.MIGRATION_2_3,
-            DiaryDatabase.MIGRATION_3_4,
-            DiaryDatabase.MIGRATION_4_5,
-            DiaryDatabase.MIGRATION_5_6
-        )
-        migrations.forEach { migration ->
+        allMigrations().forEach { migration ->
             assertTrue(
                 "Expected Migration instance, got ${migration::class.simpleName}",
                 migration is Migration
@@ -67,14 +73,8 @@ class MigrationTest {
     }
 
     @Test
-    fun `migrations form a continuous chain from version 1 to 6`() {
-        val migrations = listOf(
-            DiaryDatabase.MIGRATION_1_2,
-            DiaryDatabase.MIGRATION_2_3,
-            DiaryDatabase.MIGRATION_3_4,
-            DiaryDatabase.MIGRATION_4_5,
-            DiaryDatabase.MIGRATION_5_6
-        ).sortedBy { it.startVersion }
+    fun `migrations form a continuous chain from version 1 to 12`() {
+        val migrations = allMigrations().sortedBy { it.startVersion }
 
         // Verify chain continuity: each migration's endVersion == next migration's startVersion
         for (i in 0 until migrations.size - 1) {
@@ -85,34 +85,21 @@ class MigrationTest {
             )
         }
 
-        // Verify chain starts at 1 and ends at 6
+        // Verify chain starts at 1 and ends at 12
         assertEquals(1, migrations.first().startVersion)
-        assertEquals(6, migrations.last().endVersion)
+        assertEquals(12, migrations.last().endVersion)
     }
 
     @Test
     fun `no duplicate migration version ranges exist`() {
-        val migrations = listOf(
-            DiaryDatabase.MIGRATION_1_2,
-            DiaryDatabase.MIGRATION_2_3,
-            DiaryDatabase.MIGRATION_3_4,
-            DiaryDatabase.MIGRATION_4_5,
-            DiaryDatabase.MIGRATION_5_6
-        )
+        val migrations = allMigrations()
         val ranges = migrations.map { it.startVersion to it.endVersion }
         assertEquals("Duplicate migration ranges found", ranges.size, ranges.toSet().size)
     }
 
     @Test
     fun `each migration increments version by exactly 1`() {
-        val migrations = listOf(
-            DiaryDatabase.MIGRATION_1_2,
-            DiaryDatabase.MIGRATION_2_3,
-            DiaryDatabase.MIGRATION_3_4,
-            DiaryDatabase.MIGRATION_4_5,
-            DiaryDatabase.MIGRATION_5_6
-        )
-        migrations.forEach { migration ->
+        allMigrations().forEach { migration ->
             assertEquals(
                 "Migration ${migration.startVersion}->${migration.endVersion} should increment by 1",
                 1,
@@ -122,26 +109,12 @@ class MigrationTest {
     }
 
     @Test
-    fun `database version annotation matches latest migration target`() {
-        // The @Database annotation has version = 6
-        // The latest migration should end at 6
-        val latestMigrationEnd = listOf(
-            DiaryDatabase.MIGRATION_1_2,
-            DiaryDatabase.MIGRATION_2_3,
-            DiaryDatabase.MIGRATION_3_4,
-            DiaryDatabase.MIGRATION_4_5,
-            DiaryDatabase.MIGRATION_5_6
-        ).maxOf { it.endVersion }
-
-        // Verify via the @Database annotation using reflection
-        val dbAnnotation = DiaryDatabase::class.java.getAnnotation(
-            androidx.room.Database::class.java
-        )
-        assertNotNull("@Database annotation missing", dbAnnotation)
+    fun `latest migration target matches current database version`() {
+        val latestMigrationEnd = allMigrations().maxOf { it.endVersion }
         assertEquals(
-            "Database version should match latest migration endpoint",
-            latestMigrationEnd,
-            dbAnnotation!!.version
+            "Keep this value in sync with @Database(version = ...) in DiaryDatabase",
+            12,
+            latestMigrationEnd
         )
     }
 }

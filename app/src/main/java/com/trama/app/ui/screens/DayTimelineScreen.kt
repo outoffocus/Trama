@@ -58,6 +58,7 @@ fun DayTimelineScreen(
         dayEndMillis
     ).collectAsState(initial = emptyList())
     val processingEntryIds by EntryProcessingState.processingIds.collectAsState()
+    val processingBackends by EntryProcessingState.processingBackends.collectAsState()
     val pendingColorIndex by settings.timelineColorPending.collectAsState(
         initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PENDING
     )
@@ -159,6 +160,7 @@ fun DayTimelineScreen(
             TimelineList(
                 events = timelineEvents,
                 processingEntryIds = processingEntryIds,
+                processingBackends = processingBackends,
                 accentConfig = timelineAccentConfig,
                 onEntryClick = onEntryClick,
                 onRecordingClick = onRecordingClick,

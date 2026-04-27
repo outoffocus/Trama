@@ -28,6 +28,7 @@ object CaptureLog {
 
     /** Pipeline stage that emitted the event. */
     enum class Gate {
+        ASR_GATE,        // Lightweight gate ASR heard speech and checked triggers
         ASR_FINAL,       // Whisper produced a final transcript (always OK)
         SPEAKER,         // Speaker verification
         INTENT,          // Trigger / keyword match
@@ -35,7 +36,8 @@ object CaptureLog {
         DEDUP_SEM,       // Persisted semantic dedup (DuplicateHeuristics)
         LLM,             // ActionItemProcessor actionability gate
         SAVE,            // Final persistence
-        RECORDING        // RecordingProcessor outcome per recording
+        RECORDING,       // RecordingProcessor outcome per recording
+        SERVICE          // Foreground listener lifecycle / heartbeat
     }
 
     /** Outcome for the given gate. */
@@ -148,5 +150,5 @@ object CaptureLog {
         s.replace('\n', ' ').replace('\r', ' ').replace("\"", "'").trim()
 
     private const val RETENTION_MS = 72L * 60 * 60 * 1000 // 72h
-    private const val MAX_FILE_BYTES = 512L * 1024        // 512 KB — rotate opportunistically
+    private const val MAX_FILE_BYTES = 2L * 1024 * 1024   // 2 MB - rotate opportunistically
 }

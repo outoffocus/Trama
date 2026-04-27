@@ -101,6 +101,24 @@ class ActionItemProcessorTest {
     }
 
     @Test
+    fun `ir tasks are accepted as actionable`() {
+        val result = callPrivate<ActionItemProcessor.ProcessingResult>(
+            "buildProcessingResult",
+            "Mañana tengo que ir a casa de los padres de Lena",
+            "GENERIC",
+            "2026-04-26",
+            "NORMAL",
+            0.82f,
+            true,
+            null
+        )
+
+        assertTrue(result.isActionable)
+        assertEquals(0.82f, result.confidence, 0.001f)
+        assertNotNull(result.dueDate)
+    }
+
+    @Test
     fun `display trigger is added to cleaned task text`() {
         val result = callPrivate<ActionItemProcessor.ProcessingResult>(
             "buildProcessingResult",
@@ -132,6 +150,32 @@ class ActionItemProcessorTest {
 
         assertTrue(!result.isActionable)
         assertEquals(0.29f, result.confidence, 0.001f)
+    }
+
+    @Test
+    fun `conversation noise examples are rejected even if model marks actionable`() {
+        val phrases = listOf(
+            "No quería verla ahí. Ahí no escucho",
+            "Voy a hablar como sale",
+            "¿Te asiste esto?",
+            "¿No es barato?"
+        )
+
+        for (phrase in phrases) {
+            val result = callPrivate<ActionItemProcessor.ProcessingResult>(
+                "buildProcessingResult",
+                phrase,
+                "GENERIC",
+                null,
+                "NORMAL",
+                0.9f,
+                true,
+                null
+            )
+
+            assertTrue("Expected '$phrase' to be rejected", !result.isActionable)
+            assertEquals(0.29f, result.confidence, 0.001f)
+        }
     }
 
     @Test

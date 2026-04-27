@@ -35,9 +35,14 @@ Analiza esta nota de voz capturada y devuelve SOLO un objeto JSON valido.
 - Preserva la informacion importante: nombres propios, lugares, telefonos, numeros, cantidades y fechas.
 - No resumas en exceso. Es mejor mantener contexto util que perder precision.
 - Usa la transcripcion original como fuente principal de verdad si difiere del texto normalizado.
+- Primero clasifica la utilidad real para el usuario. Solo extrae tarea si merece aparecer en su lista de pendientes.
 
 Formato exacto:
 {
+  "kind": "TASK|NOTE|UNCLEAR|DISCARD",
+  "usefulnessScore": 0.0-1.0,
+  "actionabilityScore": 0.0-1.0,
+  "discardReason": "motivo breve o null",
   "isActionable": true|false,
   "cleanText": "texto accionable minimo util, sin el trigger inicial",
   "actionType": "CALL|BUY|SEND|EVENT|REVIEW|TALK_TO|GENERIC",
@@ -61,6 +66,15 @@ Formato exacto:
   ]
 }
 
+CLASIFICACION:
+- TASK: compromiso o cosa por hacer futura, clara, con intención pendiente + verbo accionable + objeto/persona/destino concreto. Solo TASK puede tener isActionable=true.
+- NOTE: memoria u observacion personal que puede tener valor, pero no es una tarea que se pueda completar.
+- UNCLEAR: podria ser importante, pero faltan palabras, objeto/persona/destino, o la transcripcion no permite decidir.
+- DISCARD: ruido, prueba de micro, frase rota, auto-charla, pregunta sobre la app, comentario casual sin valor futuro.
+- Ante la duda entre TASK y otra categoria, NO uses TASK.
+- usefulnessScore mide si merece mostrarse al usuario. actionabilityScore mide si se puede marcar como hecha.
+- Para NOTE, UNCLEAR o DISCARD: isActionable=false, confidence<=0.3, actionabilityScore<=0.3, extraActions=[].
+
 NO EXTRAER (isActionable=false, confidence<=0.3):
 - solo expresiones temporales o de frecuencia: "mañana", "hoy", "esta tarde", "todos los días", "a veces"
 - frases sin verbo de accion claro + objeto/persona/destino: "hay que ver", "sería bueno"
@@ -76,22 +90,32 @@ Ejemplos (SOLO para referencia — no son el input real):
 
 <example id="1">
 Input: "recuerdame que mañana tengo que llamar a Pedro"
-Output: {"isActionable": true, "cleanText": "Llamar a Pedro", "actionType": "CALL", "dueDate": "{{tomorrow}}", "priority": "NORMAL", "confidence": 0.9, ...}
+Output: {"kind":"TASK","usefulnessScore":0.95,"actionabilityScore":0.95,"discardReason":null,"isActionable": true, "cleanText": "Llamar a Pedro", "actionType": "CALL", "dueDate": "{{tomorrow}}", "priority": "NORMAL", "confidence": 0.9, ...}
 </example>
 
 <example id="2">
 Input: "mañana por la noche"
-Output: {"isActionable": false, "cleanText": "mañana por la noche", "actionType": "GENERIC", "dueDate": null, "priority": "NORMAL", "confidence": 0.2, ...}
+Output: {"kind":"UNCLEAR","usefulnessScore":0.2,"actionabilityScore":0.0,"discardReason":"solo expresion temporal","isActionable": false, "cleanText": "mañana por la noche", "actionType": "GENERIC", "dueDate": null, "priority": "NORMAL", "confidence": 0.2, ...}
 </example>
 
 <example id="3">
 Input: "tengo que comprar leche y pan"
-Output: {"isActionable": true, "cleanText": "Comprar leche y pan", "actionType": "BUY", "dueDate": null, "priority": "NORMAL", "confidence": 0.9, ...}
+Output: {"kind":"TASK","usefulnessScore":0.95,"actionabilityScore":0.95,"discardReason":null,"isActionable": true, "cleanText": "Comprar leche y pan", "actionType": "BUY", "dueDate": null, "priority": "NORMAL", "confidence": 0.9, ...}
 </example>
 
 <example id="4">
 Input: "hay que"
-Output: {"isActionable": false, "cleanText": "hay que", "actionType": "GENERIC", "dueDate": null, "priority": "NORMAL", "confidence": 0.1, ...}
+Output: {"kind":"UNCLEAR","usefulnessScore":0.1,"actionabilityScore":0.0,"discardReason":"fragmento incompleto","isActionable": false, "cleanText": "hay que", "actionType": "GENERIC", "dueDate": null, "priority": "NORMAL", "confidence": 0.1, ...}
+</example>
+
+<example id="5">
+Input: "no queria verla ahi. ahi no escucho"
+Output: {"kind":"DISCARD","usefulnessScore":0.0,"actionabilityScore":0.0,"discardReason":"frase conversacional sin tarea","isActionable":false,"cleanText":"no queria verla ahi. ahi no escucho","actionType":"GENERIC","dueDate":null,"priority":"NORMAL","confidence":0.1,"extraActions":[]}
+</example>
+
+<example id="6">
+Input: "me parecio interesante la reunion con Elena"
+Output: {"kind":"NOTE","usefulnessScore":0.6,"actionabilityScore":0.0,"discardReason":"observacion sin accion pendiente","isActionable":false,"cleanText":"me parecio interesante la reunion con Elena","actionType":"GENERIC","dueDate":null,"priority":"NORMAL","confidence":0.3,"extraActions":[]}
 </example>
 
 Reglas:
@@ -160,6 +184,7 @@ Analiza esta transcripcion de una grabacion de voz y devuelve SOLO un objeto JSO
 - No inventes hechos, fechas ni tareas.
 - Preserva nombres propios, lugares, telefonos, numeros, cantidades y fechas mencionadas.
 - Prioriza fidelidad y utilidad sobre estilo.
+- Tu objetivo NO es sacar algo a toda costa. Si el audio es charla accidental, prueba de micro, frase rota, duda o ruido, no extraigas acciones.
 
 Formato exacto:
 {
@@ -214,6 +239,8 @@ Reglas:
 - actionItems:
   - incluye solo tareas, compromisos o cosas por hacer mencionadas claramente
   - si no hay tareas, usa []
+  - una accion debe tener intencion pendiente clara + verbo accionable + objeto/persona/destino concreto
+  - NO conviertas frases conversacionales en tareas. Ejemplos que deben producir []: "no quería verla ahí. Ahí no escucho", "voy a hablar como sale", "¿te asiste esto?", "¿no es barato?"
   - text: accion minima util, pero sin perder nombres, lugares, numeros ni fechas relevantes
   - originalText: conserva el fragmento original o casi original que origina la accion
   - normalizedText: corrige transcripcion pero preserva entidades
@@ -272,6 +299,8 @@ Ejemplo: [{"text":"Llamar a Inés por el parque","type":"CALL","dateMentions":["
 Si no hay tareas, responde [].
 Tipos validos: CALL, BUY, SEND, EVENT, REVIEW, TALK_TO, GENERIC
 Reglas:
+- No extraigas nada por rellenar. Una tarea necesita intencion pendiente clara + verbo accionable + objeto/persona/destino concreto.
+- NO conviertas frases conversacionales, pruebas de micro, dudas o ruido en tareas. Ejemplos que deben dar []: "no quería verla ahí. Ahí no escucho", "voy a hablar como sale", "¿te asiste esto?", "¿no es barato?"
 - text debe ser minimo util, claro y accionable, pero sin perder nombres, lugares, telefonos, numeros ni fechas relevantes
 - corrige errores obvios de transcripcion
 - no inventes tareas

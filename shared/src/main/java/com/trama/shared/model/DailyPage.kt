@@ -10,6 +10,7 @@ data class DailyPage(
     val date: String,
     val status: String = DailyPageStatus.DRAFT,
     val briefSummary: String? = null,
+    val insightsJson: String = "",
     val markdown: String = "",
     val markdownPath: String? = null,
     val generatedAt: Long = System.currentTimeMillis(),

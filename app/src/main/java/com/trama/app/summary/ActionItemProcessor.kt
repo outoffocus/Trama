@@ -6,6 +6,7 @@ import com.google.ai.client.generativeai.GenerativeModel
 import com.trama.app.GeminiConfig
 import com.google.ai.client.generativeai.type.generationConfig
 import com.trama.app.diagnostics.CaptureLog
+import com.trama.app.service.EntryProcessingState
 import com.trama.shared.data.DiaryRepository
 import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.EntryActionType
@@ -38,6 +39,7 @@ class ActionItemProcessor(private val context: Context) {
         val recentContext = buildRecentContext(entryId, repository)
 
         val outcome = tryProcess(
+            entryId = entryId,
             originalText = originalText,
             normalizedInput = processingText,
             recentContext = recentContext
@@ -78,8 +80,11 @@ class ActionItemProcessor(private val context: Context) {
                     text = result.cleanText,
                     meta = mapOf(
                         "id" to entryId,
+                        "kind" to result.kind,
                         "actionType" to result.actionType,
-                        "confidence" to "%.2f".format(result.confidence)
+                        "confidence" to "%.2f".format(result.confidence),
+                        "usefulness" to "%.2f".format(result.usefulnessScore),
+                        "actionability" to "%.2f".format(result.actionabilityScore)
                     )
                 )
                 // Persist any extra actions the LLM extracted from the same note.
@@ -93,11 +98,11 @@ class ActionItemProcessor(private val context: Context) {
                     priority = result.priority,
                     confidence = result.confidence
                 )
-                markSuggestedOrDuplicate(entryId, result, repository)
+                routeRejected(entryId, result, repository)
                 Log.i(
                     TAG,
-                    "Routing entry $entryId to review queue: '${result.cleanText}' " +
-                        "(actionable=${result.isActionable}, confidence=${result.confidence})"
+                    "Routing entry $entryId after utility classification: '${result.cleanText}' " +
+                        "(kind=${result.kind}, actionable=${result.isActionable}, confidence=${result.confidence})"
                 )
                 CaptureLog.event(
                     gate = CaptureLog.Gate.LLM,
@@ -105,9 +110,13 @@ class ActionItemProcessor(private val context: Context) {
                     text = result.cleanText,
                     meta = mapOf(
                         "id" to entryId,
+                        "kind" to result.kind,
                         "isActionable" to result.isActionable,
                         "confidence" to "%.2f".format(result.confidence),
-                        "route" to "SUGGESTED"
+                        "usefulness" to "%.2f".format(result.usefulnessScore),
+                        "actionability" to "%.2f".format(result.actionabilityScore),
+                        "discardReason" to result.discardReason,
+                        "route" to if (result.kind == KIND_TASK) "SUGGESTED" else "DISCARDED"
                     )
                 )
                 return
@@ -132,7 +141,7 @@ class ActionItemProcessor(private val context: Context) {
                     priority = heuristicFallback.priority,
                     confidence = heuristicFallback.confidence
                 )
-                markSuggestedOrDuplicate(entryId, heuristicFallback, repository)
+                routeRejected(entryId, heuristicFallback, repository)
                 Log.i(
                     TAG,
                     "Routing heuristic fallback to review queue for entry $entryId: " +
@@ -209,6 +218,7 @@ class ActionItemProcessor(private val context: Context) {
     }
 
     private suspend fun tryProcess(
+        entryId: Long,
         originalText: String,
         normalizedInput: String,
         recentContext: String
@@ -217,6 +227,7 @@ class ActionItemProcessor(private val context: Context) {
         val apiKey = getApiKey()
         if (!apiKey.isNullOrBlank()) {
             try {
+                EntryProcessingState.updateBackend(entryId, EntryProcessingState.Backend.CLOUD)
                 return processWithCloud(originalText, normalizedInput, recentContext, apiKey)
             } catch (e: Exception) {
                 Log.w(TAG, "Cloud failed: ${e.javaClass.simpleName}", e)
@@ -226,6 +237,7 @@ class ActionItemProcessor(private val context: Context) {
         // Try local on-device model
         if (GemmaClient.isModelAvailable(context)) {
             try {
+                EntryProcessingState.updateBackend(entryId, EntryProcessingState.Backend.LOCAL)
                 return processWithLocalModel(originalText, normalizedInput, recentContext)
             } catch (e: Exception) {
                 Log.w(TAG, "Local model failed", e)
@@ -505,9 +517,14 @@ class ActionItemProcessor(private val context: Context) {
             priority = parsed.priority,
             confidence = parsed.confidence * confidenceMultiplier,
             modelIsActionable = parsed.isActionable,
+            kind = normalizeKind(parsed.kind, parsed.isActionable),
+            usefulnessScore = parsed.usefulnessScore,
+            actionabilityScore = parsed.actionabilityScore,
+            discardReason = parsed.discardReason,
             displayTrigger = displayTrigger
         )
-        val extras = parsed.extraActions
+        val extras = if (primary.kind == KIND_TASK) parsed.extraActions else emptyList()
+        val processingExtras = extras
             .filter { it.cleanText.isNotBlank() }
             .map { extra ->
                 buildProcessingResult(
@@ -519,12 +536,17 @@ class ActionItemProcessor(private val context: Context) {
                     // signals actionability at the top level.
                     confidence = parsed.confidence * confidenceMultiplier,
                     modelIsActionable = true,
+                    kind = KIND_TASK,
+                    usefulnessScore = primary.usefulnessScore,
+                    actionabilityScore = primary.actionabilityScore,
+                    discardReason = null,
                     displayTrigger = displayTrigger
                 )
             }
-        return LLMOutcome(primary = primary, extras = extras)
+        return LLMOutcome(primary = primary, extras = processingExtras)
     }
 
+    @Suppress("unused")
     private fun buildProcessingResult(
         cleanText: String,
         actionType: String,
@@ -533,13 +555,46 @@ class ActionItemProcessor(private val context: Context) {
         confidence: Float,
         modelIsActionable: Boolean,
         displayTrigger: String? = null
+    ): ProcessingResult = buildProcessingResult(
+        cleanText = cleanText,
+        actionType = actionType,
+        dueDate = dueDate,
+        priority = priority,
+        confidence = confidence,
+        modelIsActionable = modelIsActionable,
+        kind = if (modelIsActionable) KIND_TASK else KIND_UNCLEAR,
+        usefulnessScore = confidence,
+        actionabilityScore = if (modelIsActionable) confidence else 0f,
+        discardReason = null,
+        displayTrigger = displayTrigger
+    )
+
+    private fun buildProcessingResult(
+        cleanText: String,
+        actionType: String,
+        dueDate: String?,
+        priority: String,
+        confidence: Float,
+        modelIsActionable: Boolean,
+        kind: String = KIND_TASK,
+        usefulnessScore: Float? = null,
+        actionabilityScore: Float? = null,
+        discardReason: String? = null,
+        displayTrigger: String? = null
     ): ProcessingResult {
         val displayText = withDisplayTrigger(cleanText, displayTrigger)
         val validatedActionType = validateActionType(actionType)
+        val normalizedKind = normalizeKind(kind, modelIsActionable)
+        val effectiveUsefulness = usefulnessScore ?: confidence
+        val effectiveActionability = actionabilityScore ?: if (modelIsActionable) confidence else 0f
+        val modelAcceptsAsTask = normalizedKind == KIND_TASK &&
+            modelIsActionable &&
+            effectiveUsefulness >= USEFULNESS_THRESHOLD &&
+            effectiveActionability >= ACTIONABILITY_THRESHOLD
         val passesGate = isActionableAfterValidation(
             cleanText = displayText,
             actionType = validatedActionType,
-            modelIsActionable = modelIsActionable
+            modelIsActionable = modelAcceptsAsTask
         )
         val effectiveConfidence = if (!passesGate) minOf(confidence, 0.29f) else confidence
         return ProcessingResult(
@@ -548,7 +603,11 @@ class ActionItemProcessor(private val context: Context) {
             dueDate = parseDateString(dueDate),
             priority = validatePriority(priority),
             confidence = effectiveConfidence,
-            isActionable = passesGate
+            isActionable = passesGate,
+            kind = normalizedKind,
+            usefulnessScore = effectiveUsefulness,
+            actionabilityScore = effectiveActionability,
+            discardReason = discardReason
         )
     }
 
@@ -562,22 +621,24 @@ class ActionItemProcessor(private val context: Context) {
     private fun shouldAcceptAsTask(result: ProcessingResult): Boolean =
         result.isActionable && result.confidence >= ACTIONABLE_CONFIDENCE_THRESHOLD
 
-    private suspend fun markSuggestedOrDuplicate(
+    private suspend fun routeRejected(
         entryId: Long,
         result: ProcessingResult,
         repository: DiaryRepository
     ) {
-        val duplicate = DuplicateHeuristics.findLikelyDuplicate(
-            text = result.cleanText,
-            existing = repository.getRecentActiveForDedup(),
-            ignoreId = entryId,
-            newDueDate = result.dueDate
-        )
-        if (duplicate != null) {
-            repository.markDuplicate(entryId, duplicate.id)
-            Log.i(TAG, "Suggested entry $entryId hidden as duplicate of ${duplicate.id}: '${result.cleanText}'")
+        if (result.kind == KIND_TASK) {
+            repository.markSuggested(entryId)
+        } else {
+            repository.markDiscarded(entryId)
         }
-        repository.markSuggested(entryId)
+    }
+
+    private fun normalizeKind(kind: String?, modelIsActionable: Boolean): String {
+        val normalized = kind?.uppercase(Locale.getDefault())?.trim()
+        return when (normalized) {
+            KIND_TASK, KIND_NOTE, KIND_UNCLEAR, KIND_DISCARD -> normalized
+            else -> if (modelIsActionable) KIND_TASK else KIND_UNCLEAR
+        }
     }
 
     /**
@@ -639,43 +700,11 @@ class ActionItemProcessor(private val context: Context) {
         cleanText: String,
         actionType: String,
         modelIsActionable: Boolean
-    ): Boolean {
-        if (!modelIsActionable) return false
-        val normalized = cleanText
-            .lowercase(Locale.getDefault())
-            .trim()
-            .trim('.', ',', ';', ':', '!', '?', '¿', '¡', '-', ' ')
-        if (normalized.length < 6) return false
-        if (normalized in TEMPORAL_ONLY_PHRASES) return false
-        val tokens = normalized.split(Regex("\\s+")).filter { it.isNotBlank() }
-        if (tokens.size < 2) return false
-        // At least one non-temporal, non-stopword token of length ≥ 3
-        val meaningful = tokens.filter { it.length >= 3 && it !in TEMPORAL_TOKENS }
-        if (meaningful.isEmpty()) return false
-        if (actionType == EntryActionType.EVENT && hasEventSignal(normalized, tokens)) return true
-        // Must contain at least one known action verb — a reminder without a verb
-        // ("esa reunión mañana") is almost always a fragment, not a task.
-        if (!hasActionVerb(normalized)) return false
-        return true
-    }
-
-    private fun hasActionVerb(normalized: String): Boolean =
-        ManualActionSuggestionExtractor.ACTION_VERBS.any { verb ->
-            Regex("(?<![\\p{L}])${Regex.escape(verb)}(?![\\p{L}])").containsMatchIn(normalized)
-        }
-
-    private fun hasEventSignal(normalized: String, tokens: List<String>): Boolean {
-        val hasEventNoun = EVENT_NOUNS.any { noun ->
-            Regex("(?<![\\p{L}])${Regex.escape(noun)}(?![\\p{L}])").containsMatchIn(normalized)
-        }
-        if (!hasEventNoun) return false
-        return tokens.any { token ->
-            token.length >= 4 &&
-                token !in TEMPORAL_TOKENS &&
-                token !in EVENT_NOUNS &&
-                token !in EVENT_FILLER_TOKENS
-        }
-    }
+    ): Boolean = ActionQualityGate.isActionable(
+        cleanText = cleanText,
+        actionType = actionType,
+        modelIsActionable = modelIsActionable
+    )
 
     // ── Duplicate detection ──
 
@@ -796,6 +825,13 @@ Reglas:
 
         /** Minimum confidence for an LLM extraction to be accepted as a real task. */
         private const val ACTIONABLE_CONFIDENCE_THRESHOLD = 0.45f
+        private const val USEFULNESS_THRESHOLD = 0.65f
+        private const val ACTIONABILITY_THRESHOLD = 0.70f
+
+        private const val KIND_TASK = "TASK"
+        private const val KIND_NOTE = "NOTE"
+        private const val KIND_UNCLEAR = "UNCLEAR"
+        private const val KIND_DISCARD = "DISCARD"
 
         /** How many pending tasks to pass to the LLM as context. */
         private const val MAX_PENDING_CONTEXT = 40
@@ -806,41 +842,6 @@ Reglas:
         /** Radius for matching the active dwell anchor to a known place. */
         private const val PLACE_RADIUS_M = 80.0
 
-        /** Phrases that, when they constitute the whole cleanText, are not actionable. */
-        private val TEMPORAL_ONLY_PHRASES = setOf(
-            "mañana", "manana", "hoy", "ayer", "anoche",
-            "esta tarde", "esta noche", "esta mañana", "esta manana",
-            "mañana por la mañana", "manana por la manana",
-            "mañana por la tarde", "manana por la tarde",
-            "mañana por la noche", "manana por la noche",
-            "pasado mañana", "pasado manana",
-            "hay que", "tengo que", "deberia", "debería",
-            "recordar", "acordarme", "acordarnos",
-            "por la mañana", "por la manana", "por la tarde", "por la noche",
-            "todos los dias", "todos los días", "cada dia", "cada día",
-            "cada mañana", "cada manana", "cada tarde", "cada noche",
-            "a veces", "de vez en cuando"
-        )
-
-        /** Tokens that count as temporal/filler when evaluating whether a cleanText has real content. */
-        private val TEMPORAL_TOKENS = setOf(
-            "hoy", "ayer", "anoche", "mañana", "manana", "tarde", "noche",
-            "esta", "este", "pasado", "pasada",
-            "luego", "después", "despues", "antes",
-            "siempre", "nunca", "veces", "vez",
-            "todos", "todas", "cada", "los", "las", "el", "la",
-            "por", "de", "en", "a", "al", "del",
-            "que", "y", "o", "u"
-        )
-
-        private val EVENT_NOUNS = setOf(
-            "cita", "reunion", "reunión", "evento", "quedada", "reserva", "visita"
-        )
-
-        private val EVENT_FILLER_TOKENS = setOf(
-            "con", "para", "una", "uno", "unos", "unas",
-            "ese", "esa", "eso", "aquel", "aquella", "otro", "otra"
-        )
     }
 
     data class ProcessingResult(
@@ -849,11 +850,19 @@ Reglas:
         val dueDate: Long?,
         val priority: String,
         val confidence: Float,
-        val isActionable: Boolean = true
+        val isActionable: Boolean = true,
+        val kind: String = KIND_TASK,
+        val usefulnessScore: Float = 1f,
+        val actionabilityScore: Float = 1f,
+        val discardReason: String? = null
     )
 
     @Serializable
     private data class LLMResponse(
+        val kind: String? = null,
+        val usefulnessScore: Float? = null,
+        val actionabilityScore: Float? = null,
+        val discardReason: String? = null,
         val cleanText: String,
         val actionType: String = "GENERIC",
         val dueDate: String? = null,

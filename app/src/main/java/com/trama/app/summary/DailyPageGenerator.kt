@@ -24,6 +24,7 @@ class DailyPageGenerator(
     private val appContext = context.applicationContext
     private val repository = DatabaseProvider.getRepository(appContext)
     private val summaryGenerator = SummaryGenerator(appContext)
+    private val insightExtractor = DailyInsightExtractor()
     private val markdownStore = DailyPageMarkdownStore(appContext)
     private val dayFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
     private val longDateFormat = SimpleDateFormat("EEEE d 'de' MMMM 'de' yyyy", Locale("es"))
@@ -37,7 +38,9 @@ class DailyPageGenerator(
         val dateStr = dayFormat.format(Date(dayStartMillis))
         val llmSummary = summaryGenerator.generate(snapshot.summaryEntries, dateStr)
         val briefSummary = llmSummary.narrative.trim()
-        val markdown = buildMarkdown(snapshot, briefSummary)
+        val insights = insightExtractor.extract(snapshot)
+        val insightsJson = DailyInsightsCodec.encode(insights)
+        val markdown = buildMarkdown(snapshot, briefSummary, insights)
         val markdownPath = markdownStore.write(dayStartMillis, markdown)
         val existing = repository.getDailyPageOnce(dayStartMillis)
         val now = System.currentTimeMillis()
@@ -47,6 +50,7 @@ class DailyPageGenerator(
             date = dateStr,
             status = status,
             briefSummary = briefSummary,
+            insightsJson = insightsJson,
             markdown = markdown,
             markdownPath = markdownPath,
             generatedAt = existing?.generatedAt ?: now,
@@ -122,7 +126,11 @@ class DailyPageGenerator(
             .sortedByDescending { it.lastVisitAt ?: 0L }
     }
 
-    private fun buildMarkdown(snapshot: DailyReviewSnapshot, briefSummary: String): String {
+    private fun buildMarkdown(
+        snapshot: DailyReviewSnapshot,
+        briefSummary: String,
+        insights: DailyInsights
+    ): String {
         val headerDate = longDateFormat.format(Date(snapshot.dayStartMillis)).replaceFirstChar { it.uppercase() }
         val openTasks = snapshot.tasksToReview.filter { it.status == EntryStatus.PENDING && it !in snapshot.postponed }
 
@@ -131,6 +139,29 @@ class DailyPageGenerator(
             appendLine()
             appendLine("## Resumen")
             appendLine(briefSummary.ifBlank { "Dia registrado sin resumen narrativo." })
+            appendLine()
+
+            appendLine("## Insights")
+            appendLine("- Tiempo total registrado en lugares: ${formatMinutes(insights.totalTrackedMinutes)}")
+            insights.firstPlaceName?.let {
+                val arrival = insights.firstPlaceArrival?.let { ts -> timeFormat.format(Date(ts)) } ?: "sin hora"
+                appendLine("- Primer lugar: $it · $arrival")
+            }
+            insights.lastPlaceName?.let {
+                val arrival = insights.lastPlaceArrival?.let { ts -> timeFormat.format(Date(ts)) } ?: "sin hora"
+                appendLine("- Ultimo lugar: $it · $arrival")
+            }
+            appendLine("- Tareas creadas: ${insights.createdTaskCount}")
+            appendLine("- Tareas completadas: ${insights.completedTaskCount}")
+            appendLine("- Tareas abiertas: ${insights.openTaskCount}")
+            appendLine("- Tareas pospuestas: ${insights.postponedTaskCount}")
+            if (insights.placeDurations.isEmpty()) {
+                appendLine("- Sin tiempos por lugar")
+            } else {
+                insights.placeDurations.take(3).forEach { place ->
+                    appendLine("- ${place.placeName}: ${formatMinutes(place.durationMinutes)} en ${place.visitCount} visita(s)")
+                }
+            }
             appendLine()
 
             appendLine("## Tareas abiertas")
@@ -195,6 +226,16 @@ class DailyPageGenerator(
                     .take(10)
                     .forEach { appendLine("- Nota: ${it.displayText}") }
             }
+        }
+    }
+
+    private fun formatMinutes(totalMinutes: Long): String {
+        val hours = totalMinutes / 60
+        val minutes = totalMinutes % 60
+        return when {
+            hours > 0 && minutes > 0 -> "${hours} h ${minutes} min"
+            hours > 0 -> "${hours} h"
+            else -> "${minutes} min"
         }
     }
 }

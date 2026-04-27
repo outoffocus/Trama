@@ -6,6 +6,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -29,6 +34,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -41,6 +47,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -55,6 +62,8 @@ import com.trama.shared.model.EntryActionType
 import com.trama.shared.model.EntryPriority
 import com.trama.shared.model.EntryStatus
 import com.trama.shared.model.Source
+import com.trama.app.service.EntryProcessingState
+import com.trama.app.ui.theme.LocalTramaColors
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -84,6 +93,7 @@ fun EntryCard(
     isSelectionMode: Boolean = false,
     isSelected: Boolean = false,
     isProcessing: Boolean = false,
+    processingBackend: EntryProcessingState.Backend? = null,
     accentColor: Color? = null,
     modifier: Modifier = Modifier
 ) {
@@ -91,11 +101,15 @@ fun EntryCard(
     val dayTimeFormat = SimpleDateFormat("d MMM · HH:mm", Locale("es"))
     val isCompleted = entry.status == EntryStatus.COMPLETED
     val primaryText = entry.displayText.ifBlank { entry.text }
+    val t = LocalTramaColors.current
 
     val startOfToday = Calendar.getInstance().apply {
         set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
         set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
     }.timeInMillis
+    val dueLabel = remember(entry.dueDate, startOfToday) {
+        entry.dueDate?.let { formatDueLabel(it, startOfToday) }
+    }
 
     val cardColor by animateColorAsState(
         targetValue = when {
@@ -108,11 +122,15 @@ fun EntryCard(
 
     val priorityColor = when (entry.priority) {
         EntryPriority.URGENT -> MaterialTheme.colorScheme.error
-        EntryPriority.HIGH   -> MaterialTheme.colorScheme.tertiary
+        EntryPriority.HIGH   -> t.amber
         else                 -> accentColor ?: MaterialTheme.colorScheme.primary
     }
     val eventAccent = accentColor ?: MaterialTheme.colorScheme.primary
-    val processingBadge = rememberProcessingBadge(entry = entry, isProcessing = isProcessing)
+    val processingBadge = rememberProcessingBadge(
+        entry = entry,
+        isProcessing = isProcessing,
+        processingBackend = processingBackend
+    )
     val cardInteractionSource = remember { MutableInteractionSource() }
 
     Card(
@@ -197,11 +215,28 @@ fun EntryCard(
                         modifier       = Modifier.weight(1f)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text  = timeFormat.format(Date(entry.createdAt)),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.40f)
-                    )
+                    if (processingBadge != null) {
+                        ProcessingBadgeIcons(processingBadge)
+                    }
+                    if (processingBadge == null && dueLabel != null) {
+                        Text(
+                            text = dueLabel.text,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = when (dueLabel.urgency) {
+                                DueUrgency.Overdue -> t.red
+                                DueUrgency.Today -> t.warn
+                                DueUrgency.Future -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.52f)
+                            },
+                            maxLines = 1
+                        )
+                    } else if (processingBadge == null) {
+                        Text(
+                            text  = timeFormat.format(Date(entry.createdAt)),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.40f)
+                        )
+                    }
                 }
             }
 
@@ -243,24 +278,63 @@ fun EntryCard(
     }
 }
 
+private enum class DueUrgency { Overdue, Today, Future }
+
+private data class DueLabel(
+    val text: String,
+    val urgency: DueUrgency
+)
+
+private fun formatDueLabel(dueDate: Long, startOfToday: Long): DueLabel {
+    val oneDayMs = TimeUnit.DAYS.toMillis(1)
+    val startOfTomorrow = startOfToday + oneDayMs
+    val startOfDayAfterTomorrow = startOfTomorrow + oneDayMs
+
+    return when {
+        dueDate < startOfToday -> DueLabel("Vencida", DueUrgency.Overdue)
+        dueDate < startOfTomorrow -> DueLabel("Hoy", DueUrgency.Today)
+        dueDate < startOfDayAfterTomorrow -> DueLabel("Mañana", DueUrgency.Future)
+        else -> DueLabel(
+            SimpleDateFormat("d MMM", Locale("es")).format(Date(dueDate)),
+            DueUrgency.Future
+        )
+    }
+}
+
 // ── Processing badge helpers ─────────────────────────────────────────────────
 
 private data class ProcessingBadge(
     val icon: ImageVector,
     val tint: Color,
-    val contentDescription: String
+    val contentDescription: String,
+    val showSparkle: Boolean = false
 )
 
 @Composable
 private fun rememberProcessingBadge(
     entry: DiaryEntry,
-    isProcessing: Boolean
+    isProcessing: Boolean,
+    processingBackend: EntryProcessingState.Backend?
 ): ProcessingBadge? {
     if (isProcessing) {
+        val backend = processingBackend ?: EntryProcessingState.Backend.UNKNOWN
         return ProcessingBadge(
-            icon               = Icons.Default.AutoAwesome,
-            tint               = MaterialTheme.colorScheme.primary,
-            contentDescription = "Procesando"
+            icon = when (backend) {
+                EntryProcessingState.Backend.CLOUD -> Icons.Default.Cloud
+                EntryProcessingState.Backend.LOCAL -> Icons.Default.Smartphone
+                EntryProcessingState.Backend.UNKNOWN -> Icons.Default.AutoAwesome
+            },
+            tint = when (backend) {
+                EntryProcessingState.Backend.CLOUD -> MaterialTheme.colorScheme.primary.copy(alpha = 0.75f)
+                EntryProcessingState.Backend.LOCAL -> LocalTramaColors.current.teal.copy(alpha = 0.75f)
+                EntryProcessingState.Backend.UNKNOWN -> LocalTramaColors.current.amber.copy(alpha = 0.85f)
+            },
+            contentDescription = when (backend) {
+                EntryProcessingState.Backend.CLOUD -> "Procesando en la nube"
+                EntryProcessingState.Backend.LOCAL -> "Procesando en este móvil"
+                EntryProcessingState.Backend.UNKNOWN -> "Procesando"
+            },
+            showSparkle = true
         )
     }
 
@@ -280,10 +354,51 @@ private fun rememberProcessingBadge(
             contentDescription = "Procesado online"
         )
         isLocalProcessed -> ProcessingBadge(
-            icon               = Icons.Default.CloudOff,
+            icon               = Icons.Default.Smartphone,
             tint               = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
             contentDescription = "Procesado local"
         )
         else -> null
+    }
+}
+
+@Composable
+private fun ProcessingBadgeIcons(badge: ProcessingBadge) {
+    val sparkleAlpha = if (badge.showSparkle) {
+        val infinite = rememberInfiniteTransition(label = "entry-processing")
+        val alpha by infinite.animateFloat(
+            initialValue = 0.35f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 900),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "entry-processing-alpha"
+        )
+        alpha
+    } else {
+        1f
+    }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp)
+    ) {
+        Icon(
+            imageVector = badge.icon,
+            contentDescription = badge.contentDescription,
+            modifier = Modifier.size(14.dp),
+            tint = badge.tint
+        )
+        if (badge.showSparkle) {
+            Icon(
+                imageVector = Icons.Default.AutoAwesome,
+                contentDescription = null,
+                modifier = Modifier
+                    .size(13.dp)
+                    .alpha(sparkleAlpha),
+                tint = LocalTramaColors.current.amber.copy(alpha = 0.85f)
+            )
+        }
     }
 }

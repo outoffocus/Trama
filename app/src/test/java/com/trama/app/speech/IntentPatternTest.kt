@@ -117,7 +117,7 @@ class IntentPatternTest {
     @Test
     fun `DEFAULTS contains the current built-in categories`() {
         val ids = IntentPattern.DEFAULTS.map { it.id }
-        assertEquals(listOf("recordatorios", "tareas", "comunicacion"), ids)
+        assertEquals(listOf("recordatorios", "tareas", "comunicacion", "compromisos"), ids)
     }
 
     @Test

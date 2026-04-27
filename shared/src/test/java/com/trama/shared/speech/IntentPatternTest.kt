@@ -85,7 +85,7 @@ class IntentPatternTest {
         val reminders = restored.find { it.id == "recordatorios" }
         assertEquals("Custom Label", reminders?.label)
         assertTrue(restored.any { it.id == "trabajo" && it.isCustom })
-        assertEquals(2, restored.size)
+        assertEquals(IntentPattern.DEFAULTS.size + 1, restored.size)
     }
 
     @Test
@@ -99,7 +99,7 @@ class IntentPatternTest {
     @Test
     fun `DEFAULTS contains expected pattern IDs`() {
         val ids = IntentPattern.DEFAULTS.map { it.id }
-        assertEquals(listOf("recordatorios"), ids)
+        assertEquals(listOf("recordatorios", "tareas", "comunicacion", "compromisos"), ids)
     }
 
     @Test

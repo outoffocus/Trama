@@ -127,4 +127,35 @@ class IntentDetectorTest {
         assertNotNull(result)
         assertEquals("recordatorios", result!!.pattern?.id)
     }
+
+    @Test
+    fun `rejects broad conversational planning triggers`() {
+        assertNull(detector.detect("vamos a cenar y ponemos musica"))
+        assertNull(detector.detect("voy a hablar como sale"))
+        assertNull(detector.detect("quiero ver que pasa"))
+        assertNull(detector.detect("me gustaria que fuera distinto"))
+    }
+
+    @Test
+    fun `detects explicit actionable hay que forms`() {
+        assertEquals("tareas", detector.detect("hay que llamar a Elena mañana")?.pattern?.id)
+        assertEquals("tareas", detector.detect("hay que ir a la oficina")?.pattern?.id)
+        assertEquals("tareas", detector.detect("hay que comprar pan")?.pattern?.id)
+    }
+
+    @Test
+    fun `detects explicit memory forms`() {
+        assertEquals("recordatorios", detector.detect("tengo que acordarme de llevar las llaves")?.pattern?.id)
+        assertEquals("recordatorios", detector.detect("recuérdame que llame a Marta")?.pattern?.id)
+        assertEquals("recordatorios", detector.detect("acuérdate de pagar el recibo")?.pattern?.id)
+    }
+
+    @Test
+    fun `detects commitment and appointment triggers`() {
+        assertEquals("compromisos", detector.detect("mañana tengo la ITV")?.pattern?.id)
+        assertEquals("compromisos", detector.detect("tengo cita con el medico")?.pattern?.id)
+        assertEquals("compromisos", detector.detect("he quedado con Fabio esta noche")?.pattern?.id)
+        assertEquals("compromisos", detector.detect("mañana tiene médico por la tarde")?.pattern?.id)
+        assertEquals("compromisos", detector.detect("tiene cita en el dentista")?.pattern?.id)
+    }
 }

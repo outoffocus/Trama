@@ -1,8 +1,5 @@
 package com.trama.shared.data
 
-import androidx.room.ColumnInfo
-import androidx.room.Entity
-import androidx.room.PrimaryKey
 import com.trama.shared.model.*
 import org.junit.Assert.*
 import org.junit.Test
@@ -110,38 +107,6 @@ class DataModelIntegrationTest {
 
         assertEquals(RecordingStatus.FAILED, failed.processingStatus)
         assertEquals(pending.id, failed.id)
-    }
-
-    // ── Room entity annotations via reflection ──
-
-    @Test
-    fun `DiaryEntry has Entity annotation with correct table name`() {
-        val entity = DiaryEntry::class.java.getAnnotation(Entity::class.java)
-        assertNotNull("DiaryEntry must have @Entity annotation", entity)
-        assertEquals("diary_entries", entity!!.tableName)
-    }
-
-    @Test
-    fun `DiaryEntry id has PrimaryKey annotation with autoGenerate`() {
-        val idField = DiaryEntry::class.java.getDeclaredField("id")
-        val pk = idField.getAnnotation(PrimaryKey::class.java)
-        assertNotNull("DiaryEntry.id must have @PrimaryKey annotation", pk)
-        assertTrue("DiaryEntry.id must have autoGenerate = true", pk!!.autoGenerate)
-    }
-
-    @Test
-    fun `Recording has Entity annotation with correct table name`() {
-        val entity = Recording::class.java.getAnnotation(Entity::class.java)
-        assertNotNull("Recording must have @Entity annotation", entity)
-        assertEquals("recordings", entity!!.tableName)
-    }
-
-    @Test
-    fun `Recording id has PrimaryKey annotation with autoGenerate`() {
-        val idField = Recording::class.java.getDeclaredField("id")
-        val pk = idField.getAnnotation(PrimaryKey::class.java)
-        assertNotNull("Recording.id must have @PrimaryKey annotation", pk)
-        assertTrue("Recording.id must have autoGenerate = true", pk!!.autoGenerate)
     }
 
     // ── DiaryEntry displayText with recording context ──

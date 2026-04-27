@@ -34,12 +34,12 @@ class DiaryEntryTest {
     }
 
     @Test
-    fun `displayText prefers correctedText over text`() {
+    fun `displayText ignores correctedText when cleanText is absent`() {
         val entry = makeEntry(
             text = "orginal txt",
             correctedText = "original text"
         )
-        assertEquals("original text", entry.displayText)
+        assertEquals("orginal txt", entry.displayText)
     }
 
     @Test
@@ -53,13 +53,13 @@ class DiaryEntryTest {
     }
 
     @Test
-    fun `displayText uses correctedText when cleanText is null`() {
+    fun `displayText uses text when cleanText is null`() {
         val entry = makeEntry(
             text = "raw",
             correctedText = "corrected",
             cleanText = null
         )
-        assertEquals("corrected", entry.displayText)
+        assertEquals("raw", entry.displayText)
     }
 
     // ── Default values ───────────────────────────────────────────

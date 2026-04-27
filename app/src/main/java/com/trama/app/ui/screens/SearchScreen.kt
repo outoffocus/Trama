@@ -51,6 +51,7 @@ fun SearchScreen(
         else flowOf(emptyList())
     ).collectAsState(initial = null)
     val processingEntryIds by EntryProcessingState.processingIds.collectAsState()
+    val processingBackends by EntryProcessingState.processingBackends.collectAsState()
     val pendingColorIndex by settings.timelineColorPending.collectAsState(
         initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PENDING
     )
@@ -129,6 +130,7 @@ fun SearchScreen(
                             entry = entry,
                             accentColor = pendingAccent,
                             isProcessing = entry.id in processingEntryIds,
+                            processingBackend = processingBackends[entry.id],
                             onClick = { onEntryClick(entry.id) }
                         )
                     }

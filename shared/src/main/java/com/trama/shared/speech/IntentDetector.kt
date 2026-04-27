@@ -151,6 +151,10 @@ class IntentDetector {
     }
 
     private fun prefixNearMatch(normalizedText: String, trigger: String): Boolean {
+        // Prefix fuzziness is useful for single-word ASR slips ("recorda" →
+        // "recordar"), but dangerous for multi-word triggers: "tengo que
+        // acordarme de" would otherwise match any utterance containing "tengo".
+        if (trigger.contains(' ')) return false
         val joined = trigger.replace(" ", "")
         if (joined.length < FUZZY_PREFIX_LENGTH) return false
         val triggerPrefix = joined.take(FUZZY_PREFIX_LENGTH)

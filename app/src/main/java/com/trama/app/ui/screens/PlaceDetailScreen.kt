@@ -6,6 +6,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts.RequestPermission
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,14 +18,19 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.filled.Work
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -61,7 +68,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun PlaceDetailScreen(
     placeId: Long,
@@ -416,42 +423,50 @@ fun PlaceDetailScreen(
                 }
             }
 
-            Button(
-                onClick = {
-                    scope.launch {
-                        if (currentPlace.isHome) repository.clearHomePlace(currentPlace.id)
-                        else repository.markHomePlace(currentPlace.id)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilterChip(
+                    selected = currentPlace.isHome,
+                    onClick = {
+                        scope.launch {
+                            if (currentPlace.isHome) repository.clearHomePlace(currentPlace.id)
+                            else repository.markHomePlace(currentPlace.id)
+                        }
+                    },
+                    label = { Text("Casa") },
+                    leadingIcon = {
+                        Icon(Icons.Default.Home, contentDescription = null)
                     }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(if (currentPlace.isHome) "Quitar como casa" else "Marcar como casa")
-            }
-
-            Button(
-                onClick = {
-                    scope.launch {
-                        if (currentPlace.isWork) repository.clearWorkPlace(currentPlace.id)
-                        else repository.markWorkPlace(currentPlace.id)
+                )
+                FilterChip(
+                    selected = currentPlace.isWork,
+                    onClick = {
+                        scope.launch {
+                            if (currentPlace.isWork) repository.clearWorkPlace(currentPlace.id)
+                            else repository.markWorkPlace(currentPlace.id)
+                        }
+                    },
+                    label = { Text("Trabajo") },
+                    leadingIcon = {
+                        Icon(Icons.Default.Work, contentDescription = null)
                     }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(if (currentPlace.isWork) "Quitar como trabajo" else "Marcar como trabajo")
-            }
-
-            Button(
-                onClick = {
-                    PlaceMapsLauncher.openInGoogleMaps(
-                        context = context,
-                        latitude = currentPlace.latitude,
-                        longitude = currentPlace.longitude,
-                        label = currentPlace.name
-                    )
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Abrir en Google Maps")
+                )
+                AssistChip(
+                    onClick = {
+                        PlaceMapsLauncher.openInGoogleMaps(
+                            context = context,
+                            latitude = currentPlace.latitude,
+                            longitude = currentPlace.longitude,
+                            label = currentPlace.name
+                        )
+                    },
+                    label = { Text("Maps") },
+                    leadingIcon = {
+                        Icon(Icons.Default.Place, contentDescription = null)
+                    }
+                )
             }
 
             Spacer(modifier = Modifier.height(4.dp))

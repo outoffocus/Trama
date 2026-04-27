@@ -46,6 +46,7 @@ object ManualActionSuggestionExtractor {
         "reservar",
         "pedir",
         "recoger",
+        "ir",
         "escribir",
         "contestar",
         "avisar",

@@ -48,7 +48,6 @@ fun NavGraph() {
             HomeScreen(
                 onEntryClick = { entryId -> navController.navigate(Routes.detail(entryId)) },
                 onSettingsClick = { navController.navigate(Routes.SETTINGS) },
-                onSearchClick = { navController.navigate(Routes.SEARCH) },
                 onCalendarClick = { navController.navigate(Routes.calendar()) },
                 onChatClick = { navController.navigate(Routes.CHAT) },
                 onRecordingClick = { recordingId ->

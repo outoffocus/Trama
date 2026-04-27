@@ -50,13 +50,13 @@ object ServiceController {
             if (RecordingState.isRecording.value) {
                 RecordingState.stopRecording(context)
             }
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().putBoolean(KEY_SHOULD_RUN, true).commit()
             val intent = Intent(context, KeywordListenerService::class.java)
             ContextCompat.startForegroundService(context, intent)
             _isRunning.value = true
             _isWatchActive.value = false
             modeRef.set(ServiceMode.LISTENING)
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit().putBoolean(KEY_SHOULD_RUN, true).commit()
         }
     }
 

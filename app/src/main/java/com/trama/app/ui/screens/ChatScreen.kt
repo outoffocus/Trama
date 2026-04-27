@@ -86,7 +86,7 @@ fun ChatScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val repository = remember { DatabaseProvider.getRepository(context) }
     val contextBuilder = remember { DiaryContextBuilder(repository) }
-    val assistant = remember { DiaryAssistant(context, contextBuilder) }
+    val assistant = remember { DiaryAssistant(context, contextBuilder, repository) }
     val t = LocalTramaColors.current
 
     var messages by remember { mutableStateOf(listOf<ChatMessage>()) }

@@ -245,7 +245,19 @@ class RecordingProcessor(private val context: Context) {
             val items = json.decodeFromString<List<SimpleAction>>(cleaned)
             items.mapNotNull {
                 val text = it.text.trim()
-                if (text.isBlank()) null else ActionItem(text = text, actionType = it.type ?: "GENERIC")
+                val actionType = validateActionType(it.type ?: "GENERIC")
+                if (
+                    text.isBlank() ||
+                    !ActionQualityGate.isActionable(
+                        cleanText = text,
+                        actionType = actionType,
+                        modelIsActionable = true
+                    )
+                ) {
+                    null
+                } else {
+                    ActionItem(text = text, actionType = actionType)
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Simple actions parse failed: ${e.message}")
@@ -317,6 +329,11 @@ class RecordingProcessor(private val context: Context) {
         val displayTrigger = ManualActionSuggestionExtractor.leadingDisplayTrigger(transcription)
         for (action in result.actionItems) {
             val actionText = withDisplayTrigger(action.text, displayTrigger)
+            val actionType = validateActionType(action.actionType)
+            if (!ActionQualityGate.isActionable(cleanText = actionText, actionType = actionType)) {
+                Log.i(TAG, "Skipping non-actionable recording action: '$actionText' [${action.actionType}]")
+                continue
+            }
             val dueDate = action.dueDate?.let {
                 try { dateFormat.parse(it)?.time } catch (_: Exception) { null }
             }
@@ -339,7 +356,7 @@ class RecordingProcessor(private val context: Context) {
                 source = source,
                 duration = 0,
                 cleanText = actionText,
-                actionType = validateActionType(action.actionType),
+                actionType = actionType,
                 priority = validatePriority(action.priority),
                 dueDate = dueDate,
                 wasReviewedByLLM = true,

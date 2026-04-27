@@ -62,9 +62,8 @@ object WatchServiceController {
     }
 
     /**
-     * Remote handoff from the phone. If the watch app is not already visible,
-     * Wear OS may deny starting a microphone foreground service; keep the phone
-     * in charge instead of crashing the watch process.
+     * Remote handoff from the phone. This arrives through MessageClient, which
+     * gives us the same short launch window used by RESUME.
      */
     fun startFromRemote(context: Context) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -77,7 +76,7 @@ object WatchServiceController {
             context = context,
             reason = "remote-start",
             bypassCooldown = true,
-            allowBackgroundStart = false
+            allowBackgroundStart = true
         )
     }
 
@@ -103,7 +102,19 @@ object WatchServiceController {
             return
         }
         _isPhoneActive.value = false
-        RecordingController.startRecording(context)
+        try {
+            RecordingController.startRecording(context)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to start watch recording", e)
+            _isPhoneActive.value = true
+            scope.launch {
+                MicCoordinator.sendWatchDebug(
+                    context.applicationContext,
+                    "grabación no arrancó · teléfono toma relevo"
+                )
+                sendResumeToPhone(context.applicationContext)
+            }
+        }
     }
 
     /**

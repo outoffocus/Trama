@@ -58,7 +58,6 @@ import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
@@ -156,7 +155,6 @@ private val MANUAL_CATEGORIES = listOf(
 fun HomeScreen(
     onEntryClick: (Long) -> Unit,
     onSettingsClick: () -> Unit,
-    onSearchClick: () -> Unit,
     onCalendarClick: () -> Unit = {},
     onChatClick: () -> Unit = {},
     onRecordingClick: (Long) -> Unit = {},
@@ -186,6 +184,7 @@ fun HomeScreen(
     val savedRecordingId by RecordingState.savedRecordingId.collectAsState()
     val lastError by RecordingState.lastError.collectAsState()
     val processingEntryIds by EntryProcessingState.processingIds.collectAsState()
+    val processingBackends by EntryProcessingState.processingBackends.collectAsState()
     val pendingColorIndex by settings.timelineColorPending.collectAsState(
         initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PENDING
     )
@@ -320,10 +319,16 @@ fun HomeScreen(
     val visiblePendingEntries = pendingEntries
     val pastDayEntries = visiblePendingEntries.filter { entry ->
         val due = entry.dueDate
-        entry.createdAt < startOfDay || (due != null && due < startOfDay)
+        if (due != null) due < startOfDay else entry.createdAt < startOfDay
     }
     val pastDayIds = pastDayEntries.map { it.id }.toSet()
-    val todayEntries = visiblePendingEntries.filter { it.createdAt >= startOfDay && it.id !in pastDayIds }
+    val todayEntries = visiblePendingEntries.filter { entry ->
+        val due = entry.dueDate
+        entry.id !in pastDayIds && (
+            entry.createdAt >= startOfDay ||
+                (due != null && due <= endOfDay)
+        )
+    }
     val olderEntries = pastDayEntries
     val completedTodayEntries = completedEntries.filter { (it.completedAt ?: 0L) >= startOfDay }
     val todayRecordings = recordings.filter { it.createdAt >= startOfDay }
@@ -514,7 +519,6 @@ fun HomeScreen(
                     locationRunning = locationRunning,
                     onAddClick = { showAddDialog = true },
                     onChatClick = onChatClick,
-                    onSearchClick = onSearchClick,
                     onSettingsClick = onSettingsClick,
                 )
             }
@@ -642,31 +646,6 @@ fun HomeScreen(
                     contentPadding = PaddingValues(vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    if (duplicateEntries.isNotEmpty()) {
-                        item(key = "header_duplicates") {
-                            SectionHeader(
-                                "Posibles duplicados",
-                                duplicateEntries.size,
-                                MaterialTheme.colorScheme.tertiary,
-                                expanded = duplicatesExpanded,
-                                onToggle = { duplicatesExpanded = !duplicatesExpanded },
-                                modifier = Modifier.padding(horizontal = 16.dp)
-                            )
-                        }
-                        if (duplicatesExpanded) {
-                            items(duplicateEntries, key = { "dup_${it.id}" }) { entry ->
-                                val originalEntry = allPendingEntries.find { it.id == entry.duplicateOfId }
-                                DuplicateCard(
-                                    entry = entry,
-                                    originalText = originalEntry?.displayText,
-                                    onKeep = { scope.launch { repository.clearDuplicate(entry.id) } },
-                                    onDelete = { scope.launch { repository.deleteById(entry.id); syncDeleted(entry) } },
-                                    modifier = Modifier.padding(horizontal = 16.dp)
-                                )
-                            }
-                        }
-                    }
-
                     if (suggestedEntries.isNotEmpty()) {
                         item(key = "header_suggested") {
                             SectionHeader(
@@ -695,36 +674,25 @@ fun HomeScreen(
                         }
                     }
 
-                    if (olderEntries.isNotEmpty()) {
-                        item(key = "header_older") {
+                    if (duplicateEntries.isNotEmpty()) {
+                        item(key = "header_duplicates") {
                             SectionHeader(
-                                "Días pasados",
-                                olderEntries.size,
-                                MaterialTheme.colorScheme.onSurfaceVariant,
-                                expanded = olderExpanded,
-                                onToggle = { olderExpanded = !olderExpanded },
+                                "Posibles duplicados",
+                                duplicateEntries.size,
+                                MaterialTheme.colorScheme.tertiary,
+                                expanded = duplicatesExpanded,
+                                onToggle = { duplicatesExpanded = !duplicatesExpanded },
                                 modifier = Modifier.padding(horizontal = 16.dp)
                             )
                         }
-                        if (olderExpanded) {
-                            items(olderEntries, key = { "older_${it.id}" }) { entry ->
-                                EntryCardItem(
+                        if (duplicatesExpanded) {
+                            items(duplicateEntries, key = { "dup_${it.id}" }) { entry ->
+                                val originalEntry = allPendingEntries.find { it.id == entry.duplicateOfId }
+                                DuplicateCard(
                                     entry = entry,
-                                    accentColor = timelineAccentConfig.pending,
-                                    selectionMode = selectionMode,
-                                    selectedIds = selectedIds,
-                                    onEntryClick = onEntryClick,
-                                    isProcessing = entry.id in processingEntryIds,
-                                    onToggleComplete = { markEntryDoneWithUndo(entry) },
-                                    onPostpone = { dueDate, label -> postponeEntryWithUndo(entry, dueDate, label) },
-                                    onSelectionChange = { id, sel ->
-                                        selectedIds = if (sel) selectedIds + id else selectedIds - id
-                                        if (selectedIds.isEmpty()) selectionMode = false
-                                    },
-                                    onEnterSelectionMode = {
-                                        selectionMode = true
-                                        selectedIds = setOf(entry.id)
-                                    },
+                                    originalText = originalEntry?.displayText,
+                                    onKeep = { scope.launch { repository.clearDuplicate(entry.id) } },
+                                    onDelete = { scope.launch { repository.deleteById(entry.id); syncDeleted(entry) } },
                                     modifier = Modifier.padding(horizontal = 16.dp)
                                 )
                             }
@@ -745,6 +713,7 @@ fun HomeScreen(
                         timelineListContent(
                             events = timelineEvents,
                             processingEntryIds = processingEntryIds,
+                            processingBackends = processingBackends,
                             hourFormat = SimpleDateFormat("HH:mm", Locale.getDefault()),
                             accentConfig = timelineAccentConfig,
                             itemModifier = Modifier.padding(horizontal = 16.dp),
@@ -785,6 +754,43 @@ fun HomeScreen(
                         )
                     }
 
+                    if (olderEntries.isNotEmpty()) {
+                        item(key = "header_older") {
+                            SectionHeader(
+                                "Días pasados",
+                                olderEntries.size,
+                                MaterialTheme.colorScheme.onSurfaceVariant,
+                                expanded = olderExpanded,
+                                onToggle = { olderExpanded = !olderExpanded },
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            )
+                        }
+                        if (olderExpanded) {
+                            items(olderEntries, key = { "older_${it.id}" }) { entry ->
+                                EntryCardItem(
+                                    entry = entry,
+                                    accentColor = timelineAccentConfig.pending,
+                                    selectionMode = selectionMode,
+                                    selectedIds = selectedIds,
+                                    onEntryClick = onEntryClick,
+                                    isProcessing = entry.id in processingEntryIds,
+                                    processingBackend = processingBackends[entry.id],
+                                    onToggleComplete = { markEntryDoneWithUndo(entry) },
+                                    onPostpone = { dueDate, label -> postponeEntryWithUndo(entry, dueDate, label) },
+                                    onSelectionChange = { id, sel ->
+                                        selectedIds = if (sel) selectedIds + id else selectedIds - id
+                                        if (selectedIds.isEmpty()) selectionMode = false
+                                    },
+                                    onEnterSelectionMode = {
+                                        selectionMode = true
+                                        selectedIds = setOf(entry.id)
+                                    },
+                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                )
+                            }
+                        }
+                    }
+
                     if (completedTodayEntries.isNotEmpty()) {
                         item(key = "header_completed") {
                             SectionHeader(
@@ -803,6 +809,7 @@ fun HomeScreen(
                                     entry = entry,
                                     accentColor = timelineAccentConfig.completed,
                                     isProcessing = entry.id in processingEntryIds,
+                                    processingBackend = processingBackends[entry.id],
                                     onClick = {
                                         if (selectionMode) {
                                             val sel = entry.id !in selectedIds
@@ -838,7 +845,6 @@ private fun HomeHeader(
     locationRunning: Boolean,
     onAddClick: () -> Unit,
     onChatClick: () -> Unit,
-    onSearchClick: () -> Unit,
     onSettingsClick: () -> Unit,
 ) {
     val t = LocalTramaColors.current
@@ -867,9 +873,6 @@ private fun HomeHeader(
                 }
                 IconButton(onClick = onChatClick) {
                     Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = "Asistente", tint = t.teal)
-                }
-                IconButton(onClick = onSearchClick) {
-                    Icon(Icons.Default.Search, contentDescription = "Buscar")
                 }
                 IconButton(onClick = onSettingsClick) {
                     Icon(Icons.Default.Settings, contentDescription = "Ajustes")
@@ -901,6 +904,7 @@ private fun EntryCardItem(
     selectedIds: Set<Long>,
     onEntryClick: (Long) -> Unit,
     isProcessing: Boolean,
+    processingBackend: EntryProcessingState.Backend? = null,
     onToggleComplete: () -> Unit,
     onPostpone: (Long, String) -> Unit,
     onSelectionChange: (Long, Boolean) -> Unit,
@@ -970,6 +974,7 @@ private fun EntryCardItem(
             isSelectionMode = selectionMode,
             isSelected = entry.id in selectedIds,
             isProcessing = isProcessing,
+            processingBackend = processingBackend,
             onToggleComplete = onToggleComplete,
             onQuickActionClick = quickAction?.let { action ->
                 {
@@ -1061,12 +1066,24 @@ private fun HomeCenterMic(
         }
 
         val micInteraction = remember { MutableInteractionSource() }
-        val bg = when {
-            isRecording -> t.red
-            watchActive -> t.watch
-            serviceRunning -> t.amber
-            else -> t.dimText
-        }
+    val bg = when {
+        isRecording -> t.red
+        watchActive -> t.watch
+        serviceRunning -> t.amber
+        else -> t.dimText
+    }
+    val micLabel = when {
+        isRecording -> "Grabando"
+        watchActive -> "En reloj"
+        serviceRunning -> "Escuchando"
+        else -> "Inactivo"
+    }
+    val micLabelColor = when {
+        isRecording -> t.red
+        watchActive -> t.watch
+        serviceRunning -> t.amber
+        else -> t.mutedText
+    }
         Surface(
             modifier = Modifier.combinedClickable(
                 interactionSource = micInteraction,
@@ -1101,6 +1118,12 @@ private fun HomeCenterMic(
                 )
             }
         }
+        Text(
+            text = micLabel.uppercase(),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = micLabelColor
+        )
     }
 }
 

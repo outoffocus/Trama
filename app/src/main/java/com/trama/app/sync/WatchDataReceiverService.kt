@@ -244,18 +244,38 @@ class WatchDataReceiverService : WearableListenerService() {
                 // which then fools the LLM into thinking the recording has content.
                 val rms = sqrt(pcm.sumOf { it.toLong() * it.toLong() }.toDouble() / pcm.size)
                 val durationSec = pcm.size.toFloat() / metadata.sampleRateHz
+                val expectedBytes = metadata.pcmByteCount
+                val expectedSamples = metadata.pcmSampleCount
+                val byteDelta = expectedBytes?.let { pcmBytes.size - it }
+                val sampleDelta = expectedSamples?.let { pcm.size - it }
                 // Peak amplitude reveals silent-with-noise-floor captures that still
                 // meet the RMS threshold (low signal + constant low noise).
                 val peak = pcm.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
                 Log.i(
                     TAG,
                     "Watch audio received: ${pcm.size} samples (${"%.1f".format(durationSec)}s) " +
-                        "@${metadata.sampleRateHz}Hz, RMS=${"%.1f".format(rms)}, peak=$peak, " +
-                        "kind=${metadata.kind}, source=${metadata.source}"
+                        "@${metadata.sampleRateHz}Hz, ${pcmBytes.size} bytes, " +
+                        "RMS=${"%.1f".format(rms)}, peak=$peak, " +
+                        "kind=${metadata.kind}, source=${metadata.source}, " +
+                        "expected=${expectedSamples ?: "?"} samples/${expectedBytes ?: "?"} bytes"
                 )
 
+                if (byteDelta != null && byteDelta != 0 || sampleDelta != null && sampleDelta != 0) {
+                    Log.w(
+                        TAG,
+                        "Watch PCM payload size mismatch: byteDelta=${byteDelta ?: "?"}, " +
+                            "sampleDelta=${sampleDelta ?: "?"}, watchRms=${metadata.rms ?: "?"}, " +
+                            "phoneRms=${"%.1f".format(rms)}"
+                    )
+                }
+
                 if (rms < MIN_AUDIO_RMS) {
-                    Log.w(TAG, "Watch audio too quiet (RMS=${"%.1f".format(rms)} < $MIN_AUDIO_RMS), skipping — mic may not be capturing speech")
+                    Log.w(TAG, "Watch audio too quiet (RMS=${"%.1f".format(rms)} < $MIN_AUDIO_RMS), saving failed recording for inspection")
+                    saveFailedWatchRecording(
+                        metadata = metadata,
+                        repository = repository,
+                        reason = "[Audio del reloj recibido sin voz util]"
+                    )
                     return@launch
                 }
 
@@ -312,6 +332,24 @@ class WatchDataReceiverService : WearableListenerService() {
         }
     }
 
+    private suspend fun saveFailedWatchRecording(
+        metadata: WatchAudioSyncMetadata,
+        repository: DiaryRepository,
+        reason: String
+    ) {
+        if (repository.existsRecordingByCreatedAt(metadata.createdAt)) return
+        repository.insertRecording(
+            Recording(
+                transcription = reason,
+                durationSeconds = metadata.durationSeconds,
+                source = Source.valueOf(metadata.source),
+                createdAt = metadata.createdAt,
+                processingStatus = RecordingStatus.FAILED,
+                isSynced = true
+            )
+        )
+    }
+
     private suspend fun handleContextualWatchCapture(
         metadata: WatchAudioSyncMetadata,
         transcript: String,
@@ -319,7 +357,13 @@ class WatchDataReceiverService : WearableListenerService() {
     ) {
         val text = transcript.trim()
         if (text.isBlank()) {
-            Log.w(TAG, "Contextual watch capture produced empty transcript; not creating recording or entry")
+            Log.w(TAG, "Contextual watch capture produced empty transcript; saving failed recording for inspection")
+            saveFailedWatchRecording(
+                metadata = metadata,
+                repository = repository,
+                reason = metadata.triggerText?.takeIf { it.isNotBlank() }
+                    ?: "[Audio contextual del reloj sin transcripcion]"
+            )
             return
         }
 
