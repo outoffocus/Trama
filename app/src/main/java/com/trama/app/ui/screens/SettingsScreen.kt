@@ -2798,7 +2798,7 @@ private fun CaptureDiagnosticsCard(
     }
 
     val labels = mapOf(
-        "ASR_GATE" to "OK" to "Gate ligero con trigger",
+        "ASR_GATE" to "OK" to "Gate aceptado/fallback",
         "ASR_GATE" to "NO_MATCH" to "Gate ligero sin trigger",
         "ASR_FINAL" to "OK" to "Transcripciones ASR",
         "SPEAKER" to "OK" to "Speaker verificado",

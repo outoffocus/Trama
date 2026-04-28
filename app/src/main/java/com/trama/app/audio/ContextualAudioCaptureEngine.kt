@@ -74,6 +74,7 @@ class ContextualAudioCaptureEngine(
     var onStatusChanged: ((String) -> Unit)? = null
     var onGateMatch: ((String) -> Unit)? = null
     var onGateEvaluated: ((String, Boolean, String) -> Unit)? = null
+    var shouldCaptureUnmatchedFinalWindow: ((CapturedAudioWindow, String, String) -> Boolean)? = null
 
     fun updateConfig(newConfig: ContextualCaptureConfig) {
         config = sanitize(newConfig)
@@ -190,6 +191,14 @@ class ContextualAudioCaptureEngine(
                         if (eval.matched) {
                             onGateMatch?.invoke(eval.bestTranscript)
                             onStatusChanged?.invoke("trigger_detected")
+                            onWindowCaptured?.invoke(finalWindow)
+                        } else if (shouldCaptureUnmatchedFinalWindow?.invoke(
+                                finalWindow,
+                                eval.bestTranscript,
+                                eval.debugSummary
+                            ) == true
+                        ) {
+                            onStatusChanged?.invoke("trigger_uncertain")
                             onWindowCaptured?.invoke(finalWindow)
                         }
                     } catch (t: Throwable) {

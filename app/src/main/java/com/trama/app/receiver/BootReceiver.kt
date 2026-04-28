@@ -22,8 +22,9 @@ class BootReceiver : BroadcastReceiver() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val autoStart = SettingsDataStore(context).autoStart.first()
-                if (autoStart) {
-                    Log.i("BootReceiver", "Boot completed, auto-starting keyword listener")
+                val shouldRestore = ServiceController.shouldBeRunning(context)
+                if (autoStart || shouldRestore) {
+                    Log.i("BootReceiver", "Boot completed, restoring keyword listener")
                     ServiceController.start(context)
                 } else {
                     Log.i("BootReceiver", "Boot completed, auto-start disabled")

@@ -21,6 +21,13 @@ object ServiceController {
 
     private const val PREFS = "service_prefs"
     private const val KEY_SHOULD_RUN = "should_run"
+    private const val KEY_SUSPEND_REASON = "suspend_reason"
+
+    enum class SuspendReason {
+        NONE,
+        RECORDING,
+        WATCH
+    }
 
     private enum class ServiceMode {
         IDLE,
@@ -51,7 +58,11 @@ object ServiceController {
                 RecordingState.stopRecording(context)
             }
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit().putBoolean(KEY_SHOULD_RUN, true).commit()
+                .edit()
+                .putBoolean(KEY_SHOULD_RUN, true)
+                .putString(KEY_SUSPEND_REASON, SuspendReason.NONE.name)
+                .commit()
+            ServiceWatchdogScheduler.schedule(context, reason = "user_start")
             val intent = Intent(context, KeywordListenerService::class.java)
             ContextCompat.startForegroundService(context, intent)
             _isRunning.value = true
@@ -66,14 +77,18 @@ object ServiceController {
      */
     fun stop(context: Context) {
         synchronized(transitionLock) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_SHOULD_RUN, false)
+                .putString(KEY_SUSPEND_REASON, SuspendReason.NONE.name)
+                .commit()
+            ServiceWatchdogScheduler.cancel(context)
             val intent = Intent(context, KeywordListenerService::class.java)
             context.stopService(intent)
             _isRunning.value = false
             if (!RecordingState.isRecording.value && !_isWatchActive.value) {
                 modeRef.set(ServiceMode.IDLE)
             }
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit().putBoolean(KEY_SHOULD_RUN, false).commit()
         }
     }
 
@@ -94,6 +109,7 @@ object ServiceController {
     fun startRecording(context: Context) {
         synchronized(transitionLock) {
             if (_isRunning.value) {
+                setSuspendReason(context, SuspendReason.RECORDING)
                 context.stopService(Intent(context, KeywordListenerService::class.java))
                 _isRunning.value = false
             }
@@ -109,6 +125,7 @@ object ServiceController {
      */
     fun stopByWatch(context: Context) {
         synchronized(transitionLock) {
+            setSuspendReason(context, SuspendReason.WATCH)
             context.stopService(Intent(context, KeywordListenerService::class.java))
             _isRunning.value = false
             if (RecordingState.isRecording.value) {
@@ -128,6 +145,7 @@ object ServiceController {
             val wasRecording = RecordingState.isRecording.value
 
             if (_isRunning.value) {
+                setSuspendReason(context, SuspendReason.WATCH)
                 context.stopService(Intent(context, KeywordListenerService::class.java))
                 _isRunning.value = false
             }
@@ -176,6 +194,7 @@ object ServiceController {
         synchronized(transitionLock) {
             _isWatchActive.value = false
             if (wasListening && !RecordingState.isRecording.value) {
+                setSuspendReason(context, SuspendReason.NONE)
                 val intent = Intent(context, KeywordListenerService::class.java)
                 ContextCompat.startForegroundService(context, intent)
                 _isRunning.value = true
@@ -190,6 +209,35 @@ object ServiceController {
     fun shouldBeRunning(context: Context): Boolean {
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getBoolean(KEY_SHOULD_RUN, false)
+    }
+
+    fun suspendReason(context: Context): SuspendReason {
+        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_SUSPEND_REASON, SuspendReason.NONE.name)
+        return runCatching { SuspendReason.valueOf(raw ?: SuspendReason.NONE.name) }
+            .getOrDefault(SuspendReason.NONE)
+    }
+
+    fun startFromWatchdog(context: Context, reason: String): Boolean {
+        synchronized(transitionLock) {
+            if (!shouldBeRunning(context)) return false
+            if (suspendReason(context) != SuspendReason.NONE) return false
+            return runCatching {
+                val intent = Intent(context, KeywordListenerService::class.java)
+                    .putExtra("watchdogReason", reason)
+                ContextCompat.startForegroundService(context, intent)
+                _isRunning.value = true
+                _isWatchActive.value = false
+                modeRef.set(ServiceMode.LISTENING)
+            }.isSuccess
+        }
+    }
+
+    private fun setSuspendReason(context: Context, reason: SuspendReason) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_SUSPEND_REASON, reason.name)
+            .commit()
     }
 
     fun notifyStopped() {

@@ -111,6 +111,15 @@
             </intent-filter>
         </receiver>
 
+        <receiver
+            android:name=".service.ServiceRescueReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.trama.app.action.CHECK_KEYWORD_LISTENER" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
     </application>
 
 </manifest>

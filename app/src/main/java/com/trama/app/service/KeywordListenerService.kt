@@ -82,6 +82,9 @@ class KeywordListenerService : LifecycleService() {
         private const val ERROR_RETRY_DELAY_MS = 1000L
         private const val CONTEXTUAL_RESTART_DELAY_MS = 500L
         private const val SPEAKER_VERIFY_WINDOW_MS = 3_000L
+        private const val UNCERTAIN_GATE_FALLBACK_COOLDOWN_MS = 3L * 60L * 1000L
+        private const val UNCERTAIN_GATE_MIN_WINDOW_MS = 2_500L
+        private const val UNCERTAIN_GATE_MAX_WINDOW_MS = 15_000L
 
         private const val SLOW_MODE_THRESHOLD = 20
         private const val BATTERY_THRESHOLD = 15
@@ -123,6 +126,7 @@ class KeywordListenerService : LifecycleService() {
     private var dedicatedAsrFailedOver = false
 
     @Volatile private var consecutiveSilent = 0
+    @Volatile private var lastUncertainGateFallbackAt = 0L
     @Volatile
     private var batteryPct: Int = 100
     @Volatile
@@ -207,6 +211,7 @@ class KeywordListenerService : LifecycleService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
         logServiceEvent("onStartCommand", meta = mapOf("startId" to startId, "flags" to flags))
+        ServiceWatchdogScheduler.schedule(this, reason = "onStartCommand")
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(
@@ -244,6 +249,12 @@ class KeywordListenerService : LifecycleService() {
 
     override fun onDestroy() {
         logServiceEvent("onDestroy", result = CaptureLog.Result.REJECT)
+        if (ServiceController.shouldBeRunning(this) &&
+            ServiceController.suspendReason(this) == ServiceController.SuspendReason.NONE &&
+            !isBatteryLow()
+        ) {
+            ServiceWatchdogScheduler.schedule(this, delayMs = 30_000L, reason = "unexpected_destroy")
+        }
         listening = false
         screenOff = false
         stopContextualCapture()
@@ -266,6 +277,16 @@ class KeywordListenerService : LifecycleService() {
 
         ServiceController.notifyStopped()
         super.onDestroy()
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        logServiceEvent("onTaskRemoved", result = CaptureLog.Result.REJECT)
+        if (ServiceController.shouldBeRunning(this) &&
+            ServiceController.suspendReason(this) == ServiceController.SuspendReason.NONE
+        ) {
+            ServiceWatchdogScheduler.schedule(this, delayMs = 30_000L, reason = "task_removed")
+        }
     }
 
     private fun registerScreenReceiver() {
@@ -448,6 +469,7 @@ class KeywordListenerService : LifecycleService() {
                     "capturing" -> notifier.updateForegroundIfChanged("Capturando contexto...")
                     "gating" -> notifier.updateForegroundIfChanged("Escuchando (gate ligero)")
                     "trigger_detected" -> notifier.updateForegroundIfChanged("Trigger detectado, procesando contexto...")
+                    "trigger_uncertain" -> notifier.updateForegroundIfChanged("Verificando frase...")
                     "rearmed" -> notifier.updateForegroundIfChanged("Listo para siguiente frase")
                     else -> notifier.updateForegroundIfChanged("Escuchando (ASR dedicado)")
                 }
@@ -482,6 +504,9 @@ class KeywordListenerService : LifecycleService() {
                     gateText = debugSummary.ifBlank { transcript.ifBlank { "sin transcripcion en gate" } },
                     triggerReason = reason
                 )
+            }
+            engine.shouldCaptureUnmatchedFinalWindow = { window, transcript, debugSummary ->
+                shouldEscalateUncertainGate(window.durationMs(), transcript, debugSummary)
             }
             engine.onWindowCaptured = { window ->
                 lifecycleScope.launch(Dispatchers.IO) {
@@ -811,11 +836,46 @@ class KeywordListenerService : LifecycleService() {
         )
     }
 
+    private fun shouldEscalateUncertainGate(
+        windowMs: Long,
+        gateTranscript: String,
+        debugSummary: String
+    ): Boolean {
+        val now = System.currentTimeMillis()
+        val words = gateTranscript.split("\\s+".toRegex()).count { it.isNotBlank() }
+        val gateLooksUnreliable = gateTranscript.isBlank() || words <= 2
+        val windowLooksUseful = windowMs in UNCERTAIN_GATE_MIN_WINDOW_MS..UNCERTAIN_GATE_MAX_WINDOW_MS
+        val cooldownElapsed = now - lastUncertainGateFallbackAt >= UNCERTAIN_GATE_FALLBACK_COOLDOWN_MS
+        val allowed = gateLooksUnreliable && windowLooksUseful && cooldownElapsed
+
+        if (allowed) {
+            lastUncertainGateFallbackAt = now
+            CaptureLog.event(
+                gate = CaptureLog.Gate.ASR_GATE,
+                result = CaptureLog.Result.OK,
+                text = gateTranscript.ifBlank { null },
+                meta = mapOf(
+                    "reason" to "uncertain_gate_fallback",
+                    "windowMs" to windowMs,
+                    "summary" to debugSummary
+                )
+            )
+            publishAsrDebug(
+                status = "verificando frase",
+                gateText = debugSummary.ifBlank { "gate incierto" },
+                triggerReason = "gate incierto -> whisper"
+            )
+        }
+
+        return allowed
+    }
+
     private fun humanReadableAsrState(state: String): String {
         return when (state) {
             "gating" -> "esperando trigger"
             "capturing" -> "capturando voz"
             "trigger_detected" -> "trigger detectado"
+            "trigger_uncertain" -> "verificando frase"
             "rearmed" -> "listo para siguiente frase"
             "stalled" -> "rearmando captura"
             "listening" -> if (gateAsr.isAvailable) "esperando trigger" else "escuchando"
@@ -1016,6 +1076,10 @@ class KeywordListenerService : LifecycleService() {
         serviceHeartbeatJob = lifecycleScope.launch(Dispatchers.IO) {
             while (isActive) {
                 logServiceEvent("heartbeat")
+                ServiceWatchdogScheduler.schedule(
+                    this@KeywordListenerService,
+                    reason = "heartbeat"
+                )
                 delay(SERVICE_HEARTBEAT_MS)
             }
         }
