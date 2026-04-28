@@ -1,6 +1,3 @@
-// TODO: Extract repository access into a ViewModel. Currently DatabaseProvider.getRepository(context)
-//  is called directly inside the composable via remember {}. A ViewModel would provide proper
-//  lifecycle-aware state management and enable testability. Requires dependency injection setup (Hilt).
 package com.trama.app.ui.screens
 
 import android.Manifest
@@ -17,6 +14,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -90,14 +88,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.trama.app.audio.OfflineDictationCapture
 import com.trama.app.backup.AutoBackupWorker
 import com.trama.app.backup.BackupManager
 import com.trama.app.backup.BackupScheduler
 import com.trama.app.service.LocationDebugState
-import com.trama.app.speech.PersonalDictionary
+import com.trama.app.speech.speaker.ProfileDispersion
 import com.trama.app.speech.speaker.SherpaSpeakerVerificationManager
 import com.trama.app.speech.speaker.SpeakerEnrollmentStep
+import com.trama.app.speech.speaker.VerificationDiagnostic
 import com.trama.app.service.ServiceController
 import com.trama.app.speech.IntentPattern
 import com.trama.app.summary.CalendarHelper
@@ -106,7 +106,6 @@ import com.trama.app.summary.GoogleCalendarSyncManager
 import com.trama.app.summary.GemmaModelManager
 import com.trama.app.summary.PromptTemplateStore
 import com.trama.app.summary.SummaryScheduler
-import com.trama.shared.data.DatabaseProvider
 import com.trama.app.ui.SettingsDataStore
 import com.trama.app.ui.theme.CategoryColors
 import com.trama.app.ui.theme.TimelineAccentPalette
@@ -132,11 +131,12 @@ enum class SettingsSection(val route: String, val title: String, val subtitle: S
 fun SettingsScreen(
     section: SettingsSection = SettingsSection.ROOT,
     onBack: () -> Unit,
-    onOpenSection: (SettingsSection) -> Unit = {}
+    onOpenSection: (SettingsSection) -> Unit = {},
+    viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
-    val settings = remember { SettingsDataStore(context) }
-    val repository = remember { DatabaseProvider.getRepository(context) }
+    val settings = viewModel
+    val repository = viewModel.repository
     val scope = rememberCoroutineScope()
 
     // Settings state
@@ -147,12 +147,11 @@ fun SettingsScreen(
     val intentPatterns by settings.intentPatterns.collectAsState(initial = IntentPattern.DEFAULTS)
 
     // Gemini API key
-    val summaryPrefs = remember { context.getSharedPreferences("daily_summary", Context.MODE_PRIVATE) }
-    var geminiApiKey by remember { mutableStateOf(summaryPrefs.getString("gemini_api_key", "") ?: "") }
+    val geminiApiKey by viewModel.geminiApiKey.collectAsState()
 
-    val personalDictionary = remember { PersonalDictionary(context) }
+    val personalDictionary = viewModel.personalDictionary
     val learnedCorrections by personalDictionary.corrections.collectAsState(initial = emptyList())
-    val speakerVerificationManager = remember { SherpaSpeakerVerificationManager(context) }
+    val speakerVerificationManager = viewModel.speakerVerificationManager
 
     // Backup
     val backupEnabled by settings.backupEnabled.collectAsState(initial = true)
@@ -244,6 +243,17 @@ fun SettingsScreen(
     val speakerSampleCount = remember(speakerStateVersion) { speakerVerificationManager.sampleCount }
     val speakerThreshold = remember(speakerStateVersion) { speakerVerificationManager.threshold }
 
+    var speakerDiagnosticsExpanded by remember { mutableStateOf(false) }
+    var speakerDiagnosticsVersion by remember { mutableIntStateOf(0) }
+    val speakerRecentDiagnostics: List<VerificationDiagnostic> =
+        remember(speakerStateVersion, speakerDiagnosticsVersion) {
+            speakerVerificationManager.recentDiagnostics()
+        }
+    val speakerProfileDispersion: ProfileDispersion? =
+        remember(speakerStateVersion, speakerDiagnosticsVersion) {
+            speakerVerificationManager.profileDispersion()
+        }
+
     // Dialogs
     var editingPattern by remember { mutableStateOf<IntentPattern?>(null) }
     var showAddPatternDialog by remember { mutableStateOf(false) }
@@ -285,7 +295,7 @@ fun SettingsScreen(
         scope.launch {
             backupInProgress = true
             try {
-                val count = BackupManager.exportToUri(context, uri, repository)
+                val count = viewModel.exportBackup(uri)
                 Toast.makeText(context, "$count entradas exportadas", Toast.LENGTH_SHORT).show()
                 context.getSharedPreferences("backup", Context.MODE_PRIVATE)
                     .edit().putLong("last_backup", System.currentTimeMillis()).apply()
@@ -323,7 +333,7 @@ fun SettingsScreen(
         scope.launch {
             backupInProgress = true
             try {
-                val (imported, skipped) = BackupManager.importFromUri(context, uri, repository)
+                val (imported, skipped) = viewModel.importBackup(uri)
                 Toast.makeText(context, "$imported importadas, $skipped duplicadas", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
@@ -1170,8 +1180,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = geminiApiKey,
                         onValueChange = {
-                            geminiApiKey = it
-                            summaryPrefs.edit().putString("gemini_api_key", it.trim()).apply()
+                            viewModel.setGeminiApiKey(it)
                         },
                         label = { Text("Clave API Gemini") },
                         supportingText = { Text("Gratis en aistudio.google.com") },
@@ -1688,6 +1697,34 @@ fun SettingsScreen(
                             },
                             valueRange = 0.4f..0.95f
                         )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        TextButton(
+                            onClick = {
+                                speakerDiagnosticsExpanded = !speakerDiagnosticsExpanded
+                                if (speakerDiagnosticsExpanded) speakerDiagnosticsVersion++
+                            },
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                if (speakerDiagnosticsExpanded) "Ocultar diagnóstico"
+                                else "Ver diagnóstico (avanzado)",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+
+                        AnimatedVisibility(
+                            visible = speakerDiagnosticsExpanded,
+                            enter = expandVertically(),
+                            exit = shrinkVertically()
+                        ) {
+                            SpeakerDiagnosticsBlock(
+                                dispersion = speakerProfileDispersion,
+                                diagnostics = speakerRecentDiagnostics,
+                                onRefresh = { speakerDiagnosticsVersion++ }
+                            )
+                        }
                     }
 
                     speakerStatusMessage?.let {
@@ -2883,5 +2920,168 @@ private fun CaptureDiagnosticsCard(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun SpeakerDiagnosticsBlock(
+    dispersion: ProfileDispersion?,
+    diagnostics: List<VerificationDiagnostic>,
+    onRefresh: () -> Unit
+) {
+    Column(modifier = Modifier.padding(top = 4.dp)) {
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    "Dispersión del perfil",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                if (dispersion == null) {
+                    Text(
+                        "Necesitas al menos 2 muestras para calcular dispersión.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    val meanPct = "%.0f".format(dispersion.meanSimilarity * 100)
+                    val stdPct = "%.1f".format(dispersion.stdSimilarity * 100)
+                    Text(
+                        "Similitud media entre muestras: $meanPct% · σ ±$stdPct%",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    val hint = when {
+                        dispersion.stdSimilarity < 0.02f && dispersion.meanSimilarity > 0.92f ->
+                            "Tus muestras son demasiado parecidas. Graba alguna en condiciones distintas (más lejos, con ruido, susurro o voz alta)."
+                        dispersion.meanSimilarity < 0.55f ->
+                            "Las muestras se parecen poco entre sí. Si no eres tú en alguna, considera resetear el perfil."
+                        else -> null
+                    }
+                    if (hint != null) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            hint,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "Últimas verificaciones",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(
+                onClick = onRefresh,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text("Actualizar", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        if (diagnostics.isEmpty()) {
+            Text(
+                "Aún no hay verificaciones registradas. Aparecerán aquí tras la próxima captura.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            val accepted = diagnostics.count { it.accepted }
+            val rejected = diagnostics.size - accepted
+            val withProfileSim = diagnostics.filter { !it.profileSimilarity.isNaN() }
+            val avgProfile = if (withProfileSim.isNotEmpty()) {
+                withProfileSim.map { it.profileSimilarity }.average().toFloat()
+            } else {
+                Float.NaN
+            }
+            val clippedShare = diagnostics.count { it.clippingFraction > 0.01f }
+
+            val summary = buildString {
+                append("Total: ${diagnostics.size}  ·  Aceptadas: $accepted  ·  Rechazadas: $rejected")
+                if (!avgProfile.isNaN()) {
+                    append("\nSim. media al centroide: ${"%.0f".format(avgProfile * 100)}%")
+                }
+                if (clippedShare > 0) {
+                    append("\nCapturas con clipping (>1%): $clippedShare")
+                }
+            }
+            Text(
+                summary,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            diagnostics.asReversed().take(10).forEach { entry ->
+                SpeakerDiagnosticsRow(entry)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SpeakerDiagnosticsRow(entry: VerificationDiagnostic) {
+    val simText = if (entry.profileSimilarity.isNaN()) {
+        "—"
+    } else {
+        "${"%.0f".format(entry.similarity * 100)}% / ${"%.0f".format(entry.threshold * 100)}%"
+    }
+    val durationText = "${entry.durationMs} ms"
+    val statusColor = if (entry.accepted) {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    } else {
+        MaterialTheme.colorScheme.error
+    }
+    val statusLabel = if (entry.accepted) "OK" else "rechazada"
+    val rmsText = if (entry.rmsDbfs.isFinite()) "${"%.0f".format(entry.rmsDbfs)} dBFS" else "—"
+    val clipping = if (entry.clippingFraction > 0.01f) {
+        "  ·  clip ${"%.0f".format(entry.clippingFraction * 100)}%"
+    } else {
+        ""
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            statusLabel,
+            style = MaterialTheme.typography.bodySmall,
+            color = statusColor,
+            modifier = Modifier.width(72.dp)
+        )
+        Text(
+            simText,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.width(96.dp)
+        )
+        Text(
+            "$durationText  ·  $rmsText$clipping",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
     }
 }

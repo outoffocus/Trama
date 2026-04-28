@@ -1,6 +1,3 @@
-// TODO: Extract repository access into a ViewModel. Currently DatabaseProvider.getRepository(context)
-//  is called directly inside the composable via remember {}. A ViewModel would provide proper
-//  lifecycle-aware state management and enable testability. Requires dependency injection setup (Hilt).
 package com.trama.app.ui.screens
 
 import android.Manifest
@@ -95,6 +92,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
 import androidx.core.content.ContextCompat
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.trama.app.summary.ActionExecutor
 import com.trama.app.summary.EntryActionBridge
 import com.trama.app.summary.ActionType
@@ -102,9 +100,6 @@ import com.trama.app.summary.CalendarHelper
 import com.trama.app.service.RecordingState
 import com.trama.app.service.EntryProcessingState
 import com.trama.app.service.ServiceController
-import com.trama.app.sync.PhoneToWatchSyncer
-import com.trama.app.ui.SettingsDataStore
-import com.trama.shared.data.DatabaseProvider
 import com.trama.app.ui.components.EntryCard
 import com.trama.app.ui.components.CalendarActionDialog
 import com.trama.app.ui.components.RecordingCard
@@ -120,12 +115,9 @@ import com.trama.app.ui.theme.TimelineAccentConfig
 import com.trama.app.ui.theme.timelineAccentColor
 import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.EntryStatus
-import com.trama.shared.model.Source
-import com.trama.shared.model.StatusSyncEntry
 import com.trama.shared.sync.MicCoordinator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -159,19 +151,16 @@ fun HomeScreen(
     onChatClick: () -> Unit = {},
     onRecordingClick: (Long) -> Unit = {},
     onPlaceClick: (Long) -> Unit = {},
-    onRecordingsListClick: () -> Unit = {}
+    onRecordingsListClick: () -> Unit = {},
+    viewModel: HomeViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
-    val repository = remember { DatabaseProvider.getRepository(context) }
-    val settings = remember { SettingsDataStore(context) }
-    val watchSyncer = remember { PhoneToWatchSyncer(context, repository) }
     val scope = rememberCoroutineScope()
+    val uiState by viewModel.uiState.collectAsState()
 
     // Full sync to watch on first open — ensures watch has current statuses
     LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) {
-            watchSyncer.syncAllToWatch()
-        }
+        viewModel.syncAllToWatch()
     }
     val serviceRunning by ServiceController.isRunning.collectAsState()
     val watchActive by ServiceController.isWatchActive.collectAsState()
@@ -185,35 +174,19 @@ fun HomeScreen(
     val lastError by RecordingState.lastError.collectAsState()
     val processingEntryIds by EntryProcessingState.processingIds.collectAsState()
     val processingBackends by EntryProcessingState.processingBackends.collectAsState()
-    val pendingColorIndex by settings.timelineColorPending.collectAsState(
-        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PENDING
-    )
-    val completedColorIndex by settings.timelineColorCompleted.collectAsState(
-        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_COMPLETED
-    )
-    val recordingColorIndex by settings.timelineColorRecording.collectAsState(
-        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_RECORDING
-    )
-    val placeColorIndex by settings.timelineColorPlace.collectAsState(
-        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PLACE
-    )
-    val calendarColorIndex by settings.timelineColorCalendar.collectAsState(
-        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_CALENDAR
-    )
-    val showOldEntriesExpanded by settings.showOldEntriesExpanded.collectAsState(initial = false)
     val timelineAccentConfig = remember(
-        pendingColorIndex,
-        completedColorIndex,
-        recordingColorIndex,
-        placeColorIndex,
-        calendarColorIndex
+        uiState.timelineColorPending,
+        uiState.timelineColorCompleted,
+        uiState.timelineColorRecording,
+        uiState.timelineColorPlace,
+        uiState.timelineColorCalendar
     ) {
         TimelineAccentConfig(
-            pending = timelineAccentColor(pendingColorIndex),
-            completed = timelineAccentColor(completedColorIndex),
-            recording = timelineAccentColor(recordingColorIndex),
-            place = timelineAccentColor(placeColorIndex),
-            calendar = timelineAccentColor(calendarColorIndex)
+            pending = timelineAccentColor(uiState.timelineColorPending),
+            completed = timelineAccentColor(uiState.timelineColorCompleted),
+            recording = timelineAccentColor(uiState.timelineColorRecording),
+            place = timelineAccentColor(uiState.timelineColorPlace),
+            calendar = timelineAccentColor(uiState.timelineColorCalendar)
         )
     }
 
@@ -260,7 +233,7 @@ fun HomeScreen(
 
     var duplicatesExpanded by remember { mutableStateOf(true) }
     var suggestedExpanded by remember { mutableStateOf(true) }
-    var olderExpanded by remember(showOldEntriesExpanded) { mutableStateOf(showOldEntriesExpanded) }
+    var olderExpanded by remember(uiState.showOldEntriesExpanded) { mutableStateOf(uiState.showOldEntriesExpanded) }
     var todayExpanded by remember { mutableStateOf(true) }
     var completedExpanded by remember { mutableStateOf(false) }
     var quickActionsVisible by remember { mutableStateOf(false) }
@@ -291,87 +264,19 @@ fun HomeScreen(
         if (granted) RecordingState.startRecording(context)
     }
 
-    // Data
-    val allPendingEntriesState by repository.getPending().collectAsState(initial = null)
-    val suggestedEntriesState by repository.getSuggested().collectAsState(initial = null)
-    val duplicateEntriesState by repository.getDuplicates().collectAsState(initial = null)
-    val completedEntriesState by repository.getCompleted().collectAsState(initial = null)
-    val recordingsState by repository.getAllRecordings().collectAsState(initial = null)
-    val allPendingEntries = allPendingEntriesState ?: emptyList()
-    val duplicateEntries = duplicateEntriesState ?: emptyList()
-    val suggestedEntries = suggestedEntriesState ?: emptyList()
-    val completedEntries = completedEntriesState ?: emptyList()
-    val recordings = recordingsState ?: emptyList()
+    val allPendingEntries = uiState.allPendingEntries
+    val pendingEntries = uiState.pendingEntries
+    val suggestedEntries = uiState.suggestedEntries
+    val duplicateEntries = uiState.duplicateEntries
+    val completedEntries = uiState.completedEntries
+    val olderEntries = uiState.olderEntries
+    val completedTodayEntries = uiState.completedTodayEntries
+    val recordings = uiState.recordings
+    val timelineEvents = uiState.timelineEvents
 
-    // Filter duplicates out of the main pending list
-    val duplicateIds = duplicateEntries.map { it.id }.toSet()
-    val pendingEntries = allPendingEntries.filter { it.id !in duplicateIds }
-
-    // Stats
-    val todayRange = remember { com.trama.shared.util.DayRange.today() }
-    val startOfDay = todayRange.startMs
-    val endOfDay = todayRange.endInclusiveMs
-    val storedTimelineEventsState by repository.getTimelineEventsByDateRange(
-        startOfDay,
-        endOfDay
-    ).collectAsState(initial = null)
-    val storedTimelineEvents = storedTimelineEventsState ?: emptyList()
-    val visiblePendingEntries = pendingEntries
-    val pastDayEntries = visiblePendingEntries.filter { entry ->
-        val due = entry.dueDate
-        if (due != null) due < startOfDay else entry.createdAt < startOfDay
-    }
-    val pastDayIds = pastDayEntries.map { it.id }.toSet()
-    val todayEntries = visiblePendingEntries.filter { entry ->
-        val due = entry.dueDate
-        entry.id !in pastDayIds && (
-            entry.createdAt >= startOfDay ||
-                (due != null && due <= endOfDay)
-        )
-    }
-    val olderEntries = pastDayEntries
-    val completedTodayEntries = completedEntries.filter { (it.completedAt ?: 0L) >= startOfDay }
-    val todayRecordings = recordings.filter { it.createdAt >= startOfDay }
-    val timelineEvents = remember(
-        todayEntries,
-        todayRecordings,
-        storedTimelineEvents
-    ) {
-        buildTimelineEvents(
-            createdEntries = todayEntries,
-            completedEntries = emptyList(),
-            recordings = todayRecordings,
-            storedEvents = storedTimelineEvents
-        )
-    }
-
-    val isInitialLoading = allPendingEntriesState == null ||
-        duplicateEntriesState == null ||
-        completedEntriesState == null ||
-        recordingsState == null ||
-        storedTimelineEventsState == null
-
-    val heroDayTitle = remember(startOfDay) {
-        SimpleDateFormat("EEEE d 'de' MMMM", Locale("es")).format(Date(startOfDay))
+    val heroDayTitle = remember(uiState.startOfDay) {
+        SimpleDateFormat("EEEE d 'de' MMMM", Locale("es")).format(Date(uiState.startOfDay))
             .replaceFirstChar { it.uppercase() }
-    }
-
-    // Helper: sync a completed entry to watch
-    fun syncCompleted(entry: DiaryEntry) {
-        scope.launch {
-            watchSyncer.syncStatusChange(
-                completed = listOf(StatusSyncEntry(entry.createdAt, entry.text))
-            )
-        }
-    }
-
-    // Helper: sync a deleted entry to watch
-    fun syncDeleted(entry: DiaryEntry) {
-        scope.launch {
-            watchSyncer.syncStatusChange(
-                deleted = listOf(StatusSyncEntry(entry.createdAt, entry.text))
-            )
-        }
     }
 
     // Delete all selected (entries + recordings + timeline events)
@@ -382,46 +287,35 @@ fun HomeScreen(
         val entriesToDelete = (pendingEntries + completedEntries).filter { it.id in selectedIds }
         val total = entryIds.size + recIds.size + eventIds.size
         scope.launch {
-            if (entryIds.isNotEmpty()) {
-                repository.deleteByIds(entryIds)
-                watchSyncer.syncStatusChange(
-                    deleted = entriesToDelete.map { StatusSyncEntry(it.createdAt, it.text) }
+            viewModel.deleteSelection(entryIds, recIds, eventIds, entriesToDelete) {
+                exitSelectionMode()
+                snackbarHostState.showSnackbar(
+                    "$total ${if (total == 1) "elemento borrado" else "elementos borrados"}"
                 )
             }
-            if (recIds.isNotEmpty()) repository.deleteRecordingsByIds(recIds)
-            if (eventIds.isNotEmpty()) repository.deleteTimelineEventsByIds(eventIds)
-            exitSelectionMode()
-            snackbarHostState.showSnackbar(
-                "$total ${if (total == 1) "elemento borrado" else "elementos borrados"}"
-            )
         }
     }
 
     fun completeSelected() {
-        val ids = selectedIds.toList()
-        val entriesToComplete = (pendingEntries + completedEntries).filter { it.id in ids }
+        val entriesToComplete = (pendingEntries + completedEntries).filter { it.id in selectedIds }
         scope.launch {
-            repository.markCompletedByIds(ids)
-            watchSyncer.syncStatusChange(
-                completed = entriesToComplete.map { StatusSyncEntry(it.createdAt, it.text) }
-            )
-            exitSelectionMode()
-            snackbarHostState.showSnackbar("${ids.size} completadas")
+            viewModel.completeEntries(entriesToComplete) {
+                exitSelectionMode()
+                snackbarHostState.showSnackbar("${entriesToComplete.size} completadas")
+            }
         }
     }
 
     fun markEntryDoneWithUndo(entry: DiaryEntry) {
         scope.launch {
-            repository.markCompleted(entry.id)
-            syncCompleted(entry)
+            viewModel.markCompleted(entry)
             val result = snackbarHostState.showSnackbar(
                 message = "\"${entry.displayText}\" marcada como hecha",
                 actionLabel = "Deshacer",
                 duration = SnackbarDuration.Short
             )
             if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
-                repository.markPending(entry.id)
-                repository.updateDueDate(entry.id, entry.dueDate)
+                viewModel.restorePending(entry)
             }
         }
     }
@@ -429,14 +323,14 @@ fun HomeScreen(
     fun postponeEntryWithUndo(entry: DiaryEntry, newDueDate: Long, label: String) {
         scope.launch {
             val previousDueDate = entry.dueDate
-            repository.updateDueDate(entry.id, newDueDate)
+            viewModel.updateDueDate(entry.id, newDueDate)
             val result = snackbarHostState.showSnackbar(
                 message = "\"${entry.displayText}\" pospuesta a $label",
                 actionLabel = "Deshacer",
                 duration = SnackbarDuration.Short
             )
             if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
-                repository.updateDueDate(entry.id, previousDueDate)
+                viewModel.updateDueDate(entry.id, previousDueDate)
             }
         }
     }
@@ -448,20 +342,7 @@ fun HomeScreen(
             onDismiss = { showAddDialog = false },
             onSave = { text, categoryId ->
                 val cat = MANUAL_CATEGORIES.find { it.id == categoryId } ?: MANUAL_CATEGORIES.last()
-                scope.launch {
-                    repository.insert(
-                        DiaryEntry(
-                            text = text,
-                            keyword = cat.id,
-                            category = cat.label,
-                            confidence = 1.0f,
-                            source = Source.PHONE,
-                            duration = 0,
-                            isManual = true,
-                            cleanText = text
-                        )
-                    )
-                }
+                viewModel.addManualEntry(text = text, categoryId = cat.id, categoryLabel = cat.label)
                 showAddDialog = false
             }
         )
@@ -612,7 +493,7 @@ fun HomeScreen(
                 )
             }
 
-            if (isInitialLoading) {
+            if (uiState.isLoading) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         CircularProgressIndicator()
@@ -661,13 +542,8 @@ fun HomeScreen(
                             items(suggestedEntries, key = { "sug_${it.id}" }) { entry ->
                                 SuggestedCard(
                                     entry = entry,
-                                    onAccept = { scope.launch { repository.markPending(entry.id) } },
-                                    onDiscard = {
-                                        scope.launch {
-                                            repository.markDiscarded(entry.id)
-                                            syncDeleted(entry)
-                                        }
-                                    },
+                                    onAccept = { viewModel.acceptSuggestion(entry) },
+                                    onDiscard = { viewModel.discardEntry(entry) },
                                     modifier = Modifier.padding(horizontal = 16.dp)
                                 )
                             }
@@ -691,8 +567,8 @@ fun HomeScreen(
                                 DuplicateCard(
                                     entry = entry,
                                     originalText = originalEntry?.displayText,
-                                    onKeep = { scope.launch { repository.clearDuplicate(entry.id) } },
-                                    onDelete = { scope.launch { repository.deleteById(entry.id); syncDeleted(entry) } },
+                                    onKeep = { viewModel.keepDuplicate(entry) },
+                                    onDelete = { viewModel.deleteEntry(entry) },
                                     modifier = Modifier.padding(horizontal = 16.dp)
                                 )
                             }

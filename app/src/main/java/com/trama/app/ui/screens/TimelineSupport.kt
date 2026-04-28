@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -62,7 +64,6 @@ import com.trama.app.summary.CalendarHelper.CalendarEvent
 import com.trama.app.summary.EntryActionBridge
 import com.trama.app.service.EntryProcessingState
 import com.trama.app.location.DwellDurationFormatter
-import com.trama.app.location.PlaceMapsLauncher
 import com.trama.app.ui.components.CalendarActionDialog
 import com.trama.app.ui.components.EntryCard
 import com.trama.app.ui.components.RecordingCard
@@ -74,11 +75,12 @@ import com.trama.shared.model.Recording
 import com.trama.shared.model.TimelineEvent
 import com.trama.shared.model.TimelineEventSource
 import com.trama.shared.model.TimelineEventType
+import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-internal sealed interface TimelineEventUi {
+sealed interface TimelineEventUi {
     val id: String
     val timestamp: Long
 
@@ -412,32 +414,14 @@ internal fun LazyListScope.timelineListContent(
                 val meta = if (calendarEvent.allDay) {
                     "Todo el día"
                 } else {
-                    hourFormat.format(Date(calendarEvent.startMillis))
-                }
-                val body = buildString {
-                    if (!calendarEvent.allDay) {
-                        append(hourFormat.format(Date(calendarEvent.startMillis)))
-                        append(" – ")
-                        append(hourFormat.format(Date(calendarEvent.endMillis)))
-                    }
-                    calendarEvent.location
-                        ?.takeIf { it.isNotBlank() }
-                        ?.let {
-                            if (isNotEmpty()) append(" · ")
-                            append(it)
-                        }
-                    calendarEvent.description
-                        ?.takeIf { it.isNotBlank() }
-                        ?.let {
-                            append("\n")
-                            append(it)
-                        }
+                    hourFormat.format(Date(calendarEvent.startMillis)) + " – " +
+                        hourFormat.format(Date(calendarEvent.endMillis))
                 }
                 TimelineStatusCard(
                     modifier = itemModifier,
                     eyebrow = "Calendario",
                     title = calendarEvent.title,
-                    body = body,
+                    body = "",
                     accent = accentConfig.calendar,
                     meta = meta,
                     icon = {
@@ -450,28 +434,19 @@ internal fun LazyListScope.timelineListContent(
                 )
             }
             is TimelineEventUi.StoredEvent -> {
-                val context = LocalContext.current
                 val title = event.event.title
                 val isSelected = event.event.id in selectedEventIds
                 if (event.event.type == TimelineEventType.CALENDAR) {
-                    val body = buildString {
-                        event.event.endTimestamp?.let { end ->
-                            append(hourFormat.format(Date(event.timestamp)))
-                            append(" – ")
-                            append(hourFormat.format(Date(end)))
-                        }
-                        event.event.subtitle?.takeIf { it.isNotBlank() }?.let {
-                            if (isNotEmpty()) append("\n")
-                            append(it)
-                        }
-                    }
+                    val meta = event.event.endTimestamp?.let { end ->
+                        hourFormat.format(Date(event.timestamp)) + " – " + hourFormat.format(Date(end))
+                    } ?: hourFormat.format(Date(event.timestamp))
                     TimelineStatusCard(
                         modifier = itemModifier,
                         eyebrow = if (event.event.source == TimelineEventSource.CALENDAR_IMPORT) "Google Calendar" else "Calendario",
                         title = title,
-                        body = body,
+                        body = "",
                         accent = accentConfig.calendar,
-                        meta = if (event.event.endTimestamp == null) hourFormat.format(Date(event.timestamp)) else null,
+                        meta = meta,
                         isSelectionMode = isSelectionMode,
                         isSelected = isSelected,
                         onLongClick = if (onEnterEventSelectionMode != null && !isSelectionMode) {
@@ -516,19 +491,6 @@ internal fun LazyListScope.timelineListContent(
                     } else {
                         event.event.placeId?.let { placeId -> { onPlaceClick(placeId) } }
                     },
-                    quickActionLabel = if (!isSelectionMode && event.event.type == TimelineEventType.DWELL) "Maps" else null,
-                    onQuickActionClick = if (!isSelectionMode && event.event.type == TimelineEventType.DWELL) {
-                        {
-                            val data = event.event.dataJson.orEmpty()
-                            val lat = Regex("\"lat\"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)").find(data)
-                                ?.groupValues?.getOrNull(1)?.toDoubleOrNull()
-                            val lon = Regex("\"lon\"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)").find(data)
-                                ?.groupValues?.getOrNull(1)?.toDoubleOrNull()
-                            if (lat != null && lon != null) {
-                                PlaceMapsLauncher.openInGoogleMaps(context, lat, lon, title)
-                            }
-                        }
-                    } else null,
                     icon = {
                         Icon(
                             Icons.Default.Place,
@@ -560,6 +522,7 @@ private fun TimelineCornerAccent(
 private fun TimelineStatusCard(
     modifier: Modifier = Modifier,
     eyebrow: String? = null,
+    secondaryEyebrow: String? = null,
     title: String,
     body: String,
     accent: Color,
@@ -576,6 +539,7 @@ private fun TimelineStatusCard(
     Card(
         modifier = modifier
             .fillMaxWidth()
+            .defaultMinSize(minHeight = 72.dp)
             .then(
                 if (onClick != null || onLongClick != null) {
                     Modifier.combinedClickable(
@@ -617,37 +581,32 @@ private fun TimelineStatusCard(
                 )
             }
             Box(modifier = Modifier.weight(1f)) {
-            if (!isSelectionMode) {
-                TimelineCornerAccent(
-                    color = accent,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 9.dp, end = 11.dp)
-                )
-            }
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 11.dp, vertical = 10.dp)
+                    .padding(horizontal = 11.dp, vertical = 9.dp)
             ) {
                 // Header: eyebrow badge + timestamp
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (!eyebrow.isNullOrBlank()) {
-                        Surface(
-                            shape = androidx.compose.foundation.shape.RoundedCornerShape(5.dp),
-                            color = accent.copy(alpha = 0.14f)
-                        ) {
-                            Text(
-                                text = eyebrow,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Medium,
-                                color = accent,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (!eyebrow.isNullOrBlank()) {
+                            TimelineLabelChip(text = eyebrow, accent = accent, strong = true)
+                        }
+                        if (!secondaryEyebrow.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.width(5.dp))
+                            TimelineLabelChip(
+                                text = secondaryEyebrow,
+                                accent = accent,
+                                strong = false,
+                                modifier = Modifier.weight(1f, fill = false)
                             )
                         }
                     }
-                    androidx.compose.foundation.layout.Spacer(modifier = Modifier.weight(1f))
                     if (!meta.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = meta,
                             style = MaterialTheme.typography.labelSmall,
@@ -668,8 +627,9 @@ private fun TimelineStatusCard(
                         text = title,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
                     )
                 }
                 // Body
@@ -679,7 +639,7 @@ private fun TimelineStatusCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                         modifier = Modifier.padding(top = 4.dp),
-                        maxLines = 3,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
@@ -704,4 +664,62 @@ private fun TimelineStatusCard(
             }
         }
     }
+}
+
+@Composable
+private fun TimelineLabelChip(
+    text: String,
+    accent: Color,
+    strong: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(5.dp),
+        color = accent.copy(alpha = if (strong) 0.14f else 0.08f)
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = if (strong) FontWeight.Medium else FontWeight.Normal,
+            color = if (strong) accent else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+        )
+    }
+}
+
+private fun TimelineEvent.calendarDisplayName(): String? {
+    val fromPayload = dataJson?.let { payload ->
+        runCatching { JSONObject(payload).optString("calendarName").trim() }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
+    }
+    return (fromPayload ?: subtitle?.lineSequence()?.firstOrNull()?.substringBefore(" · "))
+        ?.stripCalendarAccount()
+        ?.takeIf { it.isNotBlank() }
+}
+
+private fun TimelineEvent.subtitleWithoutCalendarName(calendarName: String?): String? {
+    val subtitleValue = subtitle?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    val lines = subtitleValue.lines().toMutableList()
+    val firstLine = lines.firstOrNull()?.trim().orEmpty()
+    val firstParts = firstLine.split(" · ").map { it.trim() }.filter { it.isNotBlank() }
+    val visibleParts = firstParts.filterNot { part ->
+        val cleanPart = part.stripCalendarAccount()
+        cleanPart == calendarName || part.contains("@")
+    }
+    if (lines.isNotEmpty()) {
+        lines[0] = visibleParts.joinToString(" · ")
+    }
+    return lines
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .joinToString("\n")
+        .takeIf { it.isNotBlank() }
+}
+
+private fun String.stripCalendarAccount(): String {
+    return replace(Regex("\\s*\\([^)]*@[^)]*\\)\\s*$"), "").trim()
 }

@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.hilt)
 }
 
 android {
@@ -86,6 +87,9 @@ dependencies {
     implementation(libs.lifecycle.service)
     implementation(libs.datastore.preferences)
     implementation(libs.osmdroid.android)
+    implementation(libs.hilt.android)
+    implementation(libs.hilt.navigation.compose)
+    ksp(libs.hilt.compiler)
 
     // Wearable Data Layer (for watch sync)
     implementation(libs.play.services.wearable)

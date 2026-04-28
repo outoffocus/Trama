@@ -8,22 +8,24 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import com.trama.app.service.ServiceController
-import com.trama.app.sync.SettingsSyncer
+import com.trama.app.ui.MainViewModel
 import com.trama.app.ui.NavGraph
-import com.trama.app.ui.SettingsDataStore
 import com.trama.app.ui.theme.TramaTheme
+import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+
+    private val viewModel: MainViewModel by viewModels()
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -40,6 +42,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        val mainViewModel = viewModel
 
         val shouldStartMicro = ServiceController.shouldBeRunning(this)
         if (hasAudioPermission()) {
@@ -49,14 +52,13 @@ class MainActivity : ComponentActivity() {
         } else if (shouldStartMicro) {
             requestPermissions()
         }
-        maybeStartLocationService()
+        maybeStartLocationService(mainViewModel)
 
         // Sync keywords to watch on every app open
-        syncSettingsToWatch()
+        syncSettingsToWatch(mainViewModel)
 
         setContent {
-            val settings = remember { SettingsDataStore(applicationContext) }
-            val themeMode by settings.themeMode.collectAsState(initial = 0)
+            val themeMode by mainViewModel.themeMode.collectAsState(initial = 0)
             val darkTheme = when (themeMode) {
                 1 -> false
                 2 -> true
@@ -80,10 +82,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun maybeStartLocationService() {
+    private fun maybeStartLocationService(mainViewModel: MainViewModel = viewModel) {
         CoroutineScope(Dispatchers.IO).launch {
-            val settings = SettingsDataStore(applicationContext)
-            val enabled = settings.locationEnabled.first()
+            val enabled = mainViewModel.isLocationEnabled()
             val hasPermission = ContextCompat.checkSelfPermission(
                 applicationContext,
                 Manifest.permission.ACCESS_FINE_LOCATION
@@ -94,13 +95,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun syncSettingsToWatch() {
-        CoroutineScope(Dispatchers.IO).launch {
-            val settings = SettingsDataStore(applicationContext)
-            val kwList = settings.customKeywords.first()
-            val patterns = settings.intentPatterns.first()
-            SettingsSyncer(applicationContext).syncPatterns(patterns, kwList)
-        }
+    private fun syncSettingsToWatch(mainViewModel: MainViewModel = viewModel) {
+        mainViewModel.syncSettingsToWatch()
     }
 
     private fun requestPermissions() {

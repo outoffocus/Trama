@@ -32,6 +32,7 @@ object DiagnosticsExportManager {
         val exportedAt: Long,
         val windowHours: Long,
         val summary: Summary,
+        val analysis: DiagnosticsAnalyzer.Analysis,
         val events: List<CaptureLog.Event>,
         val entries: List<EntrySample>,
         val recordings: List<RecordingSample>,
@@ -134,6 +135,7 @@ object DiagnosticsExportManager {
             exportedAt = System.currentTimeMillis(),
             windowHours = windowHours,
             summary = summary,
+            analysis = DiagnosticsAnalyzer.analyze(events, entries, recordings),
             events = events,
             entries = entries.map { it.toSample() },
             recordings = recordings.map { recording ->

@@ -50,7 +50,7 @@ class GoogleCalendarSyncManager(context: Context) {
             calendarIds = selectedIds
         )
 
-        val calendarLabels = googleCalendars.associateBy({ it.id }, { it.label })
+        val calendarLabels = googleCalendars.associateBy({ it.id }, { it.displayName })
         val importedFutureEvents = repository.getTimelineEventsByDateRangeOnce(todayStart, rangeEnd)
             .filter {
                 it.type == TimelineEventType.CALENDAR &&

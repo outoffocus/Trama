@@ -46,6 +46,7 @@ object ManualActionSuggestionExtractor {
         "reservar",
         "pedir",
         "recoger",
+        "mover",
         "ir",
         "escribir",
         "contestar",
@@ -63,11 +64,11 @@ object ManualActionSuggestionExtractor {
         }
         .joinToString("|")
     private val inlineSplitRegex = Regex(
-        """(?:,\s*|;\s*|\s+(?:y|e|ademas|además|tambien|también|luego|despues|después)\s+)(?=(?:$splitVerbPattern)\b)""",
+        """(?:,\s*|;\s*|\s+(?:y\s+ademas|y\s+además|y\s+tambien|y\s+también|y|e|ademas|además|tambien|también|luego|despues|después)\s+)(?=(?:(?:tengo\s+que|hay\s+que|debo|deberia|debería|necesito)\s+)?(?:$splitVerbPattern)\b)""",
         RegexOption.IGNORE_CASE
     )
     private val leadingTriggerRegex = Regex(
-        pattern = """^(recordar|recordarme(?:\s+de)?|recuerdame|recuérdame|acordarme(?:\s+de)?|acordarnos(?:\s+de)?|me olvid[eé]|se me fue la olla|tengo que|hay que|debo|deberia|debería|necesito)\s+""",
+        pattern = """^(recordar|recordarme(?:\s+de)?|recuerdame|recuérdame|acordarme(?:\s+de)?|acordarnos(?:\s+de)?|me olvid[eé]|se me fue la olla|me qued[oó] pendiente|tengo pendiente|tengo que|hay que|debo|deberia|debería|necesito)\s+""",
         option = RegexOption.IGNORE_CASE
     )
     private val explicitTimeRegex = Regex("""\ba\s+las\s+(\d{1,2})(?::(\d{2}))?\b""", RegexOption.IGNORE_CASE)
@@ -158,12 +159,14 @@ object ManualActionSuggestionExtractor {
     private fun isTemporal(token: String): Boolean = token in TEMPORAL_TOKENS
 
     private fun cleanText(raw: String, displayTrigger: String?): String {
-        val noTrigger = raw.trim().replaceFirst(leadingTriggerRegex, "")
+        val rawTrimmed = raw.trim()
+        val hasOwnTrigger = leadingTriggerRegex.containsMatchIn(rawTrimmed)
+        val noTrigger = rawTrimmed.replaceFirst(leadingTriggerRegex, "")
         val cleaned = noTrigger
             .trim()
             .trimStart(',', ':', ';', '-', ' ')
             .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
-        return if (displayTrigger != null) {
+        return if (displayTrigger != null && !hasOwnTrigger) {
             "$displayTrigger ${cleaned.replaceFirstChar { it.lowercase(Locale.getDefault()) }}"
         } else {
             cleaned
@@ -174,7 +177,8 @@ object ManualActionSuggestionExtractor {
         val lower = text.lowercase(Locale.getDefault())
         return when {
             lower.contains("llamar") || lower.contains("telefonear") -> EntryActionType.CALL
-            lower.contains("comprar") -> EntryActionType.BUY
+            lower.contains("comprar") || lower.contains("hacer la compra") ||
+                Regex("""\bcompra\b""").containsMatchIn(lower) -> EntryActionType.BUY
             lower.contains("enviar") || lower.contains("mandar") -> EntryActionType.SEND
             lower.contains("reunion") || lower.contains("reunión") ||
                 lower.contains("cita") || lower.contains("reserva") ||

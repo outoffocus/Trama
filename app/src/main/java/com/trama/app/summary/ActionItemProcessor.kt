@@ -15,6 +15,7 @@ import com.trama.shared.model.EntryStatus
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.text.Normalizer
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -468,7 +469,8 @@ class ActionItemProcessor(private val context: Context) {
         val lower = text.lowercase()
         return when {
             lower.contains("llamar") || lower.contains("llama") -> "CALL"
-            lower.contains("comprar") || lower.contains("compra") -> "BUY"
+            lower.contains("comprar") || lower.contains("hacer la compra") ||
+                Regex("""\bcompra\b""").containsMatchIn(lower) -> "BUY"
             lower.contains("enviar") || lower.contains("mandar") -> "SEND"
             lower.contains("reunión") || lower.contains("cita") || lower.contains("evento") -> "EVENT"
             lower.contains("revisar") || lower.contains("mirar") -> "REVIEW"
@@ -507,15 +509,17 @@ class ActionItemProcessor(private val context: Context) {
         triggerSourceText: String = ""
     ): LLMOutcome {
         val parsed = json.decodeFromString<LLMResponse>(JsonRepair.extractAndRepair(responseText))
-        require(parsed.cleanText.isNotBlank()) { "LLM returned blank cleanText" }
+        val parsedActions = parsed.normalizedActions()
+        require(parsedActions.isNotEmpty()) { "LLM returned no cleanText or actions" }
         val displayTrigger = ManualActionSuggestionExtractor.leadingDisplayTrigger(triggerSourceText)
+        val firstAction = parsedActions.first()
 
         val primary = buildProcessingResult(
-            cleanText = parsed.cleanText.trim(),
-            actionType = parsed.actionType,
-            dueDate = parsed.dueDate,
-            priority = parsed.priority,
-            confidence = parsed.confidence * confidenceMultiplier,
+            cleanText = firstAction.cleanText.trim(),
+            actionType = firstAction.actionType,
+            dueDate = firstAction.dueDate,
+            priority = firstAction.priority,
+            confidence = firstAction.effectiveConfidence(parsed.confidence) * confidenceMultiplier,
             modelIsActionable = parsed.isActionable,
             kind = normalizeKind(parsed.kind, parsed.isActionable),
             usefulnessScore = parsed.usefulnessScore,
@@ -523,8 +527,8 @@ class ActionItemProcessor(private val context: Context) {
             discardReason = parsed.discardReason,
             displayTrigger = displayTrigger
         )
-        val extras = if (primary.kind == KIND_TASK) parsed.extraActions else emptyList()
-        val processingExtras = extras
+        val extras = if (primary.kind == KIND_TASK) parsedActions.drop(1) else emptyList()
+        val llmExtras = extras
             .filter { it.cleanText.isNotBlank() }
             .map { extra ->
                 buildProcessingResult(
@@ -532,9 +536,7 @@ class ActionItemProcessor(private val context: Context) {
                     actionType = extra.actionType,
                     dueDate = extra.dueDate,
                     priority = extra.priority,
-                    // Extras inherit the primary's confidence — the model only
-                    // signals actionability at the top level.
-                    confidence = parsed.confidence * confidenceMultiplier,
+                    confidence = extra.effectiveConfidence(parsed.confidence) * confidenceMultiplier,
                     modelIsActionable = true,
                     kind = KIND_TASK,
                     usefulnessScore = primary.usefulnessScore,
@@ -543,7 +545,55 @@ class ActionItemProcessor(private val context: Context) {
                     displayTrigger = displayTrigger
                 )
             }
+        val heuristicExtras = if (primary.kind == KIND_TASK) {
+            buildHeuristicSupplementalActions(
+                sourceText = triggerSourceText,
+                primary = primary,
+                existingExtras = llmExtras
+            )
+        } else {
+            emptyList()
+        }
+        val processingExtras = (llmExtras + heuristicExtras)
+            .distinctBy { normalizeForComparison(it.cleanText) }
         return LLMOutcome(primary = primary, extras = processingExtras)
+    }
+
+    /**
+     * The LLM sometimes returns a valid primary task but omits extraActions for
+     * compound utterances. Use the conservative local splitter only as a supplement:
+     * keep candidates that are not already covered by the primary or LLM extras.
+     */
+    private fun buildHeuristicSupplementalActions(
+        sourceText: String,
+        primary: ProcessingResult,
+        existingExtras: List<ProcessingResult>
+    ): List<ProcessingResult> {
+        val suggestions = ManualActionSuggestionExtractor.extract(sourceText)
+            .distinctBy { normalizeForComparison(it.text) }
+        if (suggestions.size < 2) return emptyList()
+
+        val existing = listOf(primary.cleanText) + existingExtras.map { it.cleanText }
+        return suggestions
+            .filterNot { suggestion ->
+                existing.any { existingText -> actionsOverlap(existingText, suggestion.text) }
+            }
+            .take(3)
+            .map { suggestion ->
+                buildProcessingResult(
+                    cleanText = suggestion.text,
+                    actionType = suggestion.actionType,
+                    dueDate = suggestion.dueDate?.let { dateFormat.format(it) },
+                    priority = suggestion.priority,
+                    confidence = primary.confidence,
+                    modelIsActionable = true,
+                    kind = KIND_TASK,
+                    usefulnessScore = primary.usefulnessScore,
+                    actionabilityScore = primary.actionabilityScore,
+                    discardReason = null,
+                    displayTrigger = null
+                )
+            }
     }
 
     @Suppress("unused")
@@ -617,6 +667,24 @@ class ActionItemProcessor(private val context: Context) {
         if (trimmed.startsWith(displayTrigger, ignoreCase = true)) return trimmed
         return "$displayTrigger ${trimmed.replaceFirstChar { it.lowercase(Locale.getDefault()) }}"
     }
+
+    private fun actionsOverlap(left: String, right: String): Boolean {
+        val leftTokens = normalizeForComparison(left).split(" ").filter { it.length >= 3 }.toSet()
+        val rightTokens = normalizeForComparison(right).split(" ").filter { it.length >= 3 }.toSet()
+        if (leftTokens.isEmpty() || rightTokens.isEmpty()) return false
+        val shared = leftTokens.intersect(rightTokens)
+        val smaller = minOf(leftTokens.size, rightTokens.size)
+        if (smaller <= 2) return shared.size == smaller
+        return shared.size >= maxOf(2, (smaller * 0.6f).toInt())
+    }
+
+    private fun normalizeForComparison(value: String): String =
+        Normalizer.normalize(value.lowercase(Locale.getDefault()), Normalizer.Form.NFD)
+            .replace("\\p{Mn}+".toRegex(), "")
+            .replace(Regex("[^a-z0-9\\s]"), " ")
+            .replace(Regex("\\b(?:tengo|deberia|debería|hacer|que|para|con|los|las|una|uno|mis|mi|el|la|de|a|y)\\b"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
 
     private fun shouldAcceptAsTask(result: ProcessingResult): Boolean =
         result.isActionable && result.confidence >= ACTIONABLE_CONFIDENCE_THRESHOLD
@@ -863,14 +931,54 @@ Reglas:
         val usefulnessScore: Float? = null,
         val actionabilityScore: Float? = null,
         val discardReason: String? = null,
-        val cleanText: String,
+        val cleanText: String = "",
         val actionType: String = "GENERIC",
         val dueDate: String? = null,
         val priority: String = "NORMAL",
         val confidence: Float = 0.8f,
         val isActionable: Boolean = true,
+        val actions: List<LLMAction> = emptyList(),
         val extraActions: List<LLMExtraAction> = emptyList()
-    )
+    ) {
+        fun normalizedActions(): List<LLMAction> {
+            val explicit = actions.filter { it.cleanText.isNotBlank() }
+            if (explicit.isNotEmpty()) return explicit
+
+            val primary = cleanText
+                .takeIf { it.isNotBlank() }
+                ?.let {
+                    LLMAction(
+                        cleanText = it,
+                        actionType = actionType,
+                        dueDate = dueDate,
+                        priority = priority,
+                        confidence = confidence
+                    )
+                }
+            return listOfNotNull(primary) + extraActions
+                .filter { it.cleanText.isNotBlank() }
+                .map {
+                    LLMAction(
+                        cleanText = it.cleanText,
+                        actionType = it.actionType,
+                        dueDate = it.dueDate,
+                        priority = it.priority,
+                        confidence = null
+                    )
+                }
+        }
+    }
+
+    @Serializable
+    private data class LLMAction(
+        val cleanText: String,
+        val actionType: String = "GENERIC",
+        val dueDate: String? = null,
+        val priority: String = "NORMAL",
+        val confidence: Float? = null
+    ) {
+        fun effectiveConfidence(fallback: Float): Float = confidence ?: fallback
+    }
 
     @Serializable
     private data class LLMExtraAction(

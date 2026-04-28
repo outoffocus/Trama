@@ -136,6 +136,150 @@ class ActionItemProcessorTest {
     }
 
     @Test
+    fun `compound reminder is split into independent local suggestions`() {
+        val suggestions = ManualActionSuggestionExtractor.extract(
+            "debería hacer la compra mañana y además tengo que llamar a mi hermana para decirle que comemos el domingo con mis padres"
+        )
+
+        assertEquals(2, suggestions.size)
+        assertEquals("Debería hacer la compra mañana", suggestions[0].text)
+        assertEquals("BUY", suggestions[0].actionType)
+        assertEquals("Llamar a mi hermana para decirle que comemos el domingo con mis padres", suggestions[1].text)
+        assertEquals("CALL", suggestions[1].actionType)
+    }
+
+    @Test
+    fun `heuristic supplemental actions recover extra action omitted by llm`() {
+        val primary = callPrivate<ActionItemProcessor.ProcessingResult>(
+            "buildProcessingResult",
+            "Hacer la compra",
+            "BUY",
+            "2026-04-29",
+            "NORMAL",
+            0.9f,
+            true,
+            null
+        )
+
+        val extras = callPrivate<List<ActionItemProcessor.ProcessingResult>>(
+            "buildHeuristicSupplementalActions",
+            "debería hacer la compra mañana y además tengo que llamar a mi hermana para decirle que comemos el domingo con mis padres",
+            primary,
+            emptyList<ActionItemProcessor.ProcessingResult>()
+        )
+
+        assertEquals(1, extras.size)
+        assertEquals("CALL", extras.first().actionType)
+        assertTrue(extras.first().cleanText.contains("mi hermana"))
+        assertTrue(extras.first().cleanText.contains("domingo"))
+    }
+
+    @Test
+    fun `pending compound reminder splits shared pending trigger`() {
+        val suggestions = ManualActionSuggestionExtractor.extract(
+            "me quedó pendiente enviar un email a cecile y mover el tema de prevención"
+        )
+
+        assertEquals(2, suggestions.size)
+        assertEquals("Enviar un email a cecile", suggestions[0].text)
+        assertEquals("SEND", suggestions[0].actionType)
+        assertEquals("Mover el tema de prevención", suggestions[1].text)
+        assertEquals("GENERIC", suggestions[1].actionType)
+    }
+
+    @Test
+    fun `heuristic supplemental actions recover moved topic omitted by llm`() {
+        val primary = callPrivate<ActionItemProcessor.ProcessingResult>(
+            "buildProcessingResult",
+            "Enviar un email a Cecile",
+            "SEND",
+            null,
+            "NORMAL",
+            0.9f,
+            true,
+            null
+        )
+
+        val extras = callPrivate<List<ActionItemProcessor.ProcessingResult>>(
+            "buildHeuristicSupplementalActions",
+            "me quedó pendiente enviar un email a cecile y mover el tema de prevención",
+            primary,
+            emptyList<ActionItemProcessor.ProcessingResult>()
+        )
+
+        assertEquals(1, extras.size)
+        assertEquals("GENERIC", extras.first().actionType)
+        assertTrue(extras.first().cleanText.contains("Mover el tema"))
+    }
+
+    @Test
+    fun `parseResult prefers actions array as canonical task list`() {
+        val json = """
+            {
+              "kind":"TASK",
+              "usefulnessScore":0.9,
+              "actionabilityScore":0.9,
+              "discardReason":null,
+              "isActionable":true,
+              "cleanText":"",
+              "actionType":"GENERIC",
+              "dueDate":null,
+              "priority":"NORMAL",
+              "confidence":0.8,
+              "actions":[
+                {"cleanText":"Enviar un email a Cecile","actionType":"SEND","dueDate":null,"priority":"NORMAL","confidence":0.86},
+                {"cleanText":"Mover el tema de prevención","actionType":"GENERIC","dueDate":null,"priority":"NORMAL","confidence":0.84}
+              ],
+              "extraActions":[]
+            }
+        """.trimIndent()
+
+        val outcome = callPrivate<ActionItemProcessor.LLMOutcome>(
+            "parseResult",
+            json,
+            1.0f,
+            "me quedó pendiente enviar un email a cecile y mover el tema de prevención"
+        )
+
+        assertEquals("Enviar un email a Cecile", outcome.primary.cleanText)
+        assertEquals("SEND", outcome.primary.actionType)
+        assertEquals(1, outcome.extras.size)
+        assertEquals("Mover el tema de prevención", outcome.extras.first().cleanText)
+    }
+
+    @Test
+    fun `parseResult keeps legacy cleanText plus extraActions response`() {
+        val json = """
+            {
+              "kind":"TASK",
+              "usefulnessScore":0.9,
+              "actionabilityScore":0.9,
+              "discardReason":null,
+              "isActionable":true,
+              "cleanText":"Enviar un email a Cecile",
+              "actionType":"SEND",
+              "dueDate":null,
+              "priority":"NORMAL",
+              "confidence":0.86,
+              "extraActions":[
+                {"cleanText":"Mover el tema de prevención","actionType":"GENERIC","dueDate":null,"priority":"NORMAL"}
+              ]
+            }
+        """.trimIndent()
+
+        val outcome = callPrivate<ActionItemProcessor.LLMOutcome>(
+            "parseResult",
+            json,
+            1.0f,
+            "me quedó pendiente enviar un email a cecile y mover el tema de prevención"
+        )
+
+        assertEquals("Enviar un email a Cecile", outcome.primary.cleanText)
+        assertEquals(1, outcome.extras.size)
+        assertEquals("Mover el tema de prevención", outcome.extras.first().cleanText)
+    }
+
+    @Test
     fun `generic verbless fragments are still rejected`() {
         val result = callPrivate<ActionItemProcessor.ProcessingResult>(
             "buildProcessingResult",
@@ -187,6 +331,7 @@ class ActionItemProcessorTest {
             ""                          // recentContext
         )
         assertTrue(prompt.contains("recordar llamar a Juan"))
+        assertTrue(prompt.contains("\"actions\""))
         assertTrue(prompt.contains("\"cleanText\""))
         assertTrue(prompt.contains("\"actionType\""))
         assertTrue(prompt.contains("\"priority\""))

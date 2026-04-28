@@ -36,6 +36,7 @@ Analiza esta nota de voz capturada y devuelve SOLO un objeto JSON valido.
 - No resumas en exceso. Es mejor mantener contexto util que perder precision.
 - Usa la transcripcion original como fuente principal de verdad si difiere del texto normalizado.
 - Primero clasifica la utilidad real para el usuario. Solo extrae tarea si merece aparecer en su lista de pendientes.
+	- Piensa SIEMPRE en una lista de acciones. Si la nota contiene varias acciones independientes, devuelvelas TODAS en actions, en orden de aparicion. No fusiones acciones de tipos distintos en una sola tarea.
 
 Formato exacto:
 {
@@ -55,8 +56,17 @@ Formato exacto:
   "people": ["personas mencionadas"],
   "places": ["lugares mencionados"],
   "phones": ["telefonos mencionados"],
-  "numbers": ["cantidades, importes o numeros importantes"],
-  "extraActions": [
+	  "numbers": ["cantidades, importes o numeros importantes"],
+	  "actions": [
+	    {
+	      "cleanText": "accion concreta, sin trigger inicial",
+	      "actionType": "CALL|BUY|SEND|EVENT|REVIEW|TALK_TO|GENERIC",
+	      "dueDate": "YYYY-MM-DD o null",
+	      "priority": "LOW|NORMAL|HIGH|URGENT",
+	      "confidence": 0.0-1.0
+	    }
+	  ],
+	  "extraActions": [
     {
       "cleanText": "accion adicional si existe",
       "actionType": "CALL|BUY|SEND|EVENT|REVIEW|TALK_TO|GENERIC",
@@ -73,7 +83,8 @@ CLASIFICACION:
 - DISCARD: ruido, prueba de micro, frase rota, auto-charla, pregunta sobre la app, comentario casual sin valor futuro.
 - Ante la duda entre TASK y otra categoria, NO uses TASK.
 - usefulnessScore mide si merece mostrarse al usuario. actionabilityScore mide si se puede marcar como hecha.
-- Para NOTE, UNCLEAR o DISCARD: isActionable=false, confidence<=0.3, actionabilityScore<=0.3, extraActions=[].
+	- Para NOTE, UNCLEAR o DISCARD: isActionable=false, confidence<=0.3, actionabilityScore<=0.3, extraActions=[].
+	- Para NOTE, UNCLEAR o DISCARD: isActionable=false, confidence<=0.3, actionabilityScore<=0.3, actions=[], extraActions=[].
 
 NO EXTRAER (isActionable=false, confidence<=0.3):
 - solo expresiones temporales o de frecuencia: "mañana", "hoy", "esta tarde", "todos los días", "a veces"
@@ -163,10 +174,25 @@ Reglas:
 - people, places, phones, numbers:
   - incluye solo valores mencionados o claramente presentes en la nota
   - no inventes ninguno
-- extraActions:
-  - usa [] si la nota solo contiene una accion principal
-  - añade acciones extra SOLO si son claramente independientes y accionables
-  - conserva el contexto compartido dentro del texto de cada accion cuando haga falta para no perder informacion
+	- actions:
+	  - es la lista principal de tareas a crear. Para TASK debe contener TODAS las acciones independientes y accionables.
+	  - usa [] si no hay acciones claras.
+	  - si solo hay una accion, actions debe tener un unico elemento igual a cleanText/actionType/dueDate/priority.
+	  - cleanText/actionType/dueDate/priority de nivel superior deben copiar la primera accion de actions por compatibilidad.
+	  - extraActions queda como compatibilidad: debe copiar actions sin la primera accion.
+	  - añade acciones separadas SOLO si son claramente independientes y accionables
+	  - si aparecen conectores como "y además", "también", "luego", "después" seguidos de otra obligación ("tengo que", "debería", "necesito"), normalmente es otra accion extra
+	  - conserva el contexto compartido dentro del texto de cada accion cuando haga falta para no perder informacion
+
+<example id="7">
+Input: "deberia hacer la compra mañana y además tengo que llamar a mi hermana para decirle que comemos el domingo con mis padres"
+	Output: {"kind":"TASK","usefulnessScore":0.95,"actionabilityScore":0.95,"discardReason":null,"isActionable":true,"cleanText":"Hacer la compra","actionType":"BUY","dueDate":"{{tomorrow}}","priority":"NORMAL","confidence":0.9,"actions":[{"cleanText":"Hacer la compra","actionType":"BUY","dueDate":"{{tomorrow}}","priority":"NORMAL","confidence":0.9},{"cleanText":"Llamar a mi hermana para decirle que comemos el domingo con mis padres","actionType":"CALL","dueDate":null,"priority":"NORMAL","confidence":0.9}],"extraActions":[{"cleanText":"Llamar a mi hermana para decirle que comemos el domingo con mis padres","actionType":"CALL","dueDate":null,"priority":"NORMAL"}]}
+</example>
+
+<example id="8">
+Input: "me quedo pendiente enviar un email a Cecile y mover el tema de prevención"
+	Output: {"kind":"TASK","usefulnessScore":0.9,"actionabilityScore":0.9,"discardReason":null,"isActionable":true,"cleanText":"Enviar un email a Cecile","actionType":"SEND","dueDate":null,"priority":"NORMAL","confidence":0.86,"actions":[{"cleanText":"Enviar un email a Cecile","actionType":"SEND","dueDate":null,"priority":"NORMAL","confidence":0.86},{"cleanText":"Mover el tema de prevención","actionType":"GENERIC","dueDate":null,"priority":"NORMAL","confidence":0.86}],"extraActions":[{"cleanText":"Mover el tema de prevención","actionType":"GENERIC","dueDate":null,"priority":"NORMAL"}]}
+</example>
 
 RESPONDE SOLO con el objeto JSON. No uses backticks ni bloques ``` ni texto fuera del JSON.
 

@@ -9,13 +9,18 @@ import com.trama.app.summary.GemmaClient
 import com.trama.app.summary.GoogleCalendarSyncManager
 import com.trama.app.summary.SummaryScheduler
 import com.trama.app.ui.SettingsDataStore
+import dagger.hilt.android.HiltAndroidApp
+import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
+@HiltAndroidApp
 class TramaApplication : Application() {
+
+    @Inject lateinit var settings: SettingsDataStore
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -29,7 +34,6 @@ class TramaApplication : Application() {
 
     private fun scheduleDailySummaryIfEnabled() {
         appScope.launch {
-            val settings = SettingsDataStore(applicationContext)
             val enabled = settings.summaryEnabled.first()
             if (enabled) {
                 val hour = settings.summaryHour.first()

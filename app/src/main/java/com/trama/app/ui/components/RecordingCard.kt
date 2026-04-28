@@ -150,48 +150,6 @@ fun RecordingCard(
                 )
             }
 
-            // Footer: date + source
-            Spacer(modifier = Modifier.height(6.dp))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Icon(
-                    imageVector = if (recording.source == Source.WATCH) Icons.Default.Watch
-                                  else Icons.Default.Mic,
-                    contentDescription = null,
-                    modifier = Modifier.size(12.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                )
-                Text(
-                    text = dateFormat.format(Date(recording.createdAt)),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                )
-                // Processing mode indicator
-                if (recording.processingStatus == RecordingStatus.PROCESSING) {
-                    Text(
-                        text = "· Procesando...",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = eventAccent.copy(alpha = 0.8f)
-                    )
-                } else if (recording.processingStatus == RecordingStatus.COMPLETED) {
-                    val isCloud = recording.processedBy == "CLOUD"
-                    Icon(
-                        imageVector = if (isCloud) Icons.Default.Cloud else Icons.Default.CloudOff,
-                        contentDescription = when (recording.processedBy) {
-                            "CLOUD" -> "Gemini"
-                            "LOCAL" -> "Local"
-                            else -> "Local"
-                        },
-                        modifier = Modifier.size(12.dp),
-                        tint = if (isCloud)
-                            eventAccent.copy(alpha = 0.6f)
-                        else
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                    )
-                }
-            }
         }
         }
     }
