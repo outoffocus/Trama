@@ -1,429 +1,400 @@
-# Trama — Arquitectura y Handoff Técnico
+# Trama - Arquitectura y Handoff Tecnico
 
-## 1. Visión de producto actual
+## 1. Vision actual
 
-Trama ya no debe leerse como “una app de resumen diario” ni como “un recorder con IA”.
+Trama debe leerse como una memoria operativa local-first:
 
-El modelo de producto vigente es:
+- `Home`: flujo vivo del dia actual
+- `Calendar`: historico accionable por dia
+- `Chat`: preguntas sobre memoria, lugares, tareas y dias
+- `Recordings`: grabaciones manuales y acciones extraidas
+- `DailyPage + markdown`: memoria tecnica privada generada por fecha
+- `Wear OS`: captura ligera y transferencia de audio al telefono
 
-- `Home`: flujo vivo y operativo de hoy
-- `Calendar`: archivo diario e histórico accionable
-- `DailyPage + .md nocturno`: memoria técnica privada para futuro chat
+El objetivo del producto es capturar con poca friccion, estructurar despues y permitir recuperar contexto sin convertir al usuario en editor permanente.
 
-La app intenta capturar primero, estructurar después y recordar a largo plazo sin obligar al usuario a editar todo manualmente.
+## 2. Estado a 2026-04-28
 
-## 2. Estado actual a 2026-04-12
+### Movil
 
-### Móvil
-
-- escucha continua on-device con pipeline dedicado
-- gate preferente con `Vosk`
-- transcripción final con `Whisper` vía `sherpa-onnx`
+- Android app en Kotlin, Compose, Material 3 y Navigation Compose
+- Room compartido en `shared`, version 12
+- escucha continua con pipeline dedicado
+- `VoskGateAsr` como gate ligero
+- `SherpaWhisperAsrEngine` como transcriptor final
 - fallback a `SpeechRecognizer`
-- speaker verification offline integrada después de Whisper
-- calendario como centro del histórico
-- `DailyPage` persistida por fecha + `.md` nocturno privado
+- speaker verification offline integrada despues de Whisper
+- tracking opcional de ubicacion con dwell detection
+- lugares persistidos, valoraciones, opiniones y apertura en mapas externos
+- importacion de calendarios seleccionados del sistema
+- chat local sobre repositorio y contexto diario
+- Gemini cloud + Gemma local para procesamiento, resumen y extraccion
+- WorkManager para resumen diario, procesado diferido y backups
+- diagnostico exportable del pipeline de captura
 
 ### Wear OS
 
-- app simplificada a tres acciones visibles
-  - `Escucha continua`
-  - `Grabadora`
-  - `Transferir al teléfono`
-- grabadora manual del reloj:
-  - captura PCM16 local
-  - transfiere audio al móvil
-  - el móvil transcribe y procesa
-- escucha continua del reloj:
-  - detector ligero con `SpeechRecognizer`
-  - captura corta post-trigger
-  - transferencia de audio al móvil
-  - fallback al `triggerText` si Whisper no devuelve texto
+- Wear Compose con UI de tres modos: escucha, grabadora, telefono
+- escucha primaria con `VoskGateAsr` y `AudioRecord`
+- fallback con `SpeechRecognizer` si el modelo Vosk no esta disponible
+- ventana rolling con preroll y cola de audio activa tras trigger
+- transferencia de PCM16 al telefono por Wear Data Layer
+- guardas de bateria y handoff del microfono entre reloj y telefono
 
 ### Estado de madurez
 
-- móvil: relativamente avanzado
-- reloj: funcional, pero todavía híbrido y con menor sofisticación contextual
+- movil: funcional y amplio, pero con deuda estructural en UI/servicios
+- reloj: bastante mas capaz que una sincronizacion de texto, aunque sigue delegando el procesamiento serio al telefono
+- datos: Room y repositorio son el nucleo mas estable
+- IA: util y cableada, pero con riesgos de coste, latencia, seguridad de claves y fallbacks
 
-## 3. Módulos
+## 3. Modulos
 
 ```text
 app/
-  móvil: UI Compose, servicios, ASR, postproceso, sync, backup
+  UI Compose, servicios foreground, ASR final, IA, ubicacion, chat, backup, diagnostico y sync.
 
 shared/
-  modelos, Room, utilidades de audio, sync, IntentDetector, contratos compartidos
+  Room, DAOs, repositorio, modelos, migraciones, audio base, Vosk gate, IntentDetector,
+  validadores y contratos de sincronizacion.
 
 wear/
-  UI Wear, listener, grabadora, sync y captura ligera
+  Wear Compose, listener foreground, grabadora, captura ligera, control de microfono y sync.
 ```
 
-## 4. Pipeline de voz en móvil
+Dependencias relevantes:
 
-### Ruta principal
+- AGP 9.0.1, Kotlin 2.2.10, Java 17
+- Compose BOM, Navigation Compose, Wear Compose, Horologist
+- Room, WorkManager, DataStore Preferences
+- Play Services Wearable
+- Vosk Android, sherpa-onnx JNI/assets, MediaPipe GenAI, LiteRT-LM, Gemini SDK
 
-Archivos centrales:
+## 4. UI y navegacion
+
+`app/ui/NavGraph.kt` define las rutas visibles:
+
+- `HomeScreen`
+- `CalendarScreen`
+- `ChatScreen`
+- `SearchScreen`
+- `SettingsScreen` y secciones internas
+- `EntryDetailScreen`
+- `RecordingDetailScreen`
+- `RecordingsListScreen`
+- `PlaceDetailScreen`
+
+La UI todavia obtiene dependencias directamente con `DatabaseProvider`, `SettingsDataStore` y managers concretos dentro de composables. Existen comentarios TODO en pantallas principales para extraer repositorio y estado a ViewModels.
+
+## 5. Pipeline de captura en movil
+
+Archivos principales:
 
 - `app/service/KeywordListenerService.kt`
 - `app/audio/ContextualAudioCaptureEngine.kt`
 - `shared/audio/CircularAudioBuffer.kt`
-- `app/audio/VoskGateAsr.kt`
+- `shared/audio/VoskGateAsr.kt`
 - `app/audio/SherpaWhisperAsrEngine.kt`
+- `app/speech/speaker/SherpaSpeakerVerificationManager.kt`
 - `shared/speech/IntentDetector.kt`
+- `app/summary/ActionItemProcessor.kt`
 
 Flujo:
 
-1. `KeywordListenerService` arranca la escucha
-2. `ContextualAudioCaptureEngine` mantiene captura PCM a 16 kHz
-3. `CircularAudioBuffer` conserva preroll
-4. `SimpleVAD` detecta actividad de voz
-5. `VoskGateAsr` decide si la ventana merece transcripción completa
-6. se construye un `CapturedAudioWindow`
-7. `SherpaWhisperAsrEngine` produce transcripción final
-8. `IntentDetector` clasifica
-9. si pasa speaker verification y validaciones, se inserta `DiaryEntry`
-10. `ActionItemProcessor` estructura y enriquece
+1. `KeywordListenerService` arranca la escucha foreground.
+2. `ContextualAudioCaptureEngine` captura PCM a 16 kHz.
+3. `CircularAudioBuffer` mantiene preroll.
+4. `SimpleVAD` detecta voz y segmenta ventanas.
+5. `VoskGateAsr` evalua si la ventana merece transcripcion completa.
+6. Se construye `CapturedAudioWindow`.
+7. `SherpaWhisperAsrEngine` genera texto final.
+8. Speaker verification opcional calcula embedding sobre la misma ventana.
+9. `IntentDetector` clasifica contra patrones configurables.
+10. `EntryValidatorHeuristics` y deduplicacion filtran ruido.
+11. `ActionItemProcessor` limpia, enriquece y persiste.
+12. Room, timeline, sync y UI reciben el resultado.
 
-### Propiedades
+Propiedades:
 
 - audio contextual en RAM
-- `t0/t1` configurables
-- degradación posible a recognizer del sistema
-- pipeline orientado a eficiencia: gate barato + transcripción cara solo al final
+- preroll/postroll configurables desde ajustes
+- gate barato antes del transcriptor caro
+- trazas en `CaptureLog` para diagnostico
+- fallback degradado si el stack dedicado falla
 
-## 5. Speaker verification
-
-Estado actual:
-
-- **sí está cableada**
-- ya no es solo una interfaz preparada
+## 6. Grabaciones
 
 Archivos:
 
-- `app/speech/speaker/SpeakerEmbeddingEngine.kt`
-- `app/speech/speaker/SherpaSpeakerEmbeddingEngine.kt`
-- `app/speech/speaker/SpeakerVerificationManager.kt`
-- `app/speech/speaker/SherpaSpeakerVerificationManager.kt`
-- `app/service/KeywordListenerService.kt`
-- `app/ui/screens/SettingsScreen.kt`
+- `app/service/RecordingService.kt`
+- `app/service/CaptureSaver.kt`
+- `app/ui/screens/RecordingsListScreen.kt`
+- `app/ui/screens/RecordingDetailScreen.kt`
+- `app/summary/RecordingProcessor.kt`
+- `app/summary/RecordingProcessorWorker.kt`
 
-Flujo:
+Las grabaciones manuales se guardan como `Recording`, se transcriben y pueden producir acciones sugeridas. El procesado intenta Gemini cloud, Gemma local y heuristicas/fallbacks segun disponibilidad.
 
-1. Whisper transcribe
-2. se calcula embedding del hablante sobre la misma ventana
-3. se compara contra el perfil enrolado del usuario
-4. si falla, la captura se rechaza
+## 7. IA y memoria
 
-Riesgo:
+Archivos:
 
-- la feature es ya real, pero debe considerarse sensible a tuning de umbral y calidad de muestras
+- `app/summary/ActionItemProcessor.kt`
+- `app/summary/SummaryGenerator.kt`
+- `app/summary/DailyPageGenerator.kt`
+- `app/summary/DailySummaryWorker.kt`
+- `app/summary/GemmaClient.kt`
+- `app/summary/GemmaModelManager.kt`
+- `app/summary/PromptTemplateStore.kt`
 
-## 6. Persistencia
+Rutas:
 
-### Base de datos
+- Gemini cloud para estructuracion, acciones, resumenes y opiniones
+- Gemma local descargable para ejecucion on-device cuando esta disponible y habilitado
+- heuristicas locales para reparacion JSON, duplicados y sugerencias manuales
 
-Base Room compartida en `shared/data`.
+`DailyPage` persiste:
 
-Entidades principales:
-
-- `DiaryEntry`
-- `Recording`
-- `Place`
-- `TimelineEvent`
-- `DailyPage`
-
-El proyecto arrastra varias migraciones y la capa Room es una de las partes más sólidas del sistema.
-
-### `DiaryEntry`
-
-Unidad operativa principal:
-
-- texto original
-- `cleanText`
-- estado
-- prioridad
-- tipo de acción
-- `dueDate`
-- metadatos de origen y sincronización
-
-### `Recording`
-
-Se usa para:
-
-- grabaciones manuales del móvil
-- grabaciones del reloj importadas al móvil
-- capturas de audio del reloj que necesitan pasar por el pipeline de procesado
-
-### `DailyPage`
-
-Se usa como persistencia diaria de memoria:
-
-- fecha
 - estado (`DRAFT` / `FINAL`)
 - resumen breve
 - markdown
-- timestamps
-- marca de revisión/manualidad
+- `insightsJson`
+- revision manual
+- ruta opcional del markdown privado
 
-## 7. Calendar-first
+El markdown se escribe en `filesDir/daily-pages/`.
 
-La decisión actual de producto es clara:
-
-- no existe ya una pantalla visible principal separada de `Daily Review`
-- `CalendarScreen` es el punto de entrada al histórico diario
-
-Responsabilidades de `CalendarScreen`:
-
-- seleccionar día
-- mostrar contexto del día elegido
-- listar tareas activas, completadas, pospuestas, duplicadas
-- listar lugares visitados
-- permitir puntuación rápida con estrellas
-- abrir ficha del lugar o mapas externos
-
-El resumen diario visible se construye desde estado vivo, no desde un `briefSummary` estancado.
-
-## 8. DailyPage y markdown nocturno
+## 8. Chat
 
 Archivos:
 
-- `app/summary/DailyPageGenerator.kt`
-- `app/summary/DailyPageMarkdownStore.kt`
-- `app/summary/DailySummaryWorker.kt`
+- `app/ui/screens/ChatScreen.kt`
+- `app/chat/DiaryAssistant.kt`
+- `app/chat/ChatQueryInterpreter.kt`
+- `app/chat/ChatContextRetriever.kt`
+- `app/chat/ChatAnswerComposer.kt`
+- `app/chat/DiaryContextBuilder.kt`
 
-Flujo:
+El chat interpreta preguntas sobre dias, lugares, duraciones, orden de visitas y tareas completadas. Recupera contexto desde el repositorio y compone respuestas con informacion local. Es una superficie de memoria, no un buscador generico.
 
-1. el worker nocturno recopila datos reales del día
-2. se fusiona revisión manual existente si la hubo
-3. se genera o actualiza `DailyPage`
-4. se escribe un `.md` privado en `filesDir/daily-pages/`
+## 9. Persistencia
 
-Objetivo:
+Base Room compartida en `shared/data`, version 12.
 
-- no competir en UI
-- servir de memoria técnica para futuro chat
+Entidades:
 
-## 9. Wear OS — diseño actual
+- `DiaryEntry`
+- `Recording`
+- `TimelineEvent`
+- `Place`
+- `DwellDetectionState`
+- `DailyPage`
 
-### UI
+DAOs:
+
+- `DiaryDao`
+- `RecordingDao`
+- `TimelineEventDao`
+- `PlaceDao`
+- `DwellDetectionStateDao`
+- `DailyPageDao`
+
+`DiaryRepository` es la fachada principal. La base no esta cifrada.
+
+## 10. Timeline, calendario y lugares
 
 Archivos:
 
-- `wear/ui/WatchMainActivity.kt`
-- `wear/ui/WatchNavGraph.kt`
+- `app/ui/screens/HomeScreen.kt`
+- `app/ui/screens/CalendarScreen.kt`
+- `app/ui/screens/TimelineSupport.kt`
+- `app/ui/screens/PlaceDetailScreen.kt`
+- `app/location/DwellDetector.kt`
+- `app/location/PlaceResolver.kt`
+- `app/location/PlaceMapsLauncher.kt`
+- `app/service/LocationForegroundService.kt`
+- `app/summary/GoogleCalendarSyncManager.kt`
+
+El timeline mezcla:
+
+- acciones pendientes/completadas
+- grabaciones
+- dwell events
+- eventos de calendario importados
+
+Los lugares se detectan por dwell y se pueden resolver con Google Places si hay clave. La app no usa un mapa embebido en la ruta principal; abre Google Maps o navegador mediante intent. `osmdroid` sigue declarado como dependencia, pero no aparece en la UI principal actual.
+
+## 11. Wear OS
+
+Archivos:
+
 - `wear/ui/screens/WatchHomeScreen.kt`
-
-La intención es una app muy simple. Hay restos de pantallas antiguas en el árbol, pero la ruta principal debe leerse como una UI de tres botones.
-
-### Grabadora manual
-
-Archivos:
-
-- `wear/service/WatchRecordingService.kt`
-- `wear/sync/WatchToPhoneSyncer.kt`
-- `app/sync/WatchDataReceiverService.kt`
-
-Flujo:
-
-1. el reloj captura PCM16 con `AudioRecord`
-2. publica el audio como `Asset` en Wear Data Layer
-3. el móvil recibe el `DataItem`
-4. Whisper transcribe
-5. se crea `Recording`
-6. `RecordingProcessor` corre aguas abajo
-
-### Escucha continua del reloj
-
-Archivos:
-
 - `wear/service/WatchKeywordListenerService.kt`
+- `wear/service/WatchRecordingService.kt`
+- `wear/service/WatchServiceController.kt`
 - `wear/audio/WatchTriggeredAudioCapture.kt`
-- `app/sync/WatchDataReceiverService.kt`
-
-Flujo:
-
-1. el reloj detecta trigger con `SpeechRecognizer`
-2. pausa y destruye temporalmente el recognizer
-3. captura una ventana corta de audio post-trigger
-4. envía audio al móvil
-5. si Whisper falla, usa `triggerText` como fallback
-6. recrea el recognizer y reanuda escucha
-
-Limitación crítica:
-
-- esto **no tiene todavía preroll real**
-- es mejor que una simple sincronización de texto, pero no iguala aún la captura contextual del móvil
-
-### Piezas experimentales en Wear
-
-En `wear/audio/` existen archivos como:
-
-- `WatchContextualAudioCaptureEngine.kt`
-- `VoskGateAsr.kt`
-- `WatchWristRaiseDetector.kt`
-
-Estado:
-
-- deben considerarse experimentales o en preparación
-- no son aún el camino principal documentado del reloj
-
-## 10. Sync teléfono ↔ reloj
-
-### Canales actuales
-
-- `DataClient` para datos y audio
-- `MessageClient` para coordinación de micrófono
-
-Archivos:
-
-- `shared/sync/MicCoordinator.kt`
 - `wear/sync/WatchToPhoneSyncer.kt`
 - `wear/sync/PhoneToWatchReceiver.kt`
-- `app/sync/WatchDataReceiverService.kt`
+- `shared/sync/MicCoordinator.kt`
+
+Escucha continua:
+
+1. El reloj comprueba bateria y si el telefono esta activo.
+2. Si Vosk esta disponible, abre `AudioRecord` y procesa ventanas de 2s.
+3. Mantiene una ventana rolling de hasta 6s.
+4. Si detecta intencion, captura cola de audio hasta silencio o maximo.
+5. Une preroll + cola y manda PCM16 al telefono.
+6. El telefono transcribe con Whisper y procesa como captura contextual.
+7. Si Vosk no esta disponible, usa `SpeechRecognizer` con backoff.
+
+Grabadora:
+
+1. `WatchRecordingService` captura PCM16.
+2. `WatchToPhoneSyncer` envia audio y metadata como `Asset`.
+3. `WatchDataReceiverService` recibe en movil.
+4. Se crea `Recording`, se transcribe y se procesa.
+
+Coordinacion:
+
+- `MicCoordinator` envia pausa/reanudacion y debug entre telefono y reloj
+- el reloj evita escuchar cuando el telefono ya controla el microfono
+- bateria baja detiene escucha continua y devuelve control al telefono
+
+## 12. Sync
+
+Canales:
+
+- `DataClient` para entradas, ajustes, patrones y audio
+- `MessageClient` para coordinacion inmediata de microfono/debug
+
+Archivos:
+
 - `app/sync/PhoneToWatchSyncer.kt`
+- `app/sync/SettingsSyncer.kt`
+- `app/sync/WatchDataReceiverService.kt`
+- `wear/sync/WatchToPhoneSyncer.kt`
+- `wear/sync/PhoneToWatchReceiver.kt`
+- `shared/model/SyncPayload.kt`
+- `shared/model/WatchAudioSync.kt`
 
-Tipos de sync:
+Tipos sincronizados:
 
-- entradas
-- grabaciones
-- audio del reloj
-- ajustes y patrones
-- órdenes de pausa/reanudación del micrófono
+- entradas y cambios de estado
+- grabaciones/audio del reloj
+- patrones de intencion y keywords
+- ordenes de pausa/reanudacion
+- estado de debug del reloj
 
-## 11. Mapa y ANRs
+## 13. Ajustes, backup y diagnostico
 
-Decisión cerrada:
+`SettingsScreen` concentra mucha superficie:
 
-- `osmdroid MapView` se retiró del calendario
+- patrones y diccionario personal
+- permisos y ubicacion
+- Gemini API key
+- descarga/configuracion de Gemma
+- speaker verification
+- Google Calendar
+- backups
+- diagnostico de captura
+- colores del timeline
+- prompts
 
-Razón:
+Backup:
 
-- provocaba ANRs en navegación e interacción
+- `BackupManager`
+- `BackupScheduler`
+- `AutoBackupWorker`
+- export/import JSON via SAF
+
+Diagnostico:
+
+- `CaptureLog`
+- `DiagnosticsExportManager`
+- exportacion de eventos recientes y estadisticas del pipeline
+
+Esta pantalla es una de las principales candidatas a refactor por ViewModels y secciones mas aisladas.
+
+## 14. Seguridad y privacidad
 
 Estado actual:
 
-- el calendario delega en mapas externos
+- audio contextual del movil vive en memoria durante la captura
+- audio del reloj se transfiere al telefono para procesado local
+- Room no esta cifrado
+- Gemini API key se guarda en `SharedPreferences`
+- tokens/model URL de Gemma tambien requieren endurecimiento
+- backup JSON depende del destino elegido por el usuario
 
-Esto corrige el problema operativo, pero deja abierta una decisión de UX para una futura representación visual de lugares.
+Deuda:
 
-## 12. Evaluación del feedback externo
+- almacenamiento seguro para secretos
+- cifrado at-rest
+- borrado total/exportado mas visible
+- documentacion clara de retencion de audio y datos
 
-### Correcto y vigente
+## 15. Testing y CI
 
-1. **No DI**
-   - sigue siendo verdad
-   - el código depende demasiado de singletons/proveedores directos
+Hay tests unitarios en `app/src/test`, `shared/src/test` y `wear/src/test`, especialmente para:
 
-2. **No ViewModels**
-   - sigue siendo verdad
-   - la lógica de pantalla sigue metida en Compose o en accesos directos a repositorio
+- repositorio y migraciones
+- modelos
+- speech/intents
+- audio buffers
+- servicios/controladores
+- sync
+- resumen/procesamiento
+- chat
+- UI logic helpers
 
-3. **API key en SharedPreferences**
-   - sigue siendo verdad
-   - es una debilidad real
+No hay:
 
-4. **No onboarding**
-   - sigue siendo verdad
+- `.github/workflows`
+- suite real de `androidTest`
+- UI tests Compose mantenidos
+- test end-to-end del pipeline completo de audio a persistencia
 
-5. **Sin CI**
-   - sigue siendo verdad
+Comandos utiles:
 
-6. **Sin UI tests ni integración end-to-end**
-   - sigue siendo esencialmente verdad
-   - hay dependencias `androidTest`, pero no una batería real mantenida
+```bash
+./gradlew :shared:compileDebugKotlin :app:compileDebugKotlin :wear:compileDebugKotlin
+./gradlew testDebugUnitTest
+```
 
-7. **Performance / recomposition**
-   - sigue siendo un riesgo
-   - especialmente en `HomeScreen`
-
-8. **Settings demasiado complejos**
-   - sigue siendo bastante cierto
-
-### Parcialmente correcto
-
-1. **Wear second-class**
-   - sí, pero menos que antes
-   - ya existe transferencia de audio real al móvil
-   - sigue faltando paridad contextual
-
-2. **No empty states**
-   - hay algunos loading/empty states añadidos
-   - sigue faltando una capa más didáctica y de onboarding
-
-3. **No graceful degradation**
-   - hay degradación y fallbacks
-   - falta observabilidad clara y una superficie única de “salud del sistema”
-
-### Desactualizado
-
-1. **Speaker verification is half-implemented**
-   - ya no describe el estado actual
-   - existe implementación, entrenamiento y wiring en captura móvil
-
-2. **Calendar map issue without plan**
-   - el plan actual sí existe: mapas externos como solución robusta
-   - puede gustar más o menos, pero no está “sin resolver”
-
-3. **Vosk vs sherpa inconsistency**
-   - la dualidad es intencional, no accidental
-   - `Vosk` = gate
-   - `Whisper/sherpa-onnx` = transcripción final
-
-## 13. Deuda técnica priorizada
+## 16. Deuda vigente
 
 ### P0
 
-- introducir DI
-- introducir ViewModels
-- mover API key a almacenamiento seguro
-- cerrar contrato definitivo de Wear OS
-- mejorar observabilidad de estados degradados ASR
+- DI para repositorios, servicios, managers y motores ASR/IA
+- ViewModels para `Home`, `Calendar`, `Chat`, `Settings`, `Recordings`
+- almacenamiento seguro de claves/tokens
+- observabilidad consolidada de salud ASR/IA/sync
+- contrato final de paridad Wear vs movil
 
 ### P1
 
+- CI
 - onboarding
 - UI tests Compose
-- tests de integración del pipeline de captura
-- rate limiting / control de coste de Gemini
-- structured outputs más estrictos para LLM
-- separar responsabilidades dentro de `ActionItemProcessor`
+- test de integracion del pipeline de captura
+- limites de coste/latencia para Gemini
+- simplificar `SettingsScreen`
+- separar responsabilidades de `ActionItemProcessor`
 
 ### P2
 
 - cifrado de Room
-- exportado y borrado total
-- paginación / reducción de recomposiciones
-- simplificación de ajustes
-- snapshots de mapa o alternativa ligera si se quiere volver a una vista visual
+- paginacion/listas grandes
+- borrado total de datos
+- alternativa ligera para visualizacion de lugares
+- limpieza de dependencias no usadas, incluida `osmdroid` si no vuelve el mapa embebido
 
-## 14. Riesgos vigentes para otro equipo
+## 17. Recomendacion de handoff
 
-Si un segundo equipo entra a colaborar, estos son los riesgos reales a tener presentes:
+Para colaborar sin romper el producto:
 
-1. El árbol está en movimiento en la capa de audio:
-   - algunas abstracciones se están desplazando de `app/` a `shared/`
-
-2. Hay mezcla de estados maduros y experimentales:
-   - especialmente en `wear/audio/`
-
-3. El producto ha cambiado rápido:
-   - documentos viejos pueden seguir hablando de `Daily Review`
-   - hoy la verdad del producto es `Home + Calendar-first + DailyPage técnico`
-
-4. Hay mucha lógica en UI y servicios:
-   - difícil de testear sin refactor estructural
-
-## 15. Recomendación para colaboración externa
-
-La mejor forma de que otro equipo colabore sin romper el proyecto es dividir así:
-
-- Equipo A:
-  arquitectura base (`DI`, `ViewModels`, boundaries, testability)
-- Equipo B:
-  estabilidad y observabilidad del pipeline ASR
-- Equipo C:
-  UX/onboarding/empty states/settings
-- Equipo D:
-  Wear parity y consumo
-
-No recomendaría empezar por features nuevas antes de cerrar esas cuatro líneas.
+1. Congelar contratos de datos y sync antes de tocar UI grande.
+2. Introducir DI y ViewModels por pantalla, empezando por `Settings` y `Home`.
+3. Proteger el pipeline de captura con tests de integracion y diagnostico estable.
+4. Aislar IA cloud/local detras de una interfaz comun.
+5. Decidir si Wear OS aspira a paridad contextual completa o se queda como captura ligera con telefono como procesador principal.

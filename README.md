@@ -1,198 +1,155 @@
 # Trama
 
-Trama es una app Android local-first para capturar recordatorios, tareas y contexto diario por voz. El producto actual se apoya en dos superficies principales:
+Trama es una app Android local-first para capturar recordatorios, tareas, grabaciones y contexto diario por voz. Combina captura continua, transcripcion on-device, procesamiento con IA, timeline diario, calendario historico, lugares visitados, asistente conversacional y una app Wear OS que puede escuchar o grabar y transferir audio real al telefono.
 
-- `Home`: flujo operativo del día actual
-- `Calendar`: archivo diario e histórico accionable
+## Estado actual del proyecto
 
-Además, al cierre del día la app genera una `DailyPage` persistida y un `.md` privado pensado como memoria técnica para un futuro chat personal.
+Situacion a fecha `2026-04-28`:
 
-## Estado real del proyecto
+- proyecto Android multi-modulo con `app`, `shared` y `wear`
+- movil en Jetpack Compose + Room + WorkManager + Wear Data Layer
+- reloj en Wear Compose con escucha continua, grabadora y handoff al telefono
+- `Vosk` es el gate ASR ligero compartido entre telefono y reloj
+- `SherpaWhisperAsrEngine` es la ruta principal de transcripcion final en movil
+- `SpeechRecognizer` queda como fallback en movil y reloj cuando el pipeline dedicado no esta disponible
+- `Gemini` cloud y `Gemma` local se usan para estructurar acciones, resumir grabaciones y generar memoria diaria
+- la UI principal vive en `Home`, `Calendar`, `Chat`, `Recordings`, `PlaceDetail` y `Settings`
+- `DailyPage` y el markdown privado por fecha funcionan como memoria tecnica persistida
 
-Situación a fecha `2026-04-12`:
+## Que hace hoy la app
 
-- el móvil ya usa una ruta ASR dedicada con captura contextual y transcripción on-device
-- `Vosk` es hoy el gate preferente en móvil y `Whisper` es la transcripción final
-- el `fallback` a `SpeechRecognizer` del sistema sigue existiendo
-- el reloj se ha simplificado a tres modos visibles:
-  - `Escucha continua`
-  - `Grabadora`
-  - `Transferir al teléfono`
-- la grabadora del reloj ya envía audio real al móvil
-- la escucha continua del reloj ya tiene una primera ruta de audio post-trigger hacia el móvil, pero todavía no replica el preroll/contexto del teléfono
-- `Calendar` es ahora la pieza principal para revisar días pasados; la pantalla separada de `Daily Review` ya no es la UI principal
+- escucha continua en el movil con captura contextual `pre-roll + voz + post-roll`
+- gate temprano con Vosk para evitar transcribir todo con Whisper
+- transcripcion final on-device con sherpa-onnx / Whisper
+- deteccion configurable de intenciones, categorias y frases activadoras
+- speaker verification offline opcional despues de Whisper
+- posprocesado AI para limpiar texto, crear acciones, detectar fechas, prioridad y duplicados
+- grabaciones manuales en movil y reloj, con extraccion posterior de acciones sugeridas
+- timeline operativo del dia con tareas, grabaciones, eventos de calendario y visitas a lugares
+- calendario historico por dia con tareas, lugares, grabaciones y valoraciones
+- tracking opcional de ubicacion por dwell, resolucion de lugares y apertura en Google Maps / navegador
+- importacion de calendarios seleccionados del sistema
+- asistente de chat sobre entradas, lugares y dias registrados
+- backup/exportacion/importacion JSON mediante Storage Access Framework
+- diagnostico exportable del pipeline de captura
+- sincronizacion telefono <-> reloj de entradas, ajustes, patrones, audio y control de microfono
 
-## Qué hace hoy la app
-
-- escucha continua en el móvil
-- captura contextual `t0 + voz + t1` en RAM
-- detección configurable por categorías / frases activadoras
-- transcripción final on-device con Whisper
-- posprocesado AI para `cleanText`, fechas, prioridad, tipo de acción y duplicados
-- timeline operativo de hoy con swipes para completar o posponer
-- calendario con histórico diario, tareas, lugares visitados y valoración rápida
-- grabaciones manuales en móvil y reloj
-- sincronización teléfono ↔ reloj
-- generación nocturna de `DailyPage` y markdown privado por fecha
-- speaker verification offline opcional (“solo mi voz”) después de Whisper
-
-## Arquitectura por módulos
+## Arquitectura por modulos
 
 ```text
-app/     móvil: UI, servicios, ASR, postproceso, sync, backup
-shared/  Room, modelos, detección, sync y audio abstraído compartido
-wear/    reloj: UI simplificada, listener, grabadora y sync al móvil
+app/     movil: Compose UI, servicios, ASR final, IA, ubicacion, chat, backup, sync
+shared/  Room, modelos, DAOs, repositorio, audio base, Vosk gate, intent detection, sync contracts
+wear/    reloj: Wear Compose, escucha ligera, grabadora, Vosk/SpeechRecognizer fallback, sync
 ```
 
-## Flujo de voz en móvil
+## Flujo de voz en movil
 
 Ruta preferente:
 
 1. `KeywordListenerService`
 2. `ContextualAudioCaptureEngine`
-3. ring buffer en `shared/audio`
-4. gate temprano con `VoskGateAsr`
-5. ventana contextual `CapturedAudioWindow`
+3. `CircularAudioBuffer`
+4. `VoskGateAsr`
+5. `CapturedAudioWindow`
 6. `SherpaWhisperAsrEngine`
-7. `IntentDetector`
-8. `ActionItemProcessor`
-9. persistencia Room + UI + sync
+7. speaker verification opcional
+8. `IntentDetector` + validaciones
+9. `ActionItemProcessor`
+10. Room + timeline + sync
 
 Fallback:
 
-- si el backend dedicado no arranca o entra en degradación, la app puede volver a `SpeechRecognizer`
+- si el backend dedicado no arranca o se degrada, el movil puede volver a `SpeechRecognizer`
 
 ## Flujo en Wear OS
 
-### Grabadora manual
+La pantalla principal del reloj esta reducida a tres acciones:
 
-- el reloj captura PCM16 localmente
-- lo envía por Wear Data Layer al teléfono
-- el móvil lo recibe, lo pasa por Whisper y crea la `Recording`
-- después se ejecuta el mismo pipeline de procesamiento del teléfono
+- `Escucha`: escucha continua en el reloj
+- `Graba`: grabacion manual
+- `Telefono`: transfiere o recupera el control del microfono
 
-### Escucha continua
+Escucha continua:
 
-- el reloj sigue usando `SpeechRecognizer` como detector ligero
-- al detectar una frase válida, hace una captura corta post-trigger
-- esa ventana se transfiere al móvil con metadatos del trigger
-- si Whisper no devuelve texto útil, el móvil usa como fallback el `triggerText` enviado por el reloj
+- la ruta primaria usa `VoskGateAsr` con `AudioRecord`
+- mantiene una ventana rolling de preroll
+- cuando detecta una intencion, une preroll + cola de audio y la transfiere al movil
+- si Vosk no esta disponible, cae a `SpeechRecognizer` con backoff y guardas de bateria
 
-Importante:
+Grabadora manual:
 
-- esto **todavía no es paridad completa** con el pipeline contextual del móvil
-- no hay preroll real en el reloj dentro del camino principal actual
-- existen piezas experimentales en `wear/audio/` para acercarse a esa paridad, pero no deben considerarse cerradas
+- el reloj captura PCM16
+- envia el audio por Wear Data Layer como `Asset`
+- el movil transcribe con Whisper, crea `Recording` y ejecuta `RecordingProcessor`
 
-## Daily Page y memoria técnica
+## Memoria diaria y chat
 
-La app mantiene una capa persistida por fecha:
+La app mantiene memoria por fecha en dos capas:
 
 - `DailyPage` en Room
 - markdown privado en `filesDir/daily-pages/`
 
-Ese markdown:
+El `Calendar` es la UI principal del historico. El `Chat` consulta entradas, lugares y contexto diario para responder preguntas como donde estuviste, que tareas completaste o que lugares visitaste.
 
-- no compite en UI
-- no está pensado todavía como pantalla de usuario
-- sirve como memoria estructurada para un futuro chat
+## IA
 
-La UI visible de revisión histórica vive hoy en `CalendarScreen`, no en una pantalla separada de summary/review.
+Trama combina varias rutas:
 
-## “Solo mi voz”
+- `Gemini` cloud para tareas de razonamiento y estructuracion cuando hay clave configurada
+- `Gemma` local descargable y configurable desde ajustes
+- heuristicas locales para validacion, deduplicacion y fallback cuando la IA no responde
 
-La heurística vieja por RMS fue eliminada.
+La clave de Gemini todavia se guarda en `SharedPreferences`, por lo que moverla a almacenamiento seguro sigue siendo deuda prioritaria.
 
-El estado actual es mejor que eso:
+## Privacidad
 
-- se calcula speaker embedding offline
-- se entrena un perfil con muestras del usuario
-- la verificación ocurre **después** de Whisper, sobre la misma ventana de audio
-- está integrada en el flujo de captura del móvil y configurable desde ajustes
-
-Sigue siendo un área delicada y debe tratarse como feature avanzada, no como garantía perfecta.
-
-## Qué feedback externo sigue siendo correcto
-
-Un review externo reciente acertaba especialmente en estas áreas:
-
-- **sin DI**: no hay Hilt/Koin; muchas pantallas y servicios obtienen dependencias directamente
-- **sin ViewModels**: la UI Compose sigue cargando demasiada lógica y acceso a repositorio
-- **API key insegura**: la clave de Gemini sigue en `SharedPreferences`
-- **sin onboarding**: falta una primera experiencia que enseñe el bucle principal
-- **sin CI**: no hay `.github/workflows`
-- **sin UI tests reales**: hay dependencias `androidTest`, pero no una suite mantenida
-- **sin cifrado at-rest para Room**
-- **sin paginación**
-- **Home` sigue recogiendo demasiados flujos directamente**
-
-## Qué partes de ese feedback estaban desactualizadas o incompletas
-
-- `Speaker verification is half-implemented`: ya no es cierto tal cual; hoy existe una ruta real con embeddings y wiring en móvil
-- `Calendar screen without embedded map`: correcto que se retiró `osmdroid`, pero ya hay una decisión tomada: delegar en mapas externos para evitar ANRs
-- `Wear OS is second-class`: sigue siendo parcialmente verdad, pero ya no es correcto decir que todo el reloj funciona solo con texto; la grabadora y el trigger de escucha continua ya pueden transferir audio real al teléfono
-- `Vosk vs Sherpa inconsistency`: la preocupación es razonable, pero la arquitectura actual es intencional: `Vosk` como gate y `Whisper` como transcripción final
-
-## Deuda técnica y mejoras prioritarias
-
-### P0
-
-- introducir DI (`Hilt` o equivalente)
-- crear ViewModels al menos para `MainActivity`, `HomeScreen`, `CalendarScreen`, `SettingsScreen`
-- mover la API key de Gemini a almacenamiento seguro
-- documentar y endurecer los estados degradados del ASR
-- cerrar la paridad del reloj con el móvil o documentar claramente sus límites
-
-### P1
-
-- onboarding mínimo de 3 pasos
-- UI tests de Compose para `Home` y `Calendar`
-- integración test de pipeline `audio -> ASR -> intent -> persistencia`
-- pipeline de CI
-- rate limiting / control de coste para Gemini
-- structured outputs más estrictos para prompts LLM
-
-### P2
-
-- cifrado de Room
-- exportado / borrado total de datos
-- paginación o reducción de recomposiciones en listas grandes
-- refactor de `SettingsScreen`
-- empty states más didácticos y menos utilitarios
-
-## Limitaciones conocidas
-
-- el árbol git puede estar en movimiento: hay piezas de ASR/audio que se están moviendo de `app/` a `shared/`
-- el reloj tiene hoy una ruta híbrida: detector ligero + captura corta + transferencia al móvil
-- `SpeechRecognizer` sigue existiendo como red de seguridad en móvil y como detector principal en parte del reloj
-- la calidad del reloj en escucha continua todavía depende bastante del recognizer del sistema
-- no hay todavía observabilidad consolidada de salud del sistema ASR en una sola superficie
-- el proyecto no tiene una frontera fuerte entre capa de UI y capa de dominio
+- el audio contextual del movil vive en RAM durante la captura
+- el reloj puede transferir audio al telefono para transcripcion local
+- la base Room no esta cifrada todavia
+- los backups son JSON y dependen del destino elegido por el usuario
+- las claves externas y tokens locales necesitan endurecimiento
 
 ## Build
 
-```bash
-./gradlew :app:compileDebugKotlin :wear:compileDebugKotlin
-```
-
-Comprobación rápida usada durante esta fase:
+Compilacion rapida:
 
 ```bash
 ./gradlew :shared:compileDebugKotlin :app:compileDebugKotlin :wear:compileDebugKotlin
 ```
 
-## Privacidad
+Tests unitarios:
 
-- el audio contextual del móvil vive en RAM
-- el reloj puede transferir audio al teléfono para transcripción local
-- hoy no se cifra la base de datos Room
-- el almacenamiento de claves externas aún necesita endurecimiento
+```bash
+./gradlew testDebugUnitTest
+```
 
-## Nota para equipos colaboradores
+## Deuda tecnica prioritaria
 
-Si otro equipo entra en el proyecto, las mejores primeras decisiones no son “añadir más features”, sino estas:
+### P0
 
-1. cerrar arquitectura base (`DI + ViewModels + boundaries claras`)
-2. estabilizar observabilidad y degradación del pipeline ASR
-3. definir el contrato definitivo de Wear OS respecto al móvil
-4. endurecer seguridad y testing antes de ampliar superficie de producto
+- introducir DI (`Hilt` o equivalente)
+- crear ViewModels para las pantallas principales
+- mover claves y tokens a almacenamiento seguro
+- documentar mejor estados degradados del pipeline ASR
+- definir el contrato final de paridad entre movil y Wear OS
+
+### P1
+
+- onboarding minimo
+- CI en `.github/workflows`
+- UI tests Compose mantenidos
+- test de integracion `audio -> ASR -> intent -> persistencia`
+- observabilidad unica de salud ASR / IA / sync
+- rate limiting y control de coste para Gemini
+
+### P2
+
+- cifrado de Room
+- paginacion o reduccion de recomposiciones en listas grandes
+- simplificacion de `SettingsScreen`
+- borrado total/exportado de datos mas visible
+- alternativa ligera de visualizacion de mapas si se quiere reintroducir mapa embebido
+
+## Nota para colaboradores
+
+La mejor forma de avanzar sin romper el producto es estabilizar fronteras: DI, ViewModels, testabilidad del pipeline de captura, observabilidad y contrato Wear. Las features nuevas deberian apoyarse en esas bases, no ampliar todavia la mezcla de logica en Compose, servicios y singletons.
