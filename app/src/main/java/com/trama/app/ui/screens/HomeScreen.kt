@@ -494,16 +494,13 @@ fun HomeScreen(
             }
 
             if (uiState.isLoading) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator()
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            "Cargando tu día...",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    repeat(4) { com.trama.app.ui.components.SkeletonRow() }
                 }
             } else if (pendingEntries.isEmpty() && completedEntries.isEmpty() && recordings.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -575,16 +572,7 @@ fun HomeScreen(
                         }
                     }
 
-                    item(key = "header_timeline") {
-                        SectionHeader(
-                            "Hoy",
-                            timelineEvents.size,
-                            timelineAccentConfig.pending,
-                            expanded = todayExpanded,
-                            onToggle = { todayExpanded = !todayExpanded },
-                            modifier = Modifier.padding(horizontal = 16.dp)
-                        )
-                    }
+                    // "Hoy" is the default content of Home — no header needed.
                     if (todayExpanded) {
                         timelineListContent(
                             events = timelineEvents,

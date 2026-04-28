@@ -3,6 +3,7 @@ package com.trama.app.ui.screens
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -167,12 +168,45 @@ fun RecordingDetailScreen(
 
         LazyColumn(
             modifier = Modifier.padding(padding),
-            contentPadding = PaddingValues(16.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // ── Header info ──
-            item(key = "header") {
-                RecordingHeader(rec, dateFormat)
+            // ── Hero (inline, no extra horiz padding) ──
+            item(key = "hero") {
+                val min = rec.durationSeconds / 60
+                val sec = rec.durationSeconds % 60
+                val accent = com.trama.app.ui.theme.LocalTramaColors.current.amber
+                Column(
+                    modifier = Modifier.padding(top = 6.dp, bottom = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .width(3.dp)
+                                .height(14.dp)
+                                .background(accent, RoundedCornerShape(2.dp))
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "GRABACIÓN",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = accent,
+                        )
+                    }
+                    Text(
+                        text = rec.title ?: "Grabación sin procesar",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    Text(
+                        text = "${dateFormat.format(Date(rec.createdAt))} · %d:%02d".format(min, sec),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = com.trama.app.ui.theme.LocalTramaColors.current.mutedText,
+                    )
+                }
             }
 
             // ── Status badge ──

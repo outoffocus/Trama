@@ -57,6 +57,9 @@ import com.trama.app.audio.SherpaWhisperAsrEngine
 import com.trama.app.location.DwellDurationFormatter
 import com.trama.app.location.PlaceMapsLauncher
 import com.trama.app.summary.PlaceOpinionSummarizer
+import com.trama.app.ui.components.ActionChip
+import com.trama.app.ui.components.ActionChipRow
+import com.trama.app.ui.components.DetailHero
 import com.trama.app.ui.components.SectionRule
 import com.trama.app.ui.components.SoftCard
 import com.trama.app.ui.theme.LocalTramaColors
@@ -198,24 +201,18 @@ fun PlaceDetailScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(20.dp)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(
-                text = currentPlace.name,
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onBackground,
+            DetailHero(
+                eyebrow = currentPlace.type ?: "Lugar",
+                title = currentPlace.name,
+                accent = LocalTramaColors.current.teal,
+                meta = currentPlace.lastVisitAt?.let { "Última visita ${dateFormat.format(Date(it))}" },
             )
-            currentPlace.type?.let {
-                Text(
-                    text = it.uppercase(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = LocalTramaColors.current.mutedText,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
+            Column(
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
 
             OutlinedTextField(
                 value = editedName,
@@ -478,6 +475,7 @@ fun PlaceDetailScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
+            }
             }
         }
     }

@@ -535,135 +535,52 @@ private fun TimelineStatusCard(
     isSelected: Boolean = false,
     icon: @Composable () -> Unit
 ) {
-    val cardInteractionSource = remember { MutableInteractionSource() }
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .defaultMinSize(minHeight = 72.dp)
-            .then(
-                if (onClick != null || onLongClick != null) {
-                    Modifier.combinedClickable(
-                        interactionSource = cardInteractionSource,
-                        indication = null,
-                        onClick = onClick ?: {},
-                        onLongClick = onLongClick
-                    )
-                } else Modifier
-            ),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isSelected)
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
-            else
-                MaterialTheme.colorScheme.surface
-        ),
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-        border = androidx.compose.foundation.BorderStroke(0.5.dp, accent.copy(alpha = 0.12f))
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(IntrinsicSize.Min),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            AnimatedVisibility(
-                visible = isSelectionMode,
-                enter = fadeIn() + scaleIn(),
-                exit = fadeOut() + scaleOut()
-            ) {
+    // Body, secondary eyebrow and inline icon are deliberately dropped: detail
+    // information lives in detail screens. We delegate to the unified TramaCard
+    // anatomy (stripe + eyebrow + title + meta).
+    com.trama.app.ui.components.TramaCard(
+        eyebrow = eyebrow ?: "",
+        title = title,
+        accent = accent,
+        modifier = modifier,
+        meta = meta,
+        selected = isSelected,
+        onClick = onClick,
+        onLongClick = onLongClick,
+        leading = if (isSelectionMode) {
+            {
                 Checkbox(
                     checked = isSelected,
                     onCheckedChange = null,
-                    modifier = Modifier.padding(start = 8.dp),
+                    modifier = Modifier.size(28.dp),
                     colors = CheckboxDefaults.colors(
                         checkedColor = MaterialTheme.colorScheme.primary,
                         uncheckedColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
                     )
                 )
             }
-            Box(modifier = Modifier.weight(1f)) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 11.dp, vertical = 9.dp)
-            ) {
-                // Header: eyebrow badge + timestamp
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Row(
-                        modifier = Modifier.weight(1f),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (!eyebrow.isNullOrBlank()) {
-                            TimelineLabelChip(text = eyebrow, accent = accent, strong = true)
-                        }
-                        if (!secondaryEyebrow.isNullOrBlank()) {
-                            Spacer(modifier = Modifier.width(5.dp))
-                            TimelineLabelChip(
-                                text = secondaryEyebrow,
-                                accent = accent,
-                                strong = false,
-                                modifier = Modifier.weight(1f, fill = false)
-                            )
-                        }
-                    }
-                    if (!meta.isNullOrBlank()) {
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = meta,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.40f)
-                        )
-                    }
-                }
-                // Icon + title row
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.padding(top = 5.dp)
+        } else null,
+        trailing = if (!quickActionLabel.isNullOrBlank() && onQuickActionClick != null && !isSelectionMode) {
+            {
+                Surface(
+                    onClick = onQuickActionClick,
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(999.dp),
+                    color = accent.copy(alpha = 0.12f),
                 ) {
-                    Box(modifier = Modifier.size(16.dp), contentAlignment = Alignment.Center) {
-                        icon()
-                    }
                     Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleSmall,
+                        text = quickActionLabel,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = accent,
                         fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                     )
                 }
-                // Body
-                if (body.isNotBlank()) {
-                    Text(
-                        text = body,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
-                        modifier = Modifier.padding(top = 4.dp),
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                // Quick action chip
-                if (!quickActionLabel.isNullOrBlank() && onQuickActionClick != null) {
-                    Surface(
-                        onClick = onQuickActionClick,
-                        shape = androidx.compose.foundation.shape.RoundedCornerShape(999.dp),
-                        color = accent.copy(alpha = 0.12f),
-                        modifier = Modifier.padding(top = 7.dp)
-                    ) {
-                        Text(
-                            text = quickActionLabel,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = accent,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                        )
-                    }
-                }
             }
-            }
-        }
-    }
+        } else null,
+    )
+    @Suppress("UNUSED_EXPRESSION") body  // body intentionally unused
+    @Suppress("UNUSED_EXPRESSION") secondaryEyebrow
+    @Suppress("UNUSED_EXPRESSION") icon
 }
 
 @Composable

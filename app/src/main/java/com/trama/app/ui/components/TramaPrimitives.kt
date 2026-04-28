@@ -7,13 +7,17 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -21,6 +25,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -28,8 +34,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -298,5 +306,275 @@ fun TransferToWatchChip(
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
         )
+    }
+}
+
+// ─── Unified card anatomy ──────────────────────────────────────────────────
+//
+//   ┌─█ EYEBROW · · · · · · · · · · · · · · · ·  meta │
+//   │   Título en una línea                            │
+//   │   [trailing slot]                                │
+//   └──────────────────────────────────────────────────┘
+//
+// Stripe = semantic accent. No icon. Eyebrow does the work an icon would.
+
+/** Single-line eyebrow + title row. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun TramaCard(
+    eyebrow: String,
+    title: String,
+    accent: Color,
+    modifier: Modifier = Modifier,
+    meta: String? = null,
+    dimmed: Boolean = false,
+    selected: Boolean = false,
+    onClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
+    leading: (@Composable () -> Unit)? = null,
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    val t = LocalTramaColors.current
+    val interaction = remember { MutableInteractionSource() }
+    val container = when {
+        selected -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+        dimmed -> t.surface.copy(alpha = 0.55f)
+        else -> t.surface
+    }
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .then(
+                if (onClick != null || onLongClick != null) {
+                    Modifier.combinedClickable(
+                        interactionSource = interaction,
+                        indication = null,
+                        onClick = onClick ?: {},
+                        onLongClick = onLongClick,
+                    )
+                } else Modifier
+            ),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = container),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = BorderStroke(0.5.dp, accent.copy(alpha = 0.08f)),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // Stripe — the only strong cromatic signal
+            Box(
+                modifier = Modifier
+                    .width(3.dp)
+                    .fillMaxHeight()
+                    .background(accent.copy(alpha = if (dimmed) 0.25f else 0.85f))
+            )
+            if (leading != null) {
+                Spacer(Modifier.width(10.dp))
+                leading()
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 11.dp, end = 8.dp, top = 9.dp, bottom = 9.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = eyebrow.uppercase(),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (dimmed) t.dimText else accent,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (!meta.isNullOrBlank()) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = meta,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = t.dimText,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (dimmed) t.mutedText else MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+            }
+            if (trailing != null) {
+                Box(modifier = Modifier.padding(end = 8.dp)) { trailing() }
+            }
+        }
+    }
+}
+
+// ─── Detail hero ───────────────────────────────────────────────────────────
+
+/** Full-bleed editorial hero used at the top of detail screens. */
+@Composable
+fun DetailHero(
+    eyebrow: String,
+    title: String,
+    accent: Color,
+    modifier: Modifier = Modifier,
+    meta: String? = null,
+) {
+    val t = LocalTramaColors.current
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .width(3.dp)
+                    .height(14.dp)
+                    .background(accent, RoundedCornerShape(2.dp))
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = eyebrow.uppercase(),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = accent,
+            )
+        }
+        Text(
+            text = title,
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+        if (!meta.isNullOrBlank()) {
+            Text(
+                text = meta,
+                style = MaterialTheme.typography.bodySmall,
+                color = t.mutedText,
+            )
+        }
+    }
+}
+
+// ─── Action chip row ───────────────────────────────────────────────────────
+
+data class ActionChip(
+    val label: String,
+    val onClick: () -> Unit,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    val accent: Color? = null,
+)
+
+/** Row of horizontal action chips for detail screens. */
+@Composable
+fun ActionChipRow(
+    chips: List<ActionChip>,
+    modifier: Modifier = Modifier,
+) {
+    val t = LocalTramaColors.current
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        chips.forEach { chip ->
+            val c = chip.accent ?: t.amber
+            Surface(
+                modifier = Modifier.clip(RoundedCornerShape(20.dp)).clickable { chip.onClick() },
+                shape = RoundedCornerShape(20.dp),
+                color = c.copy(alpha = 0.10f),
+                border = BorderStroke(0.5.dp, c.copy(alpha = 0.30f)),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (chip.icon != null) {
+                        Icon(
+                            imageVector = chip.icon,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = c,
+                        )
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    Text(
+                        text = chip.label,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = c,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ─── Skeleton row ──────────────────────────────────────────────────────────
+
+@Composable
+fun SkeletonRow(modifier: Modifier = Modifier) {
+    val t = LocalTramaColors.current
+    val infinite = rememberInfiniteTransition(label = "skeleton")
+    val alpha by infinite.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 0.8f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(900, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "skeleton-alpha",
+    )
+    val shimmer = t.surface2.copy(alpha = alpha)
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = t.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = BorderStroke(0.5.dp, t.softBorder),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(3.dp)
+                    .height(54.dp)
+                    .background(shimmer)
+            )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 11.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(70.dp)
+                        .height(8.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(shimmer)
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.7f)
+                        .height(12.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(shimmer)
+                )
+            }
+        }
     }
 }
