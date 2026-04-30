@@ -23,4 +23,5 @@ Ruta esperada:
 Notas:
 - La app no guarda audio del usuario.
 - Los modelos se copian solo a almacenamiento privado de la app para poder abrirlos por ruta.
-- Mientras estos ficheros no existan, Trama seguira usando el fallback actual con SpeechRecognizer.
+- Mientras estos ficheros no existan, la captura continua del movil quedara en estado degradado (`ASR local no disponible`).
+- No se usa SpeechRecognizer como fallback porque no garantiza una ruta offline/local.

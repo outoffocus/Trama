@@ -36,6 +36,7 @@ class SettingsViewModel @Inject constructor(
     val contextPreRollSeconds = settingsStore.contextPreRollSeconds
     val contextPostRollSeconds = settingsStore.contextPostRollSeconds
     val asrDebugEnabled = settingsStore.asrDebugEnabled
+    val listeningStatusOnHome = settingsStore.listeningStatusOnHome
     val asrDebugEngine = settingsStore.asrDebugEngine
     val asrDebugStatus = settingsStore.asrDebugStatus
     val asrDebugLastText = settingsStore.asrDebugLastText
@@ -78,6 +79,7 @@ class SettingsViewModel @Inject constructor(
     suspend fun setContextPreRollSeconds(seconds: Int) = settingsStore.setContextPreRollSeconds(seconds)
     suspend fun setContextPostRollSeconds(seconds: Int) = settingsStore.setContextPostRollSeconds(seconds)
     suspend fun setAsrDebugEnabled(enabled: Boolean) = settingsStore.setAsrDebugEnabled(enabled)
+    suspend fun setListeningStatusOnHome(enabled: Boolean) = settingsStore.setListeningStatusOnHome(enabled)
     suspend fun setThemeMode(mode: Int) = settingsStore.setThemeMode(mode)
     suspend fun setShowOldEntriesExpanded(expanded: Boolean) = settingsStore.setShowOldEntriesExpanded(expanded)
     suspend fun setTimelineColorPending(index: Int) = settingsStore.setTimelineColorPending(index)

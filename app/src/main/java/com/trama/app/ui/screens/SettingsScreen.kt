@@ -163,6 +163,7 @@ fun SettingsScreen(
         initial = SettingsDataStore.DEFAULT_CONTEXT_POST_ROLL
     )
     val asrDebugEnabled by settings.asrDebugEnabled.collectAsState(initial = false)
+    val listeningStatusOnHome by settings.listeningStatusOnHome.collectAsState(initial = false)
     val asrDebugEngine by settings.asrDebugEngine.collectAsState(initial = "-")
     val asrDebugStatus by settings.asrDebugStatus.collectAsState(initial = "sin datos")
     val asrDebugLastText by settings.asrDebugLastText.collectAsState(initial = "")
@@ -660,6 +661,15 @@ fun SettingsScreen(
                         subtitle = "Muestra motor activo y ultima transcripcion",
                         checked = asrDebugEnabled,
                         onCheckedChange = { scope.launch { settings.setAsrDebugEnabled(it) } }
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    SettingToggle(
+                        title = "Estado tecnico en inicio",
+                        subtitle = "Sustituye \"Escuchando\" por el estado real de captura solo para diagnostico",
+                        checked = listeningStatusOnHome,
+                        onCheckedChange = { scope.launch { settings.setListeningStatusOnHome(it) } }
                     )
 
                     AnimatedVisibility(visible = asrDebugEnabled) {

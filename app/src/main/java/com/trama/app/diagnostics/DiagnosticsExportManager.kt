@@ -28,11 +28,12 @@ object DiagnosticsExportManager {
 
     @Serializable
     data class Export(
-        val version: Int = 1,
+        val version: Int = 2,
         val exportedAt: Long,
         val windowHours: Long,
         val summary: Summary,
         val analysis: DiagnosticsAnalyzer.Analysis,
+        val qualityDecisions: List<QualityDecisionSample>,
         val events: List<CaptureLog.Event>,
         val entries: List<EntrySample>,
         val recordings: List<RecordingSample>,
@@ -51,6 +52,11 @@ object DiagnosticsExportManager {
         val discardedEntries: Int,
         val suggestedEntries: Int,
         val pendingEntries: Int,
+        val qualityReviewNeeded: Int,
+        val discardedPossibleFalseNegatives: Int,
+        val acceptedLowConfidence: Int,
+        val mediaPlaybackPauses: Int,
+        val mediaPlaybackBlockedWindows: Int,
         val recordings: Int,
         val recordingsWithActions: Int
     )
@@ -89,6 +95,33 @@ object DiagnosticsExportManager {
         val actionCount: Int
     )
 
+    @Serializable
+    data class QualityDecisionSample(
+        val id: Long,
+        val createdAt: Long,
+        val createdAtText: String,
+        val status: String,
+        val source: String,
+        val rawText: String,
+        val correctedText: String? = null,
+        val cleanText: String? = null,
+        val actionType: String,
+        val confidence: Float,
+        val llmConfidence: Float? = null,
+        val wasReviewedByLLM: Boolean,
+        val llmResult: String? = null,
+        val llmKind: String? = null,
+        val llmDecision: String? = null,
+        val llmRoute: String? = null,
+        val modelIsActionable: Boolean? = null,
+        val usefulnessScore: Float? = null,
+        val actionabilityScore: Float? = null,
+        val discardReason: String? = null,
+        val qualityBucket: String,
+        val needsHumanReview: Boolean,
+        val reviewHint: String
+    )
+
     suspend fun exportToUri(
         context: Context,
         uri: Uri,
@@ -112,6 +145,16 @@ object DiagnosticsExportManager {
             .mapNotNull { entry -> entry.sourceRecordingId?.let { it to entry } }
             .groupingBy { it.first }
             .eachCount()
+        val llmEventsByEntryId = events
+            .filter { it.gate == "LLM" }
+            .mapNotNull { event ->
+                (event.meta["entryId"] ?: event.meta["id"])?.toLongOrNull()?.let { id -> id to event }
+            }
+            .groupBy({ it.first }, { it.second })
+            .mapValues { (_, value) -> value.maxByOrNull { it.ts } }
+        val qualityDecisions = entries.map { entry ->
+            entry.toQualityDecision(llmEventsByEntryId[entry.id])
+        }
 
         val summary = Summary(
             totalEvents = events.size,
@@ -127,6 +170,20 @@ object DiagnosticsExportManager {
             discardedEntries = entries.count { it.status == "DISCARDED" },
             suggestedEntries = entries.count { it.status == "SUGGESTED" },
             pendingEntries = entries.count { it.status == "PENDING" },
+            qualityReviewNeeded = qualityDecisions.count { it.needsHumanReview },
+            discardedPossibleFalseNegatives = qualityDecisions.count {
+                it.qualityBucket == "discarded_possible_false_negative"
+            },
+            acceptedLowConfidence = qualityDecisions.count {
+                it.qualityBucket == "accepted_low_confidence"
+            },
+            mediaPlaybackPauses = events.count {
+                it.gate == "SERVICE" && it.text == "media_playback_pause"
+            },
+            mediaPlaybackBlockedWindows = events.count {
+                (it.gate == "ASR_FINAL" && it.text == "media_playback_blocked_window") ||
+                    (it.gate == "ASR_GATE" && it.text == "media_playback_gate_blocked")
+            },
             recordings = recordings.size,
             recordingsWithActions = recordingActionCounts.keys.size
         )
@@ -136,6 +193,7 @@ object DiagnosticsExportManager {
             windowHours = windowHours,
             summary = summary,
             analysis = DiagnosticsAnalyzer.analyze(events, entries, recordings),
+            qualityDecisions = qualityDecisions,
             events = events,
             entries = entries.map { it.toSample() },
             recordings = recordings.map { recording ->
@@ -189,6 +247,59 @@ object DiagnosticsExportManager {
             actionCount = actionCount
         )
 
+    private fun DiaryEntry.toQualityDecision(llmEvent: CaptureLog.Event?): QualityDecisionSample {
+        val bucket = llmEvent?.meta?.get("qualityBucket") ?: fallbackQualityBucket(this, llmEvent)
+        val needsHumanReview = bucket in REVIEW_BUCKETS ||
+            status == "DISCARDED" ||
+            status == "SUGGESTED" ||
+            llmEvent == null ||
+            llmConfidence?.let { it < 0.65f } == true
+        return QualityDecisionSample(
+            id = id,
+            createdAt = createdAt,
+            createdAtText = formatTime(createdAt),
+            status = status,
+            source = source.name,
+            rawText = text,
+            correctedText = correctedText,
+            cleanText = cleanText,
+            actionType = actionType,
+            confidence = confidence,
+            llmConfidence = llmConfidence,
+            wasReviewedByLLM = wasReviewedByLLM,
+            llmResult = llmEvent?.result,
+            llmKind = llmEvent?.meta?.get("kind"),
+            llmDecision = llmEvent?.meta?.get("decision"),
+            llmRoute = llmEvent?.meta?.get("route"),
+            modelIsActionable = llmEvent?.meta?.get("isActionable")?.toBooleanStrictOrNull(),
+            usefulnessScore = llmEvent?.meta?.get("usefulness")?.toFloatOrNull(),
+            actionabilityScore = llmEvent?.meta?.get("actionability")?.toFloatOrNull(),
+            discardReason = llmEvent?.meta?.get("discardReason"),
+            qualityBucket = bucket,
+            needsHumanReview = needsHumanReview,
+            reviewHint = llmEvent?.meta?.get("reviewHint") ?: fallbackReviewHint(this, bucket)
+        )
+    }
+
+    private fun fallbackQualityBucket(entry: DiaryEntry, llmEvent: CaptureLog.Event?): String = when {
+        llmEvent == null -> "missing_llm_decision"
+        entry.status == "PENDING" && (entry.llmConfidence ?: entry.confidence) < 0.65f -> "accepted_low_confidence"
+        entry.status == "PENDING" || entry.status == "COMPLETED" -> "accepted_action"
+        entry.status == "SUGGESTED" -> "ambiguous_suggested"
+        entry.status == "DISCARDED" -> "discarded_needs_review"
+        else -> "unknown"
+    }
+
+    private fun fallbackReviewHint(entry: DiaryEntry, bucket: String): String = when (bucket) {
+        "missing_llm_decision" -> "No hay evento LLM enlazado: revisar pipeline/log."
+        "accepted_low_confidence" -> "Revisar precision: aceptada con confianza baja."
+        "discarded_possible_false_negative", "discarded_needs_review" ->
+            "Revisar recall: confirmar si era una accion util descartada."
+        "ambiguous_suggested" -> "Revisar si debe pasar a tarea pendiente o descartarse."
+        "accepted_action" -> "Muestra positiva: confirmar si la tarea aceptada era util."
+        else -> "Revisar manualmente."
+    }
+
     private fun formatTime(value: Long): String =
         SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(value))
 
@@ -200,8 +311,19 @@ object DiagnosticsExportManager {
         "Compare segment_finalized reasons: silence_stop is normal; unmatched_segment_cap means continuous speech/noise was rotated at 30s instead of getting stuck.",
         "Compare ASR_FINAL source=trigger vs source=uncertain_fallback; the latter should be rare and explains battery-sensitive recall attempts.",
         "Review uncertain_gate_fallback_blocked reason=battery_low/cooldown to see when fallback was intentionally skipped.",
+        "Review SERVICE media_playback_pause and ASR media_playback_* events to confirm YouTube/Spotify audio was ignored instead of saved.",
         "Cluster discarded text by expression type: microphone tests, conversational fragments, ASR corruption, missing object, duplicate.",
+        "Use qualityDecisions as the human-labelling table: label useful accepted items as true positives, useless accepted items as false positives, useful discarded/suggested items as false negatives.",
+        "Start reviewing rows with needsHumanReview=true, especially discarded_possible_false_negative, accepted_low_confidence, ambiguous_suggested, and missing_llm_decision.",
         "Estimate precision: pending tasks that are useful / all pending tasks.",
         "Estimate recall sample: discarded or unclear entries that should have become tasks."
+    )
+
+    private val REVIEW_BUCKETS = setOf(
+        "accepted_low_confidence",
+        "ambiguous_suggested",
+        "discarded_possible_false_negative",
+        "discarded_needs_review",
+        "missing_llm_decision"
     )
 }

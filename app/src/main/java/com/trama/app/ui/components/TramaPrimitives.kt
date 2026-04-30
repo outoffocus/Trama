@@ -123,7 +123,7 @@ fun SectionRule(
 }
 
 /** Status pill shown in headers. Single-line state indicator with a glowing dot. */
-enum class TramaStatus { Idle, Listening, Recording, Watch, Location }
+enum class TramaStatus { Idle, Listening, Recording, Watch, Location, Error }
 
 @Composable
 fun StatusPill(
@@ -139,6 +139,7 @@ fun StatusPill(
         TramaStatus.Recording -> Quad(t.red, t.redBg, t.red, "Grabando")
         TramaStatus.Watch -> Quad(t.watch, t.watchBg, t.watch, "En el reloj")
         TramaStatus.Location -> Quad(t.teal, t.tealBg, t.teal, "Ubicación activa")
+        TramaStatus.Error -> Quad(t.red, t.redBg, t.red, "Error de escucha")
     }
     val pulse = status == TramaStatus.Listening || status == TramaStatus.Recording
     val alpha = if (pulse) breathingAlpha() else 1f

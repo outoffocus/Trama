@@ -22,10 +22,11 @@ El objetivo del producto es capturar con poca friccion, estructurar despues y pe
 - escucha continua con pipeline dedicado
 - `VoskGateAsr` como gate ligero
 - `SherpaWhisperAsrEngine` como transcriptor final
-- fallback a `SpeechRecognizer`
+- sin fallback a `SpeechRecognizer` en movil; la captura exige ASR local/offline disponible
 - segmentacion de escucha continua en ventanas renovables, con cap de 30s para voz/ruido sin trigger
 - fallback incierto a Whisper con presupuesto por bateria/carga/cooldown
 - speaker verification offline integrada despues de Whisper
+- pausa por audio activo de otra app para evitar capturas de multimedia
 - tracking opcional de ubicacion con dwell detection
 - lugares persistidos, valoraciones, opiniones y apertura en mapas externos
 - importacion de calendarios seleccionados del sistema
@@ -38,7 +39,7 @@ El objetivo del producto es capturar con poca friccion, estructurar despues y pe
 
 - Wear Compose con UI de tres modos: escucha, grabadora, telefono
 - escucha primaria con `VoskGateAsr` y `AudioRecord`
-- fallback con `SpeechRecognizer` si el modelo Vosk no esta disponible
+- sin fallback cloud/indeterminado: si Vosk no esta disponible, el estado debe quedar degradado y diagnosticable
 - ventana rolling con preroll y cola de audio activa tras trigger
 - transferencia de PCM16 al telefono por Wear Data Layer
 - guardas de bateria y handoff del microfono entre reloj y telefono
@@ -125,18 +126,28 @@ Propiedades:
 - si un trigger fue detectado durante el segmento, el cierre final no puede descartarlo por una reevaluacion posterior peor
 - fallback incierto a Whisper solo para gates vacios o muy pobres, con cooldown de 5 min en bateria y 2 min cargando
 - fallback incierto bloqueado bajo 20% de bateria cuando no esta cargando
+- ventanas bloqueadas si Android informa audio activo de otra app
+- errores de ventana ASR se tratan como recuperables y rearman la captura
+- ASR local no disponible es un estado terminal visible/diagnosticable
 - trazas en `CaptureLog` para diagnostico
-- fallback degradado si el stack dedicado falla
+- la vibracion se emite solo cuando una accion fue aceptada y guardada; no en el gate ni al empezar a procesar
+- Home muestra estados tecnicos de escucha solo con el ajuste `Estado tecnico en inicio`
 
 Eventos relevantes de diagnostico:
 
 - `SERVICE service_start_requested`
 - `SERVICE service_stop_requested reason=...`
 - `SERVICE service_rearm_requested reason=...`
+- `SERVICE offline_asr_unavailable`
+- `SERVICE offline_asr_window_failed`
+- `SERVICE contextual_capture_crashed`
+- `SERVICE media_playback_pause|media_playback_resume`
 - `ASR_GATE segment_finalized reason=silence_stop|unmatched_segment_cap|post_roll_cap`
 - `ASR_GATE uncertain_gate_fallback batteryPct charging windowMs cooldownMs`
 - `ASR_GATE uncertain_gate_fallback_blocked reason=battery_low|cooldown`
+- `ASR_GATE media_playback_gate_blocked`
 - `ASR_FINAL source=trigger|uncertain_fallback|no_gate decodeMs windowMs`
+- `ASR_FINAL media_playback_blocked_window`
 
 ## 6. Grabaciones
 
@@ -168,6 +179,9 @@ Rutas:
 - Gemini cloud para estructuracion, acciones, resumenes y opiniones
 - Gemma local descargable para ejecucion on-device cuando esta disponible y habilitado
 - heuristicas locales para reparacion JSON, duplicados y sugerencias manuales
+- prompt de acciones orientado a extraer la accion minima autosuficiente y rechazar ruido conversacional/no accionable
+- `ActionQualityGate` conserva una barrera local post-LLM contra ruido, fragmentos incompletos, negaciones y errores ASR frecuentes
+- la suite `ActionQualityGateProductTest` combina ejemplos curados y corpus sintetico masivo para medir riesgo de falsos positivos/negativos
 
 Procesamiento de acciones:
 
@@ -270,7 +284,7 @@ Escucha continua:
 4. Si detecta intencion, captura cola de audio hasta silencio o maximo.
 5. Une preroll + cola y manda PCM16 al telefono.
 6. El telefono transcribe con Whisper y procesa como captura contextual.
-7. Si Vosk no esta disponible, usa `SpeechRecognizer` con backoff.
+7. Si Vosk no esta disponible, publica estado degradado y evita rutas de reconocimiento no garantizadas offline.
 
 Grabadora:
 
@@ -338,6 +352,9 @@ Diagnostico:
 - `DiagnosticsExportManager`
 - `DiagnosticsAnalyzer`
 - exportacion de eventos recientes y estadisticas del pipeline
+- `Modo diagnostico ASR` muestra motor, gate, transcripcion, ventana y decode en ajustes
+- `Estado tecnico en inicio`, apagado por defecto, sustituye la etiqueta normal de Home por el estado real de escucha para pruebas
+- los usuarios normales mantienen etiquetas simples como `Escuchando`, `Grabando` o `En el reloj`
 - contadores de segmentos cerrados por silencio/cap, fallbacks inciertos, fallbacks bloqueados, paradas explicitas y destrucciones inesperadas del servicio
 
 Esta pantalla es una de las principales candidatas a refactor por ViewModels y secciones mas aisladas.

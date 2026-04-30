@@ -18,6 +18,8 @@ class DiagnosticsAnalyzerTest {
             event("ASR_GATE", "OK", meta = mapOf("reason" to "uncertain_gate_fallback", "windowMs" to "10000")),
             event("ASR_GATE", "NO_MATCH", "uncertain_gate_fallback_blocked", mapOf("reason" to "cooldown")),
             event("SERVICE", "OK", "service_stop_requested", mapOf("reason" to "home_primary_stop")),
+            event("SERVICE", "REJECT", "media_playback_pause", mapOf("reason" to "poll")),
+            event("ASR_FINAL", "REJECT", "media_playback_blocked_window", mapOf("windowMs" to "8000")),
             event("SERVICE", "REJECT", "onDestroy"),
             event("ASR_FINAL", "OK", "recuerdame comprar leche", mapOf("engine" to "vosk -> whisper", "decodeMs" to "900", "windowMs" to "5000")),
             event("SPEAKER", "REJECT", "anuncio de television", mapOf("sim" to "0.31")),
@@ -45,6 +47,8 @@ class DiagnosticsAnalyzerTest {
         assertEquals(1, analysis.quality.uncertainFallbacks)
         assertEquals(1, analysis.quality.uncertainFallbacksBlocked)
         assertEquals(1, analysis.quality.explicitUserStops)
+        assertEquals(1, analysis.quality.mediaPlaybackPauses)
+        assertEquals(1, analysis.quality.mediaPlaybackBlockedWindows)
         assertEquals(0, analysis.quality.unexpectedServiceStops)
         assertTrue(analysis.engines.any { it.value == "whisper" && it.count == 2 })
         assertTrue(analysis.rejectReasons.any { it.value == "missing_object" })

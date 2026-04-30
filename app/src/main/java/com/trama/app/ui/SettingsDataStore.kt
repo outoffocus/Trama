@@ -30,6 +30,7 @@ class SettingsDataStore(private val context: Context) {
         val CONTEXT_POST_ROLL = intPreferencesKey("context_post_roll_seconds")
         val GATE_ASR_ENGINE = stringPreferencesKey("gate_asr_engine")
         val ASR_DEBUG_ENABLED = booleanPreferencesKey("asr_debug_enabled")
+        val LISTENING_STATUS_ON_HOME = booleanPreferencesKey("listening_status_on_home")
         val ASR_DEBUG_ENGINE = stringPreferencesKey("asr_debug_engine")
         val ASR_DEBUG_STATUS = stringPreferencesKey("asr_debug_status")
         val ASR_DEBUG_LAST_TEXT = stringPreferencesKey("asr_debug_last_text")
@@ -131,6 +132,10 @@ class SettingsDataStore(private val context: Context) {
 
     val asrDebugEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[ASR_DEBUG_ENABLED] ?: false
+    }
+
+    val listeningStatusOnHome: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[LISTENING_STATUS_ON_HOME] ?: false
     }
 
     val gateAsrEngine: Flow<String> = context.dataStore.data.map { prefs ->
@@ -287,6 +292,10 @@ class SettingsDataStore(private val context: Context) {
 
     suspend fun setAsrDebugEnabled(enabled: Boolean) {
         context.dataStore.edit { it[ASR_DEBUG_ENABLED] = enabled }
+    }
+
+    suspend fun setListeningStatusOnHome(enabled: Boolean) {
+        context.dataStore.edit { it[LISTENING_STATUS_ON_HOME] = enabled }
     }
 
     suspend fun setGateAsrEngine(engine: String) {

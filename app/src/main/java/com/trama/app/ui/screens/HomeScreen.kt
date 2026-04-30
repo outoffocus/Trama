@@ -100,6 +100,7 @@ import com.trama.app.summary.CalendarHelper
 import com.trama.app.service.RecordingState
 import com.trama.app.service.EntryProcessingState
 import com.trama.app.service.ServiceController
+import com.trama.app.ui.SettingsDataStore
 import com.trama.app.ui.components.EntryCard
 import com.trama.app.ui.components.CalendarActionDialog
 import com.trama.app.ui.components.RecordingCard
@@ -165,6 +166,10 @@ fun HomeScreen(
     val serviceRunning by ServiceController.isRunning.collectAsState()
     val watchActive by ServiceController.isWatchActive.collectAsState()
     val locationRunning by ServiceController.isLocationRunning.collectAsState()
+    val settingsStore = remember(context) { SettingsDataStore(context) }
+    val showListeningStatusOnHome by settingsStore.listeningStatusOnHome.collectAsState(initial = false)
+    val asrStatus by settingsStore.asrDebugStatus.collectAsState(initial = "sin datos")
+    val watchStatus by settingsStore.watchDebugStatus.collectAsState(initial = "")
     val snackbarHostState = remember { SnackbarHostState() }
 
     // Recording state
@@ -266,13 +271,23 @@ fun HomeScreen(
 
     val allPendingEntries = uiState.allPendingEntries
     val pendingEntries = uiState.pendingEntries
+    val visiblePendingEntries = remember(pendingEntries, processingEntryIds) {
+        pendingEntries.filterNot { it.id in processingEntryIds }
+    }
     val suggestedEntries = uiState.suggestedEntries
     val duplicateEntries = uiState.duplicateEntries
     val completedEntries = uiState.completedEntries
     val olderEntries = uiState.olderEntries
+    val visibleOlderEntries = remember(olderEntries, processingEntryIds) {
+        olderEntries.filterNot { it.id in processingEntryIds }
+    }
     val completedTodayEntries = uiState.completedTodayEntries
     val recordings = uiState.recordings
-    val timelineEvents = uiState.timelineEvents
+    val timelineEvents = remember(uiState.timelineEvents, processingEntryIds) {
+        uiState.timelineEvents.filterNot { event ->
+            event is TimelineEventUi.EntryCreated && event.entry.id in processingEntryIds
+        }
+    }
 
     val heroDayTitle = remember(uiState.startOfDay) {
         SimpleDateFormat("EEEE d 'de' MMMM", Locale("es")).format(Date(uiState.startOfDay))
@@ -284,7 +299,7 @@ fun HomeScreen(
         val entryIds = selectedIds.toList()
         val recIds = selectedRecIds.toList()
         val eventIds = selectedEventIds.toList()
-        val entriesToDelete = (pendingEntries + completedEntries).filter { it.id in selectedIds }
+        val entriesToDelete = (visiblePendingEntries + completedEntries).filter { it.id in selectedIds }
         val total = entryIds.size + recIds.size + eventIds.size
         scope.launch {
             viewModel.deleteSelection(entryIds, recIds, eventIds, entriesToDelete) {
@@ -297,7 +312,7 @@ fun HomeScreen(
     }
 
     fun completeSelected() {
-        val entriesToComplete = (pendingEntries + completedEntries).filter { it.id in selectedIds }
+        val entriesToComplete = (visiblePendingEntries + completedEntries).filter { it.id in selectedIds }
         scope.launch {
             viewModel.completeEntries(entriesToComplete) {
                 exitSelectionMode()
@@ -394,8 +409,21 @@ fun HomeScreen(
                     status = when {
                         isRecording -> TramaStatus.Recording
                         watchActive -> TramaStatus.Watch
+                        showListeningStatusOnHome && serviceRunning && asrStatus.isListeningErrorStatus() ->
+                            TramaStatus.Error
                         serviceRunning -> TramaStatus.Listening
                         else -> TramaStatus.Idle
+                    },
+                    statusLabel = if (showListeningStatusOnHome) {
+                        listeningStatusLabel(
+                            isRecording = isRecording,
+                            watchActive = watchActive,
+                            serviceRunning = serviceRunning,
+                            asrStatus = asrStatus,
+                            watchStatus = watchStatus
+                        )
+                    } else {
+                        null
                     },
                     locationRunning = locationRunning,
                     onAddClick = { showAddDialog = true },
@@ -502,7 +530,7 @@ fun HomeScreen(
                 ) {
                     repeat(4) { com.trama.app.ui.components.SkeletonRow() }
                 }
-            } else if (pendingEntries.isEmpty() && completedEntries.isEmpty() && recordings.isEmpty()) {
+                    } else if (visiblePendingEntries.isEmpty() && completedEntries.isEmpty() && recordings.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Default.Edit, contentDescription = null,
@@ -618,11 +646,11 @@ fun HomeScreen(
                         )
                     }
 
-                    if (olderEntries.isNotEmpty()) {
+                    if (visibleOlderEntries.isNotEmpty()) {
                         item(key = "header_older") {
                             SectionHeader(
                                 "Días pasados",
-                                olderEntries.size,
+                                visibleOlderEntries.size,
                                 MaterialTheme.colorScheme.onSurfaceVariant,
                                 expanded = olderExpanded,
                                 onToggle = { olderExpanded = !olderExpanded },
@@ -630,7 +658,7 @@ fun HomeScreen(
                             )
                         }
                         if (olderExpanded) {
-                            items(olderEntries, key = { "older_${it.id}" }) { entry ->
+                            items(visibleOlderEntries, key = { "older_${it.id}" }) { entry ->
                                 EntryCardItem(
                                     entry = entry,
                                     accentColor = timelineAccentConfig.pending,
@@ -699,6 +727,50 @@ fun HomeScreen(
 
 }
 
+private fun listeningStatusLabel(
+    isRecording: Boolean,
+    watchActive: Boolean,
+    serviceRunning: Boolean,
+    asrStatus: String,
+    watchStatus: String
+): String? {
+    if (isRecording) return null
+    if (watchActive) {
+        return watchStatus
+            .takeIf { it.isMeaningfulListeningStatus() }
+            ?.toDisplayListeningStatus()
+    }
+    if (!serviceRunning) return null
+    return asrStatus
+        .takeIf { it.isMeaningfulListeningStatus() }
+        ?.toDisplayListeningStatus()
+}
+
+private fun String.isMeaningfulListeningStatus(): Boolean {
+    val normalized = trim()
+    return normalized.isNotBlank() &&
+        !normalized.equals("sin datos", ignoreCase = true) &&
+        normalized != "-"
+}
+
+private fun String.isListeningErrorStatus(): Boolean {
+    val normalized = lowercase(Locale.getDefault())
+    return listOf(
+        "error",
+        "fall",
+        "crash",
+        "no disponible",
+        "stalled",
+        "bloque",
+        "deneg"
+    ).any { normalized.contains(it) }
+}
+
+private fun String.toDisplayListeningStatus(): String =
+    trim().replaceFirstChar { char ->
+        if (char.isLowerCase()) char.titlecase(Locale.getDefault()) else char.toString()
+    }
+
 // ── Home header ──────────────────────────────────────────────────────────────
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -706,6 +778,7 @@ fun HomeScreen(
 private fun HomeHeader(
     heroDayTitle: String,
     status: TramaStatus,
+    statusLabel: String?,
     locationRunning: Boolean,
     onAddClick: () -> Unit,
     onChatClick: () -> Unit,
@@ -749,7 +822,7 @@ private fun HomeHeader(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                StatusPill(status = status)
+                StatusPill(status = status, label = statusLabel)
                 if (locationRunning) {
                     StatusPill(status = TramaStatus.Location)
                 }

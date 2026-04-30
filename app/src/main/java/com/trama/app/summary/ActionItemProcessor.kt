@@ -1,6 +1,10 @@
 package com.trama.app.summary
 
 import android.content.Context
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.Log
 import com.google.ai.client.generativeai.GenerativeModel
 import com.trama.app.GeminiConfig
@@ -79,7 +83,13 @@ class ActionItemProcessor(private val context: Context) {
                     gate = CaptureLog.Gate.LLM,
                     result = CaptureLog.Result.OK,
                     text = result.cleanText,
-                    meta = mapOf(
+                    meta = llmDecisionMeta(
+                        entryId = entryId,
+                        result = result,
+                        decision = "accepted",
+                        route = EntryStatus.PENDING,
+                        backend = "llm"
+                    ) + mapOf(
                         "id" to entryId,
                         "kind" to result.kind,
                         "actionType" to result.actionType,
@@ -88,6 +98,7 @@ class ActionItemProcessor(private val context: Context) {
                         "actionability" to "%.2f".format(result.actionabilityScore)
                     )
                 )
+                notifyAcceptedAction()
                 // Persist any extra actions the LLM extracted from the same note.
                 persistLLMExtras(entryId, outcome.extras, repository)
             } else {
@@ -109,7 +120,13 @@ class ActionItemProcessor(private val context: Context) {
                     gate = CaptureLog.Gate.LLM,
                     result = CaptureLog.Result.REJECT,
                     text = result.cleanText,
-                    meta = mapOf(
+                    meta = llmDecisionMeta(
+                        entryId = entryId,
+                        result = result,
+                        decision = "rejected",
+                        route = rejectedStatus(result),
+                        backend = "llm"
+                    ) + mapOf(
                         "id" to entryId,
                         "kind" to result.kind,
                         "isActionable" to result.isActionable,
@@ -117,7 +134,7 @@ class ActionItemProcessor(private val context: Context) {
                         "usefulness" to "%.2f".format(result.usefulnessScore),
                         "actionability" to "%.2f".format(result.actionabilityScore),
                         "discardReason" to result.discardReason,
-                        "route" to if (result.kind == KIND_TASK) "SUGGESTED" else "DISCARDED"
+                        "route" to rejectedStatus(result)
                     )
                 )
                 return
@@ -133,6 +150,19 @@ class ActionItemProcessor(private val context: Context) {
                     confidence = heuristicFallback.confidence
                 )
                 Log.i(TAG, "Heuristic fallback for entry $entryId: '${heuristicFallback.cleanText}' [${heuristicFallback.actionType}]")
+                CaptureLog.event(
+                    gate = CaptureLog.Gate.LLM,
+                    result = CaptureLog.Result.OK,
+                    text = heuristicFallback.cleanText,
+                    meta = llmDecisionMeta(
+                        entryId = entryId,
+                        result = heuristicFallback,
+                        decision = "accepted",
+                        route = EntryStatus.PENDING,
+                        backend = "heuristic_fallback"
+                    )
+                )
+                notifyAcceptedAction()
             } else {
                 repository.updateAIProcessing(
                     id = entryId,
@@ -147,6 +177,18 @@ class ActionItemProcessor(private val context: Context) {
                     TAG,
                     "Routing heuristic fallback to review queue for entry $entryId: " +
                         "'${heuristicFallback.cleanText}' (confidence=${heuristicFallback.confidence})"
+                )
+                CaptureLog.event(
+                    gate = CaptureLog.Gate.LLM,
+                    result = CaptureLog.Result.REJECT,
+                    text = heuristicFallback.cleanText,
+                    meta = llmDecisionMeta(
+                        entryId = entryId,
+                        result = heuristicFallback,
+                        decision = "rejected",
+                        route = rejectedStatus(heuristicFallback),
+                        backend = "heuristic_fallback"
+                    )
                 )
                 return
             }
@@ -187,6 +229,7 @@ class ActionItemProcessor(private val context: Context) {
         )
 
         Log.i(TAG, "Auto-splitting entry $entryId into ${suggestions.size} actions")
+        notifyAcceptedAction()
 
         for (suggestion in suggestions.drop(1)) {
             val siblingId = repository.insert(
@@ -642,6 +685,7 @@ class ActionItemProcessor(private val context: Context) {
         val effectiveActionability = actionabilityScore ?: if (modelIsActionable) confidence else 0f
         val modelAcceptsAsTask = normalizedKind == KIND_TASK &&
             modelIsActionable &&
+            !looksLikeNegatedObligation(cleanText) &&
             effectiveUsefulness >= USEFULNESS_THRESHOLD &&
             effectiveActionability >= ACTIONABILITY_THRESHOLD
         val passesGate = isActionableAfterValidation(
@@ -662,6 +706,15 @@ class ActionItemProcessor(private val context: Context) {
             actionabilityScore = effectiveActionability,
             discardReason = discardReason
         )
+    }
+
+    private fun looksLikeNegatedObligation(text: String): Boolean {
+        val normalized = Normalizer.normalize(text.lowercase(Locale.getDefault()), Normalizer.Form.NFD)
+            .replace("\\p{Mn}+".toRegex(), "")
+        return Regex("""\b(?:ya\s+)?no\s+(?:tengo|tenemos|tienes|hay)\s+que\b""")
+            .containsMatchIn(normalized) ||
+            Regex("""\bno\s+(?:debo|debemos|necesito|necesitamos)\b""")
+                .containsMatchIn(normalized)
     }
 
     private fun withDisplayTrigger(text: String, displayTrigger: String?): String {
@@ -721,11 +774,75 @@ class ActionItemProcessor(private val context: Context) {
         result: ProcessingResult,
         repository: DiaryRepository
     ) {
-        if (result.kind == KIND_TASK) {
+        if (rejectedStatus(result) == EntryStatus.SUGGESTED) {
             repository.markSuggested(entryId)
         } else {
             repository.markDiscarded(entryId)
         }
+    }
+
+    private fun rejectedStatus(result: ProcessingResult): String =
+        if (result.kind == KIND_TASK && result.isActionable) {
+            EntryStatus.SUGGESTED
+        } else {
+            EntryStatus.DISCARDED
+        }
+
+    private fun llmDecisionMeta(
+        entryId: Long,
+        result: ProcessingResult,
+        decision: String,
+        route: String,
+        backend: String
+    ): Map<String, Any?> = mapOf(
+        "entryId" to entryId,
+        "decision" to decision,
+        "route" to route,
+        "backend" to backend,
+        "qualityBucket" to qualityBucket(result, decision, route),
+        "reviewHint" to reviewHint(result, decision, route),
+        "actionType" to result.actionType,
+        "kind" to result.kind,
+        "isActionable" to result.isActionable,
+        "confidence" to "%.2f".format(result.confidence),
+        "usefulness" to "%.2f".format(result.usefulnessScore),
+        "actionability" to "%.2f".format(result.actionabilityScore),
+        "discardReason" to result.discardReason
+    )
+
+    private fun qualityBucket(
+        result: ProcessingResult,
+        decision: String,
+        route: String
+    ): String = when {
+        decision == "accepted" && result.confidence < 0.65f -> "accepted_low_confidence"
+        decision == "accepted" -> "accepted_action"
+        route == EntryStatus.SUGGESTED -> "ambiguous_suggested"
+        result.actionabilityScore >= 0.55f || result.usefulnessScore >= 0.65f -> "discarded_possible_false_negative"
+        result.discardReason?.contains("duplic", ignoreCase = true) == true -> "discarded_duplicate_or_context"
+        result.discardReason?.contains("neg", ignoreCase = true) == true ||
+            result.discardReason?.contains("cancel", ignoreCase = true) == true -> "discarded_negated_or_cancelled"
+        result.discardReason?.contains("ruido", ignoreCase = true) == true ||
+            result.discardReason?.contains("transcrip", ignoreCase = true) == true -> "discarded_noise_or_asr"
+        result.kind == KIND_DISCARD || result.kind == KIND_UNCLEAR -> "discarded_non_action"
+        else -> "discarded_other"
+    }
+
+    private fun reviewHint(
+        result: ProcessingResult,
+        decision: String,
+        route: String
+    ): String = when {
+        decision == "accepted" && result.confidence < 0.65f ->
+            "Revisar como posible falso positivo: aceptada con confianza baja."
+        decision == "accepted" ->
+            "Revisar precision: confirmar si esta tarea era realmente util."
+        route == EntryStatus.SUGGESTED ->
+            "Revisar ambiguedad: el modelo vio tarea, pero no paso el contrato de aceptacion."
+        result.actionabilityScore >= 0.55f || result.usefulnessScore >= 0.65f ->
+            "Revisar recall: posible tarea util descartada."
+        else ->
+            "Revisar muestra negativa: confirmar que el descarte era correcto."
     }
 
     private fun normalizeKind(kind: String?, modelIsActionable: Boolean): String {
@@ -913,6 +1030,26 @@ Reglas:
         context.getSharedPreferences("daily_summary", Context.MODE_PRIVATE)
             .getString("gemini_api_key", null)
 
+    private fun notifyAcceptedAction() {
+        try {
+            val pattern = longArrayOf(0, 45)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vibrator = context.getSystemService(VibratorManager::class.java)?.defaultVibrator
+                if (vibrator?.hasVibrator() == true) {
+                    vibrator.vibrate(VibrationEffect.createWaveform(pattern, -1))
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                val vibrator = context.getSystemService(Vibrator::class.java)
+                if (vibrator?.hasVibrator() == true) {
+                    vibrator.vibrate(VibrationEffect.createWaveform(pattern, -1))
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Accepted-action vibration failed", e)
+        }
+    }
+
     companion object {
         private const val TAG = "ActionItemProcessor"
         private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
@@ -921,7 +1058,7 @@ Reglas:
         /** Minimum confidence for an LLM extraction to be accepted as a real task. */
         private const val ACTIONABLE_CONFIDENCE_THRESHOLD = 0.45f
         private const val USEFULNESS_THRESHOLD = 0.65f
-        private const val ACTIONABILITY_THRESHOLD = 0.70f
+        private const val ACTIONABILITY_THRESHOLD = 0.65f
 
         private const val KIND_TASK = "TASK"
         private const val KIND_NOTE = "NOTE"

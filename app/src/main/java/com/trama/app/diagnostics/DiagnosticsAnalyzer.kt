@@ -15,6 +15,7 @@ object DiagnosticsAnalyzer {
         val latency: Latency,
         val engines: List<CountStat>,
         val rejectReasons: List<CountStat>,
+        val qualityBuckets: List<CountStat>,
         val frequentPhrases: List<CountStat>,
         val examples: Examples,
         val recommendations: List<String>
@@ -49,6 +50,14 @@ object DiagnosticsAnalyzer {
         val uncertainFallbacksBlocked: Int,
         val unexpectedServiceStops: Int,
         val explicitUserStops: Int,
+        val mediaPlaybackPauses: Int,
+        val mediaPlaybackBlockedWindows: Int,
+        val llmAcceptedPending: Int,
+        val llmRejectedDiscarded: Int,
+        val llmRejectedSuggested: Int,
+        val discardedPossibleFalseNegatives: Int,
+        val acceptedLowConfidence: Int,
+        val entriesWithoutLlmReview: Int,
         val speakerRejectRatePct: Int,
         val llmRejectRatePct: Int,
         val savedPerFinalTranscriptPct: Int
@@ -73,7 +82,9 @@ object DiagnosticsAnalyzer {
         val speakerRejected: List<String>,
         val llmRejected: List<String>,
         val discardedEntries: List<String>,
+        val discardedPossibleFalseNegatives: List<String>,
         val suggestedEntries: List<String>,
+        val acceptedLowConfidence: List<String>,
         val recordingsWithoutActions: List<String>
     )
 
@@ -92,6 +103,25 @@ object DiagnosticsAnalyzer {
 
         val llmTotal = funnel.llmAccepted + funnel.llmRejected
         val speakerTotal = funnel.speakerAccepted + funnel.speakerRejected
+        val llmAcceptedPending = events.count {
+            it.gate == "LLM" && it.result == "OK" && it.meta["route"] == "PENDING"
+        }
+        val llmRejectedDiscarded = events.count {
+            it.gate == "LLM" && it.result == "REJECT" && it.meta["route"] == "DISCARDED"
+        }
+        val llmRejectedSuggested = events.count {
+            it.gate == "LLM" && it.result == "REJECT" && it.meta["route"] == "SUGGESTED"
+        }
+        val discardedPossibleFalseNegatives = events.count {
+            it.gate == "LLM" &&
+                it.result == "REJECT" &&
+                it.meta["qualityBucket"] == "discarded_possible_false_negative"
+        }
+        val acceptedLowConfidence = events.count {
+            it.gate == "LLM" &&
+                it.result == "OK" &&
+                it.meta["qualityBucket"] == "accepted_low_confidence"
+        }
         val quality = Quality(
             pendingEntries = entries.count { it.status == "PENDING" },
             suggestedEntries = entries.count { it.status == "SUGGESTED" },
@@ -113,6 +143,19 @@ object DiagnosticsAnalyzer {
             explicitUserStops = events.count {
                 it.gate == "SERVICE" && it.text == "service_stop_requested"
             },
+            mediaPlaybackPauses = events.count {
+                it.gate == "SERVICE" && it.text == "media_playback_pause"
+            },
+            mediaPlaybackBlockedWindows = events.count {
+                (it.gate == "ASR_FINAL" && it.text == "media_playback_blocked_window") ||
+                    (it.gate == "ASR_GATE" && it.text == "media_playback_gate_blocked")
+            },
+            llmAcceptedPending = llmAcceptedPending,
+            llmRejectedDiscarded = llmRejectedDiscarded,
+            llmRejectedSuggested = llmRejectedSuggested,
+            discardedPossibleFalseNegatives = discardedPossibleFalseNegatives,
+            acceptedLowConfidence = acceptedLowConfidence,
+            entriesWithoutLlmReview = entries.count { !it.wasReviewedByLLM },
             speakerRejectRatePct = pct(funnel.speakerRejected, speakerTotal),
             llmRejectRatePct = pct(funnel.llmRejected, llmTotal),
             savedPerFinalTranscriptPct = pct(funnel.savedEntries, funnel.finalTranscripts)
@@ -137,12 +180,35 @@ object DiagnosticsAnalyzer {
                     .mapNotNull { it.meta["reason"] ?: it.meta["discardReason"] ?: it.text }
                     .map { normalizeReason(it) }
             ),
+            qualityBuckets = topCounts(
+                events
+                    .filter { it.gate == "LLM" }
+                    .mapNotNull { it.meta["qualityBucket"] }
+            ),
             frequentPhrases = frequentPhrases(entries, recordings),
             examples = Examples(
                 speakerRejected = eventTexts(events, gate = "SPEAKER", result = "REJECT"),
                 llmRejected = eventTexts(events, gate = "LLM", result = "REJECT"),
                 discardedEntries = entryTexts(entries, status = "DISCARDED"),
+                discardedPossibleFalseNegatives = events
+                    .filter {
+                        it.gate == "LLM" &&
+                            it.result == "REJECT" &&
+                            it.meta["qualityBucket"] == "discarded_possible_false_negative"
+                    }
+                    .mapNotNull { it.text.takeUseful() }
+                    .distinct()
+                    .take(EXAMPLE_LIMIT),
                 suggestedEntries = entryTexts(entries, status = "SUGGESTED"),
+                acceptedLowConfidence = events
+                    .filter {
+                        it.gate == "LLM" &&
+                            it.result == "OK" &&
+                            it.meta["qualityBucket"] == "accepted_low_confidence"
+                    }
+                    .mapNotNull { it.text.takeUseful() }
+                    .distinct()
+                    .take(EXAMPLE_LIMIT),
                 recordingsWithoutActions = recordings
                     .filter { recording -> events.any { it.gate == "RECORDING" && it.result == "NO_MATCH" && it.meta["id"] == recording.id.toString() } }
                     .mapNotNull { it.transcription.takeUseful() }
@@ -239,6 +305,12 @@ object DiagnosticsAnalyzer {
         if (analysis.quality.llmRejectRatePct >= 50 && analysis.funnel.llmRejected >= 3) {
             add("El LLM está mandando demasiadas capturas a revisión/descartes: endurecer prompt con ejemplos positivos/negativos del export o simplificar tipos de acción.")
         }
+        if (analysis.quality.discardedPossibleFalseNegatives > 0) {
+            add("Hay descartes con señal de utilidad/actionability: revisar qualityDecisions bucket=discarded_possible_false_negative como candidatos de recall perdido.")
+        }
+        if (analysis.quality.acceptedLowConfidence > 0) {
+            add("Hay aceptaciones con baja confianza: revisar qualityDecisions bucket=accepted_low_confidence como posibles falsos positivos.")
+        }
         if (analysis.quality.savedPerFinalTranscriptPct in 1..40 && analysis.funnel.finalTranscripts >= 5) {
             add("Baja conversión de transcripción a entrada guardada: mirar ejemplos INTENT NO_MATCH y frases frecuentes para detectar pérdida por gate/intents.")
         }
@@ -256,6 +328,9 @@ object DiagnosticsAnalyzer {
         }
         if (analysis.quality.unexpectedServiceStops > 0) {
             add("Hay destrucciones del servicio sin parada explícita cercana: revisar watchdog, permisos de segundo plano y restricciones del fabricante.")
+        }
+        if (analysis.quality.mediaPlaybackPauses > 0 || analysis.quality.mediaPlaybackBlockedWindows > 0) {
+            add("La escucha se pauso por audio de otra app: revisar si coincide con YouTube/Spotify y confirmar que no se guardan eventos de media externa.")
         }
         if (analysis.frequentPhrases.take(5).any { it.value in TV_HINTS }) {
             add("Aparecen términos típicos de TV/ruido: reforzar speaker verification y añadir reglas negativas para habla no dirigida a Trama.")

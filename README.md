@@ -11,10 +11,12 @@ Situacion a fecha `2026-04-30`:
 - reloj en Wear Compose con escucha continua, grabadora y handoff al telefono
 - `Vosk` es el gate ASR ligero compartido entre telefono y reloj
 - `SherpaWhisperAsrEngine` es la ruta principal de transcripcion final en movil
-- `SpeechRecognizer` queda como fallback en movil y reloj cuando el pipeline dedicado no esta disponible
+- el movil no usa `SpeechRecognizer`: si el ASR offline no esta disponible, la captura se marca como degradada y se diagnostica explicitamente
 - `Gemini` cloud y `Gemma` local se usan para estructurar acciones, resumir grabaciones y generar memoria diaria
 - la escucha continua del movil trabaja en segmentos cortos y renovables para evitar ventanas largas/ruidosas atascadas
 - el fallback incierto a Whisper esta limitado por cooldown, carga y bateria para proteger consumo
+- la escucha se pausa cuando Android informa audio activo de otra app, para evitar capturas de YouTube/Spotify
+- Home puede mostrar estados tecnicos de escucha solo si el ajuste `Estado tecnico en inicio` esta activado
 - la UI principal vive en `Home`, `Calendar`, `Chat`, `Recordings`, `PlaceDetail` y `Settings`
 - `DailyPage` y el markdown privado por fecha funcionan como memoria tecnica persistida
 
@@ -36,14 +38,15 @@ Situacion a fecha `2026-04-30`:
 - backup/exportacion/importacion JSON mediante Storage Access Framework
 - diagnostico exportable del pipeline de captura
 - contadores de diagnostico para segmentos cerrados, fallbacks inciertos, bloqueos por bateria/cooldown y paradas del servicio
+- clasificacion de calidad en diagnostico para aceptadas, ambiguas, descartes y posibles falsos negativos
 - sincronizacion telefono <-> reloj de entradas, ajustes, patrones, audio y control de microfono
 
 ## Arquitectura por modulos
 
 ```text
-app/     movil: Compose UI, servicios, ASR final, IA, ubicacion, chat, backup, sync
+app/     movil: Compose UI, servicios, ASR offline final, IA, ubicacion, chat, backup, sync
 shared/  Room, modelos, DAOs, repositorio, audio base, Vosk gate, intent detection, sync contracts
-wear/    reloj: Wear Compose, escucha ligera, grabadora, Vosk/SpeechRecognizer fallback, sync
+wear/    reloj: Wear Compose, escucha ligera, grabadora, Vosk, sync
 ```
 
 ## Flujo de voz en movil
@@ -70,9 +73,13 @@ Comportamiento de escucha continua:
 - si Vosk devuelve vacio o fragmentos de 1-2 palabras, se permite un fallback incierto a Whisper con presupuesto conservador
 - fallback incierto: maximo cada 5 min en bateria, cada 2 min cargando, desactivado bajo 20% si no carga
 
-Fallback:
+Estados degradados:
 
-- si el backend dedicado no arranca o se degrada, el movil puede volver a `SpeechRecognizer`
+- si Whisper/sherpa no esta disponible, el movil no cae a reconocimiento cloud incierto; publica `ASR local no disponible`
+- si una ventana falla al transcribirse, se registra como fallo recuperable y la captura se rearma
+- si hay audio activo de otra app, la escucha se pausa o ignora ventanas hasta que Android informe que el audio externo paro
+- la UI normal muestra estados simples; `Estado tecnico en inicio` permite ver en Home estados como `Procesando audio`, `Rearmando ASR local` o `ASR local no disponible`
+- la app vibra solo cuando una accion fue aceptada y guardada, no cuando el gate detecta un posible trigger
 
 ## Flujo en Wear OS
 
@@ -87,7 +94,7 @@ Escucha continua:
 - la ruta primaria usa `VoskGateAsr` con `AudioRecord`
 - mantiene una ventana rolling de preroll
 - cuando detecta una intencion, une preroll + cola de audio y la transfiere al movil
-- si Vosk no esta disponible, cae a `SpeechRecognizer` con backoff y guardas de bateria
+- si Vosk no esta disponible, la escucha continua del reloj queda degradada y debe diagnosticarse en lugar de caer a una ruta cloud incierta
 
 Grabadora manual:
 
@@ -114,6 +121,7 @@ Trama combina varias rutas:
 - el prompt de acciones exige que `cleanText` sea la accion minima autosuficiente, resolviendo pronombres y elipsis dentro de la misma transcripcion
 - el postprocesado recorta prefijos conversacionales cuando el LLM devuelve una frase entera con un trigger accionable dentro
 - la deduplicacion normaliza variantes y errores frecuentes de triggers (`tenemos que`, `tenemso que`, `tenes/tenés que`) antes de comparar
+- `ActionQualityGateProductTest` genera miles de ejemplos sinteticos accionables/no accionables para vigilar precision antes de publicar
 
 La clave de Gemini todavia se guarda en `SharedPreferences`, por lo que moverla a almacenamiento seguro sigue siendo deuda prioritaria.
 

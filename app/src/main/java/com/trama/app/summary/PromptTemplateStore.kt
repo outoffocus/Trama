@@ -95,6 +95,9 @@ NO EXTRAER (isActionable=false, confidence<=0.3):
 - reflexiones, auto-charla o preguntas retóricas: "no sé qué hacer", "¿y si lo dejo?"
 - fragmentos incompletos por mala transcripcion: "por la", "y luego el"
 - meros comentarios sobre el pasado sin accion pendiente: "ayer fui al medico"
+- obligaciones negadas o canceladas: "ya no tengo que ir", "no hay que llamar", "no necesito hacerlo"
+- instrucciones conversacionales dirigidas a otra persona o ejemplos de trabajo: "Alex, tú creas una función...", "por ejemplo haces una llamada...", "eso se puede hacer en nada"
+- explicaciones sobre procesos, software, vídeos, noticias, debates o trabajo que contienen verbos de accion pero no son un compromiso pendiente del usuario
 - transcripciones con palabras mayormente sin sentido o repeticiones de ruido
 - referencias a una tarea que ya aparece en el CONTEXTO del inicio del prompt (ej: "eso que dije de Pedro", "la reunion del lunes"). En ese caso copia el texto literal de la nota en cleanText pero marca isActionable=false con confidence<=0.3 — no dupliques tareas existentes.
 
@@ -207,6 +210,26 @@ Input: "hoy hable con Sadoth y mañana tengo que contestarle el mensaje"
 <example id="10">
 Input: "esta semana me toco a mi pagar la piscina, la proxima semana le toca a Luis"
 	Output: {"kind":"TASK","usefulnessScore":0.9,"actionabilityScore":0.9,"discardReason":null,"isActionable":true,"cleanText":"A Luis le toca pagar la piscina","actionType":"BUY","dueDate":null,"priority":"NORMAL","confidence":0.86,"dateMentions":["la proxima semana"],"actions":[{"cleanText":"A Luis le toca pagar la piscina","actionType":"BUY","dueDate":null,"priority":"NORMAL","confidence":0.86}],"extraActions":[]}
+</example>
+
+<example id="11">
+Input: "vale pues Alex tu creas sin mas una funcion de enviar email con la direccion que usamos por ejemplo eso se puede hacer en nada"
+	Output: {"kind":"DISCARD","usefulnessScore":0.1,"actionabilityScore":0.0,"discardReason":"instruccion conversacional o ejemplo de trabajo, no tarea personal pendiente","isActionable":false,"cleanText":"vale pues Alex tu creas sin mas una funcion de enviar email con la direccion que usamos por ejemplo eso se puede hacer en nada","actionType":"GENERIC","dueDate":null,"priority":"NORMAL","confidence":0.1,"actions":[],"extraActions":[]}
+</example>
+
+<example id="12">
+Input: "ya no tengo que acordarme de ir a trabajar"
+	Output: {"kind":"DISCARD","usefulnessScore":0.1,"actionabilityScore":0.0,"discardReason":"obligacion negada o cancelada","isActionable":false,"cleanText":"ya no tengo que acordarme de ir a trabajar","actionType":"GENERIC","dueDate":null,"priority":"NORMAL","confidence":0.1,"actions":[],"extraActions":[]}
+</example>
+
+<example id="13">
+Input: "recoger nada"
+	Output: {"kind":"UNCLEAR","usefulnessScore":0.1,"actionabilityScore":0.0,"discardReason":"objeto vacio o sin sentido","isActionable":false,"cleanText":"recoger nada","actionType":"GENERIC","dueDate":null,"priority":"NORMAL","confidence":0.1,"actions":[],"extraActions":[]}
+</example>
+
+<example id="14">
+Input: "limpiar lo que dejo Elena sin lavar y comer"
+	Output: {"kind":"TASK","usefulnessScore":0.85,"actionabilityScore":0.85,"discardReason":null,"isActionable":true,"cleanText":"Limpiar lo que dejó Elena sin lavar y comer","actionType":"GENERIC","dueDate":null,"priority":"NORMAL","confidence":0.85,"actions":[{"cleanText":"Limpiar lo que dejó Elena sin lavar y comer","actionType":"GENERIC","dueDate":null,"priority":"NORMAL","confidence":0.85}],"extraActions":[]}
 </example>
 
 RESPONDE SOLO con el objeto JSON. No uses backticks ni bloques ``` ni texto fuera del JSON.

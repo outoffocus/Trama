@@ -5,18 +5,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
+import android.media.AudioManager
 import android.os.BatteryManager
 import android.os.Build
-import android.os.Bundle
 import android.os.PowerManager
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
 import android.util.Log
 import android.widget.Toast
 import androidx.lifecycle.LifecycleService
@@ -54,48 +46,40 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 
 /**
- * Continuous speech listening service using Android SpeechRecognizer.
+ * Continuous local speech listening service.
  *
  * Uses IntentDetector for flexible regex-based intent matching instead of
- * exact keyword matching. Enables partial results for faster detection.
+ * exact keyword matching.
  *
  * Integrated features:
- * - VAD (Voice Activity Detection): Only starts SpeechRecognizer when voice is detected
+ * - Lightweight local gate ASR: checks short speech windows before running Whisper
  * - Entry validation: Heuristics + Gemini to validate/correct transcriptions
  *
  * Battery optimizations:
- * - VAD gate: SpeechRecognizer only runs when voice is detected (~60% savings)
- * - Adaptive restart delay (fast after speech, slow after silence)
+ * - VAD/gate segmentation keeps Whisper off unless speech looks relevant
  * - Slow mode when screen is off
  * - Stops at configurable battery threshold
- * - Deduplicates entries from partial vs final results
+ * - Deduplicates entries from repeated segment captures
  */
 class KeywordListenerService : LifecycleService() {
 
     companion object {
         private const val TAG = "KeywordListenerService"
 
-        private const val RESTART_DELAY_NORMAL_MS = 500L
-        private const val RESTART_DELAY_SLOW_MS = 1500L
-        private const val RESTART_DELAY_DEEP_SLEEP_MS = 3000L
-        private const val RESTART_DELAY_HIBERNATE_MS = 5000L
-        private const val ERROR_RETRY_DELAY_MS = 1000L
         private const val CONTEXTUAL_RESTART_DELAY_MS = 500L
+        private const val CONTEXTUAL_CRASH_RESTART_DELAY_MS = 2_000L
         private const val SPEAKER_VERIFY_WINDOW_MS = 3_000L
         private const val UNCERTAIN_GATE_FALLBACK_COOLDOWN_MS = 5L * 60L * 1000L
         private const val UNCERTAIN_GATE_MIN_WINDOW_MS = 2_500L
         private const val UNCERTAIN_GATE_MAX_WINDOW_MS = 15_000L
         private const val BLOCKED_FALLBACK_LOG_INTERVAL_MS = 60_000L
+        private const val MEDIA_PLAYBACK_POLL_MS = 2_000L
 
-        private const val SLOW_MODE_THRESHOLD = 20
         private const val BATTERY_THRESHOLD = 15
-        private const val DEEP_SLEEP_THRESHOLD = 15
-        private const val HIBERNATE_THRESHOLD = 30
         private const val SERVICE_HEARTBEAT_MS = 15L * 60L * 1000L
 
     }
 
-    private var recognizer: SpeechRecognizer? = null
     private var repository: com.trama.shared.data.DiaryRepository? = null
     private lateinit var settings: SettingsDataStore
     private lateinit var dictionary: PersonalDictionary
@@ -108,6 +92,7 @@ class KeywordListenerService : LifecycleService() {
     private lateinit var gateAsr: LightweightGateAsr
     private var contextualCaptureEngine: ContextualAudioCaptureEngine? = null
     private var contextualCaptureJob: Job? = null
+    private var mediaPlaybackMonitorJob: Job? = null
     private var serviceHeartbeatJob: Job? = null
     private var startupJob: Job? = null
     private var contextPreRollSeconds: Int = SettingsDataStore.DEFAULT_CONTEXT_PRE_ROLL
@@ -121,17 +106,18 @@ class KeywordListenerService : LifecycleService() {
     private var screenOff = false
 
     @Volatile
-    private var speechRecognizerActive = false
-
-    @Volatile
     private var dedicatedAsrFailedOver = false
 
-    @Volatile private var consecutiveSilent = 0
+    @Volatile
+    private var consecutiveOfflineAsrErrors = 0
+
     @Volatile private var lastUncertainGateFallbackAt = 0L
     @Volatile
     private var batteryPct: Int = 100
     @Volatile
     private var charging = false
+    @Volatile
+    private var mediaPlaybackActive = false
     @Volatile
     private var lastBlockedUncertainGateFallbackLogAt = 0L
     @Volatile
@@ -159,13 +145,11 @@ class KeywordListenerService : LifecycleService() {
                 Intent.ACTION_SCREEN_OFF -> {
                     Log.i(TAG, "Screen off → slow mode")
                     screenOff = true
-                    consecutiveSilent = SLOW_MODE_THRESHOLD
                     notifier.updateForegroundIfChanged("Escuchando (segundo plano)")
                 }
                 Intent.ACTION_SCREEN_ON -> {
                     Log.i(TAG, "Screen on → fast mode")
                     screenOff = false
-                    consecutiveSilent = 0
                     notifier.updateForegroundIfChanged("Escuchando...")
                 }
             }
@@ -245,6 +229,7 @@ class KeywordListenerService : LifecycleService() {
         startupJob = lifecycleScope.launch(Dispatchers.IO) {
             loadInitialSettings()
             prewarmAsr()
+            startMediaPlaybackMonitor()
             initRecognizerAndStart()
             MicCoordinator.sendPause(applicationContext)
             startServiceHeartbeat()
@@ -272,11 +257,10 @@ class KeywordListenerService : LifecycleService() {
         } catch (_: Exception) {}
         startupJob?.cancel()
         startupJob = null
+        mediaPlaybackMonitorJob?.cancel()
+        mediaPlaybackMonitorJob = null
         serviceHeartbeatJob?.cancel()
         serviceHeartbeatJob = null
-        recognizer?.destroy()
-        recognizer = null
-
         // Note: MicCoordinator.sendResume is handled by ServiceController.stop()
         // not here, because onDestroy also fires when watch pauses us (and we shouldn't
         // send RESUME back in that case).
@@ -427,7 +411,7 @@ class KeywordListenerService : LifecycleService() {
         return try {
             SherpaWhisperAsrEngine(applicationContext).takeIf { it.isAvailable } ?: NoOpAsrEngine()
         } catch (e: Throwable) {
-            Log.w(TAG, "Dedicated ASR unavailable, falling back to SpeechRecognizer", e)
+            Log.w(TAG, "Dedicated offline ASR unavailable", e)
             NoOpAsrEngine()
         }
     }
@@ -442,6 +426,11 @@ class KeywordListenerService : LifecycleService() {
     }
 
     private fun initRecognizerAndStart() {
+        if (isMediaPlaybackActiveNow()) {
+            listening = true
+            handleMediaPlaybackActive(reason = "init")
+            return
+        }
         if (asrEngine.isAvailable) {
             val status = if (gateAsr.isAvailable) {
                 "vosk + whisper"
@@ -451,8 +440,65 @@ class KeywordListenerService : LifecycleService() {
             publishAsrDebug(engine = "${gateAsr.name} -> ${asrEngine.name}", status = status)
             initContextualCaptureAndStart()
         } else {
-            publishAsrDebug(engine = "speechrecognizer", status = "fallback android")
-            initSpeechRecognizerAndStart()
+            listening = false
+            dedicatedAsrFailedOver = true
+            notifier.updateForegroundIfChanged("ASR local no disponible")
+            publishAsrDebug(engine = "offline", status = "asr local no disponible")
+            logServiceEvent(
+                "offline_asr_unavailable",
+                result = CaptureLog.Result.REJECT
+            )
+        }
+    }
+
+    private fun startMediaPlaybackMonitor() {
+        if (mediaPlaybackMonitorJob?.isActive == true) return
+        mediaPlaybackMonitorJob = lifecycleScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                val active = isMediaPlaybackActiveNow()
+                if (active != mediaPlaybackActive) {
+                    if (active) {
+                        handleMediaPlaybackActive(reason = "poll")
+                    } else {
+                        handleMediaPlaybackInactive()
+                    }
+                }
+                delay(MEDIA_PLAYBACK_POLL_MS)
+            }
+        }
+    }
+
+    private fun isMediaPlaybackActiveNow(): Boolean =
+        runCatching {
+            getSystemService(AudioManager::class.java)?.isMusicActive == true
+        }.getOrDefault(false)
+
+    private fun handleMediaPlaybackActive(reason: String) {
+        if (mediaPlaybackActive && reason != "init") return
+        mediaPlaybackActive = true
+        Log.i(TAG, "External media playback active; pausing listener")
+        CaptureLog.event(
+            gate = CaptureLog.Gate.SERVICE,
+            result = CaptureLog.Result.REJECT,
+            text = "media_playback_pause",
+            meta = mapOf("reason" to reason)
+        )
+        publishAsrDebug(status = "pausado por audio de otra app", triggerReason = "media_playback")
+        notifier.updateForegroundIfChanged("Pausado por audio externo")
+        stopContextualCapture()
+    }
+
+    private fun handleMediaPlaybackInactive() {
+        mediaPlaybackActive = false
+        Log.i(TAG, "External media playback inactive; resuming listener")
+        CaptureLog.event(
+            gate = CaptureLog.Gate.SERVICE,
+            result = CaptureLog.Result.OK,
+            text = "media_playback_resume"
+        )
+        publishAsrDebug(status = "reanudando escucha", triggerReason = "media_playback_clear")
+        if (listening && !isBatteryLow()) {
+            initRecognizerAndStart()
         }
     }
 
@@ -482,10 +528,6 @@ class KeywordListenerService : LifecycleService() {
                 }
             }
             engine.onGateMatch = {
-                if (!detectionState.partialAlreadyVibrated) {
-                    vibrate(longArrayOf(0, 35))
-                    detectionState.partialAlreadyVibrated = true
-                }
                 val detection = intentDetector.detect(it)
                 detectionState.pendingGateDetection = detection
                 val reason = detection?.label?.let { label -> "gate -> $label" } ?: "gate -> trigger"
@@ -531,18 +573,32 @@ class KeywordListenerService : LifecycleService() {
             }
             engine.onWindowCaptured = { window, source ->
                 lifecycleScope.launch(Dispatchers.IO) {
+                    if (mediaPlaybackActive || isMediaPlaybackActiveNow()) {
+                        CaptureLog.event(
+                            gate = CaptureLog.Gate.ASR_FINAL,
+                            result = CaptureLog.Result.REJECT,
+                            text = "media_playback_blocked_window",
+                            meta = mapOf(
+                                "source" to source,
+                                "windowMs" to window.durationMs()
+                            )
+                        )
+                        publishAsrDebug(status = "audio externo ignorado", triggerReason = "media_playback")
+                        return@launch
+                    }
                     val startedAt = System.currentTimeMillis()
                     publishAsrDebug(status = "procesando audio")
                     val transcript = try {
                         asrEngine.transcribe(window, languageTag = "es")
                     } catch (e: Throwable) {
                         Log.e(TAG, "Dedicated ASR failed", e)
-                        fallbackToSpeechRecognizer(e)
+                        handleOfflineAsrWindowFailure(e, window.durationMs(), source)
                         null
                     }
 
                     val text = transcript?.text?.trim().orEmpty()
                     if (text.isNotBlank()) {
+                        consecutiveOfflineAsrErrors = 0
                         val elapsedMs = System.currentTimeMillis() - startedAt
                         CaptureLog.event(
                             gate = CaptureLog.Gate.ASR_FINAL,
@@ -601,7 +657,11 @@ class KeywordListenerService : LifecycleService() {
                                 "${elapsedMs}ms decode): '$text'"
                         )
                         val saved = processText(text)
-                        val rescued = if (!saved) processPendingGateResult(text) else false
+                        val rescued = if (!saved) {
+                            processPendingGateResult(text)
+                        } else {
+                            false
+                        }
                         if (!saved && !rescued) {
                             CaptureLog.event(
                                 gate = CaptureLog.Gate.INTENT,
@@ -627,219 +687,51 @@ class KeywordListenerService : LifecycleService() {
                     }
                 } catch (t: Throwable) {
                     Log.e(TAG, "Contextual capture crashed", t)
-                    fallbackToSpeechRecognizer(t)
-                    break
+                    logOfflineAsrRecoverableFailure(
+                        state = "contextual_capture_crashed",
+                        error = t,
+                        meta = mapOf("restartDelayMs" to CONTEXTUAL_CRASH_RESTART_DELAY_MS)
+                    )
+                    publishAsrDebug(engine = asrEngine.name, status = "rearmando captura")
+                    delay(CONTEXTUAL_CRASH_RESTART_DELAY_MS)
                 }
             }
         }
     }
 
-    private fun initSpeechRecognizerAndStart() {
-        lifecycleScope.launch(Dispatchers.Main) {
-            try {
-                recognizer?.destroy()
-                val onDeviceAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                    SpeechRecognizer.isOnDeviceRecognitionAvailable(applicationContext)
-                val recognizerAvailable = SpeechRecognizer.isRecognitionAvailable(applicationContext)
-
-                recognizer = if (onDeviceAvailable) {
-                    SpeechRecognizer.createOnDeviceSpeechRecognizer(applicationContext).also {
-                        Log.i(TAG, "On-device SpeechRecognizer created")
-                    }
-                } else if (recognizerAvailable) {
-                    if (!hasActiveNetwork()) {
-                        Log.w(TAG, "Cloud SpeechRecognizer fallback unavailable without network, waiting")
-                        notifier.updateForegroundIfChanged("Esperando conexión para fallback")
-                        publishAsrDebug(engine = "speechrecognizer", status = "fallback sin red")
-                        scheduleFallbackRecognizerInit(adaptiveDelay())
-                        return@launch
-                    }
-                    SpeechRecognizer.createSpeechRecognizer(applicationContext).also {
-                        Log.i(TAG, "Standard SpeechRecognizer created")
-                    }
-                } else {
-                    Log.e(TAG, "No SpeechRecognizer available")
-                    notifier.updateForegroundIfChanged("Error: reconocimiento no disponible")
-                    stopSelf()
-                    return@launch
-                }
-
-                listening = true
-                publishAsrDebug(engine = "speechrecognizer", status = "escuchando")
-                startListening()
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to create SpeechRecognizer", e)
-                notifier.updateForegroundIfChanged("Error: no se pudo iniciar")
-                stopSelf()
-            }
-        }
-    }
-
-    private fun fallbackToSpeechRecognizer(error: Throwable) {
-        if (dedicatedAsrFailedOver || !listening) return
-        dedicatedAsrFailedOver = true
-        Log.w(TAG, "Falling back to SpeechRecognizer after dedicated ASR failure", error)
-        logServiceEvent(
-            "fallback_to_speechrecognizer",
-            meta = mapOf("error" to error.javaClass.simpleName)
+    private fun handleOfflineAsrWindowFailure(
+        error: Throwable,
+        windowMs: Long,
+        source: String
+    ) {
+        consecutiveOfflineAsrErrors += 1
+        logOfflineAsrRecoverableFailure(
+            state = "offline_asr_window_failed",
+            error = error,
+            meta = mapOf(
+                "windowMs" to windowMs,
+                "source" to source,
+                "consecutiveErrors" to consecutiveOfflineAsrErrors
+            )
         )
-        asrEngine = NoOpAsrEngine()
-        stopContextualCapture()
-        notifier.updateForegroundIfChanged("Escuchando (fallback Android)")
-        publishAsrDebug(engine = "speechrecognizer", status = "fallback tras error")
-        initSpeechRecognizerAndStart()
+        notifier.updateForegroundIfChanged("Rearmando ASR local")
+        publishAsrDebug(engine = asrEngine.name, status = "rearmando asr local")
     }
 
-    private fun startListening() {
-        if (!listening) return
-        val rec = recognizer ?: return
-
-        detectionState.resetAll()
-        rec.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {
-                speechRecognizerActive = true
-                notifier.updateForegroundIfChanged("Escuchando...")
-            }
-
-            override fun onBeginningOfSpeech() {
-                consecutiveSilent = 0
-            }
-
-            override fun onRmsChanged(rmsdB: Float) {}
-
-            override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() {
-                speechRecognizerActive = false
-            }
-
-            override fun onError(error: Int) {
-                speechRecognizerActive = false
-                when (error) {
-                    SpeechRecognizer.ERROR_NO_MATCH,
-                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
-                        consecutiveSilent++
-                        restartListening(adaptiveDelay())
-                    }
-                    SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> {
-                        restartListening(ERROR_RETRY_DELAY_MS)
-                    }
-                    SpeechRecognizer.ERROR_CLIENT -> {
-                        restartListening(ERROR_RETRY_DELAY_MS)
-                    }
-                    else -> {
-                        Log.e(TAG, "Recognition error: $error")
-                        restartListening(ERROR_RETRY_DELAY_MS)
-                    }
-                }
-            }
-
-            override fun onPartialResults(partialResults: Bundle?) {
-                if (detectionState.partialAlreadySaved) return  // Already captured in this cycle
-
-                val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                val text = matches?.firstOrNull()?.trim() ?: return
-
-                if (text.isNotBlank()) {
-                    val result = intentDetector.detectPartial(text)
-                    if (result != null) {
-                        detectionState.pendingPartialDetection = result
-                        if (!detectionState.partialAlreadyVibrated) {
-                            vibrate(longArrayOf(0, 35))
-                            detectionState.partialAlreadyVibrated = true
-                        }
-                        publishAsrDebug(
-                            status = "trigger parcial",
-                            gateText = text,
-                            triggerReason = "speech partial -> ${result.label}"
-                        )
-                        Log.i(TAG, "Partial match [${result.label}]: '${text.take(60)}'")
-                    }
-                }
-            }
-
-            override fun onResults(results: Bundle?) {
-                speechRecognizerActive = false
-                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                val text = matches?.firstOrNull()?.trim() ?: ""
-
-                consecutiveSilent = 0
-
-                if (text.isNotBlank()) {
-                    Log.i(TAG, "Heard: '$text'")
-                    val saved = processText(text)
-                    if (!saved) {
-                        processPendingPartialResult(text)
-                    }
-                }
-
-                restartListening(RESTART_DELAY_NORMAL_MS)
-            }
-
-            override fun onEvent(eventType: Int, params: Bundle?) {}
-        })
-
-        try {
-            rec.startListening(buildRecognizerIntent())
-        } catch (e: Exception) {
-            Log.e(TAG, "startListening failed", e)
-            restartListening(ERROR_RETRY_DELAY_MS)
-        }
-    }
-
-    private fun buildRecognizerIntent(): Intent {
-        return Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-ES")
-
-            if (Build.VERSION.SDK_INT >= 34) {
-                putExtra("android.speech.extra.ENABLE_LANGUAGE_SWITCH", true)
-                putExtra(
-                    "android.speech.extra.LANGUAGE_SWITCH_ALLOWED_LANGUAGES",
-                    arrayListOf("es-ES", "en-US")
-                )
-            }
-
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-            // Enable partial results for faster intent detection
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-        }
-    }
-
-    private fun adaptiveDelay(): Long {
-        return when {
-            screenOff && consecutiveSilent >= HIBERNATE_THRESHOLD -> RESTART_DELAY_HIBERNATE_MS
-            consecutiveSilent >= HIBERNATE_THRESHOLD -> RESTART_DELAY_DEEP_SLEEP_MS
-            consecutiveSilent >= DEEP_SLEEP_THRESHOLD -> RESTART_DELAY_SLOW_MS
-            screenOff -> RESTART_DELAY_SLOW_MS
-            else -> RESTART_DELAY_NORMAL_MS
-        }
-    }
-
-    private fun restartListening(delayMs: Long) {
-        if (!listening) return
-
-        if (isBatteryLow()) {
-            stopForLowBattery("restart")
-            return
-        }
-
-        lifecycleScope.launch(Dispatchers.Main) {
-            delay(delayMs)
-            if (listening) {
-                startListening()
-            }
-        }
-    }
-
-    private fun scheduleFallbackRecognizerInit(delayMs: Long) {
-        if (!listening) return
-        lifecycleScope.launch(Dispatchers.Main) {
-            delay(delayMs)
-            if (listening && dedicatedAsrFailedOver && recognizer == null) {
-                initSpeechRecognizerAndStart()
-            }
-        }
+    private fun logOfflineAsrRecoverableFailure(
+        state: String,
+        error: Throwable,
+        meta: Map<String, Any?> = emptyMap()
+    ) {
+        Log.w(TAG, "Offline ASR recoverable failure: $state", error)
+        logServiceEvent(
+            state,
+            result = CaptureLog.Result.REJECT,
+            meta = mapOf(
+                "error" to error.javaClass.simpleName,
+                "message" to error.message
+            ) + meta
+        )
     }
 
     private fun stopContextualCapture() {
@@ -864,6 +756,19 @@ class KeywordListenerService : LifecycleService() {
         debugSummary: String,
         isFinal: Boolean
     ): Boolean {
+        if (mediaPlaybackActive || isMediaPlaybackActiveNow()) {
+            CaptureLog.event(
+                gate = CaptureLog.Gate.ASR_GATE,
+                result = CaptureLog.Result.NO_MATCH,
+                text = "media_playback_gate_blocked",
+                meta = mapOf(
+                    "windowMs" to windowMs,
+                    "isFinal" to isFinal,
+                    "summary" to debugSummary
+                )
+            )
+            return false
+        }
         val now = System.currentTimeMillis()
         val decision = UncertainGateFallbackPolicy.decide(
             windowMs = windowMs,
@@ -950,14 +855,6 @@ class KeywordListenerService : LifecycleService() {
         }
     }
 
-    private fun hasActiveNetwork(): Boolean {
-        val connectivityManager = getSystemService(ConnectivityManager::class.java) ?: return false
-        val network = connectivityManager.activeNetwork ?: return false
-        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
-        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-    }
-
     /**
      * Process transcribed text through IntentDetector.
      * Uses regex patterns for flexible matching of natural speech variations.
@@ -975,24 +872,7 @@ class KeywordListenerService : LifecycleService() {
         )
     }
 
-    private fun processPendingPartialResult(
-        finalText: String
-    ): Boolean {
-        val result = detectionState.pendingPartialDetection ?: return false
-        Log.i(TAG, "Using pending partial detection to preserve recognized reminder")
-        publishAsrDebug(
-            gateText = finalText,
-            triggerReason = "partial latched -> ${result.label}"
-        )
-        return processDetectedResult(
-            result = result.copy(capturedText = finalText, label = result.label),
-            text = finalText
-        )
-    }
-
-    private fun processPendingGateResult(
-        finalText: String
-    ): Boolean {
+    private fun processPendingGateResult(finalText: String): Boolean {
         val result = detectionState.pendingGateDetection ?: return false
         Log.i(TAG, "Using pending gate detection to preserve recognized reminder")
         publishAsrDebug(
@@ -1035,11 +915,6 @@ class KeywordListenerService : LifecycleService() {
         }
 
         detectionState.clearPending()
-
-        if (!detectionState.confirmedAlreadyVibrated) {
-            vibrate(longArrayOf(0, 120, 40, 120))
-            detectionState.confirmedAlreadyVibrated = true
-        }
         publishAsrDebug(status = "procesando entrada")
 
         val intentId = result.pattern?.id ?: result.customKeyword ?: "nota"
@@ -1087,32 +962,17 @@ class KeywordListenerService : LifecycleService() {
         lastWindowMs: Int? = null,
         lastDecodeMs: Int? = null
     ) {
-        if (!asrDebugEnabledVolatile) return
+        if (!asrDebugEnabledVolatile && status == null) return
         lifecycleScope.launch(Dispatchers.IO) {
             settings.updateAsrDebugSnapshot(
-                engine = engine,
+                engine = engine.takeIf { asrDebugEnabledVolatile },
                 status = status,
-                lastText = lastText,
-                gateText = gateText,
-                triggerReason = triggerReason,
-                lastWindowMs = lastWindowMs,
-                lastDecodeMs = lastDecodeMs
+                lastText = lastText.takeIf { asrDebugEnabledVolatile },
+                gateText = gateText.takeIf { asrDebugEnabledVolatile },
+                triggerReason = triggerReason.takeIf { asrDebugEnabledVolatile },
+                lastWindowMs = lastWindowMs.takeIf { asrDebugEnabledVolatile },
+                lastDecodeMs = lastDecodeMs.takeIf { asrDebugEnabledVolatile }
             )
-        }
-    }
-
-    private fun vibrate(pattern: LongArray) {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vm = getSystemService(VibratorManager::class.java)
-                vm.defaultVibrator.vibrate(VibrationEffect.createWaveform(pattern, -1))
-            } else {
-                @Suppress("DEPRECATION")
-                val v = getSystemService(Vibrator::class.java)
-                v.vibrate(VibrationEffect.createWaveform(pattern, -1))
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Vibration failed", e)
         }
     }
 
@@ -1164,7 +1024,6 @@ class KeywordListenerService : LifecycleService() {
             meta = mapOf(
                 "listening" to listening,
                 "screenOff" to screenOff,
-                "speechRecognizerActive" to speechRecognizerActive,
                 "contextualJobActive" to (contextualCaptureJob?.isActive == true),
                 "batteryPct" to batteryPct,
                 "dedicatedAsrFailedOver" to dedicatedAsrFailedOver

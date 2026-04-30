@@ -9,24 +9,18 @@ import com.trama.shared.speech.IntentDetector.DetectionResult
  */
 class DetectionState {
     @Volatile var partialAlreadySaved: Boolean = false
-    @Volatile var partialAlreadyVibrated: Boolean = false
-    @Volatile var confirmedAlreadyVibrated: Boolean = false
     @Volatile var pendingPartialDetection: DetectionResult? = null
     @Volatile var pendingGateDetection: DetectionResult? = null
 
     /** Reset everything — call when a fresh recognition cycle begins. */
     fun resetAll() {
         partialAlreadySaved = false
-        partialAlreadyVibrated = false
-        confirmedAlreadyVibrated = false
         pendingPartialDetection = null
         pendingGateDetection = null
     }
 
     /** Reset everything except [partialAlreadySaved] — used when the gate re-arms mid-cycle. */
     fun resetForRearm() {
-        partialAlreadyVibrated = false
-        confirmedAlreadyVibrated = false
         pendingPartialDetection = null
         pendingGateDetection = null
     }

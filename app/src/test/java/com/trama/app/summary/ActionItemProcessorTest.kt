@@ -101,6 +101,27 @@ class ActionItemProcessorTest {
     }
 
     @Test
+    fun `cleaning household reminders are accepted as actionable`() {
+        val result = callPrivate<ActionItemProcessor.ProcessingResult>(
+            "buildProcessingResult",
+            "Limpiar lo que dejó Elena sin lavar y comer",
+            "GENERIC",
+            null,
+            "NORMAL",
+            0.68f,
+            true,
+            "TASK",
+            0.68f,
+            0.68f,
+            null,
+            null
+        )
+
+        assertTrue(result.isActionable)
+        assertEquals(0.68f, result.confidence, 0.001f)
+    }
+
+    @Test
     fun `ir tasks are accepted as actionable`() {
         val result = callPrivate<ActionItemProcessor.ProcessingResult>(
             "buildProcessingResult",
@@ -365,7 +386,10 @@ class ActionItemProcessorTest {
             "No quería verla ahí. Ahí no escucho",
             "Voy a hablar como sale",
             "¿Te asiste esto?",
-            "¿No es barato?"
+            "¿No es barato?",
+            "Recoger nada",
+            "Ya no tengo que acordarme de ir a trabajar",
+            "Vale, pues Alex, tú creas sin más, haces una llamada Rojo, una función de enviar email con la dirección que usamos y el contenido que pongamos en la descripción del plan, por ejemplo"
         )
 
         for (phrase in phrases) {
@@ -382,6 +406,31 @@ class ActionItemProcessorTest {
 
             assertTrue("Expected '$phrase' to be rejected", !result.isActionable)
             assertEquals(0.29f, result.confidence, 0.001f)
+            assertEquals("DISCARDED", callPrivate<String>("rejectedStatus", result))
+        }
+    }
+
+    @Test
+    fun `valid explicit tasks still pass strict action gate`() {
+        val phrases = listOf(
+            "Llamar al restaurante mañana" to "CALL",
+            "Comprar una cafetera nueva" to "BUY",
+            "Reservar la comida para el domingo" to "GENERIC"
+        )
+
+        for ((phrase, type) in phrases) {
+            val result = callPrivate<ActionItemProcessor.ProcessingResult>(
+                "buildProcessingResult",
+                phrase,
+                type,
+                null,
+                "NORMAL",
+                0.9f,
+                true,
+                null
+            )
+
+            assertTrue("Expected '$phrase' to pass", result.isActionable)
         }
     }
 

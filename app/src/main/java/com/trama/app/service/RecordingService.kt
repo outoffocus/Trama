@@ -7,18 +7,17 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
-import android.os.Bundle
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.trama.app.NotificationConfig
 import com.trama.app.R
-import com.trama.shared.data.DatabaseProvider
 import com.trama.app.MainActivity
+import com.trama.app.audio.OfflineDictationCapture
+import com.trama.app.audio.SherpaWhisperAsrEngine
+import com.trama.app.diagnostics.CaptureLog
+import com.trama.shared.data.DatabaseProvider
 import com.trama.shared.model.Recording
 import com.trama.shared.model.Source
 import kotlinx.coroutines.Dispatchers
@@ -30,7 +29,7 @@ import kotlinx.coroutines.launch
  * Foreground service for continuous voice recording + transcription.
  * Runs independently of the UI — the user can navigate freely while recording.
  *
- * Uses SpeechRecognizer in continuous mode (restart on each session end).
+ * Uses local AudioRecord capture + offline Whisper transcription on stop.
  * State is shared via RecordingState singleton.
  */
 class RecordingService : LifecycleService() {
@@ -41,12 +40,14 @@ class RecordingService : LifecycleService() {
         private const val NOTIFICATION_ID = NotificationConfig.ID_RECORDING
         const val ACTION_START = "com.trama.RECORD_START"
         const val ACTION_STOP = "com.trama.RECORD_STOP"
+        private const val MAX_RECORDING_DURATION_MS = 2L * 60L * 60L * 1000L
     }
 
-    private var recognizer: SpeechRecognizer? = null
     private var fullText = ""
     private var currentPartial = ""
     private var startTimeMs = 0L
+    private var capture: OfflineDictationCapture? = null
+    private var captureJob: Job? = null
     private var timerJob: Job? = null
     private var stopJob: Job? = null
     private var isActive = false
@@ -77,10 +78,24 @@ class RecordingService : LifecycleService() {
         if (isActive) return
         isActive = true
         fullText = ""
-        currentPartial = ""
+        currentPartial = "Grabando offline"
         startTimeMs = System.currentTimeMillis()
 
-        RecordingState.update(true, 0, "", "")
+        val asrEngine = SherpaWhisperAsrEngine(applicationContext)
+        if (!asrEngine.isAvailable) {
+            isActive = false
+            currentPartial = ""
+            RecordingState.notifyError("ASR local no disponible")
+            CaptureLog.event(
+                gate = CaptureLog.Gate.RECORDING,
+                result = CaptureLog.Result.REJECT,
+                text = "offline_asr_unavailable"
+            )
+            stopSelf()
+            return
+        }
+
+        RecordingState.update(true, 0, "", currentPartial)
 
         // Pause keyword listener to avoid mic conflict (native crash)
         if (ServiceController.isRunning.value) {
@@ -98,10 +113,29 @@ class RecordingService : LifecycleService() {
             }
         }
 
-        // Start speech recognition
-        val rec = SpeechRecognizer.createSpeechRecognizer(this)
-        recognizer = rec
-        startSession(rec)
+        val activeCapture = OfflineDictationCapture()
+        capture = activeCapture
+        captureJob = lifecycleScope.launch(Dispatchers.IO) {
+            val window = activeCapture.capture(maxDurationMs = MAX_RECORDING_DURATION_MS)
+            if (isActive) {
+                Log.i(TAG, "Recording reached max duration; stopping")
+                isActive = false
+                timerJob?.cancel()
+            }
+            if (window == null) {
+                currentPartial = ""
+                RecordingState.notifyError("No se pudo capturar audio")
+                finishAfterStop()
+                return@launch
+            }
+            stopJob = lifecycleScope.launch(Dispatchers.IO) {
+                persistCapturedRecording(
+                    asrEngine = asrEngine,
+                    window = window,
+                    elapsed = ((System.currentTimeMillis() - startTimeMs) / 1000).toInt()
+                )
+            }
+        }
 
         Log.i(TAG, "Recording started")
     }
@@ -110,121 +144,92 @@ class RecordingService : LifecycleService() {
         if (!isActive || stopJob != null) return
         isActive = false
         timerJob?.cancel()
-
-        recognizer?.stopListening()
-        recognizer?.destroy()
-        recognizer = null
-
-        val textToSave = buildString {
-            append(fullText)
-            if (currentPartial.isNotBlank()) {
-                if (isNotBlank()) append(". ")
-                append(currentPartial)
-            }
-        }.trim()
-
-        val elapsed = ((System.currentTimeMillis() - startTimeMs) / 1000).toInt()
-
-        stopJob = lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                if (textToSave.isNotBlank()) {
-                    val repository = DatabaseProvider.getRepository(applicationContext)
-                    val recordingId = repository.insertRecording(
-                        Recording(
-                            transcription = textToSave,
-                            durationSeconds = elapsed,
-                            source = Source.PHONE
-                        )
-                    )
-
-                    RecordingState.notifySaved(recordingId)
-                    Log.i(TAG, "Recording saved (id=$recordingId, ${elapsed}s)")
-
-                    com.trama.app.summary.RecordingProcessorWorker.enqueue(applicationContext, recordingId)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to persist recording before stop", e)
-                RecordingState.notifyError("No se pudo guardar la grabación")
-            } finally {
-                RecordingState.reset()
-
-                if (ServiceController.shouldBeRunning(this@RecordingService)) {
-                    Log.i(TAG, "Resuming KeywordListenerService after recording")
-                    ServiceController.start(this@RecordingService)
-                }
-
-                stopJob = null
-                stopSelf()
-                Log.i(TAG, "Recording stopped")
-            }
-        }
+        currentPartial = "Transcribiendo offline..."
+        RecordingState.update(
+            recording = true,
+            elapsed = ((System.currentTimeMillis() - startTimeMs) / 1000),
+            text = fullText,
+            partial = currentPartial
+        )
+        capture?.requestStop()
     }
 
     override fun onDestroy() {
         isActive = false
         timerJob?.cancel()
-        stopJob?.cancel()
-        recognizer?.destroy()
-        RecordingState.reset()
+        capture?.requestStop()
+        captureJob?.cancel()
+        if (stopJob == null) {
+            RecordingState.reset()
+        }
         super.onDestroy()
     }
 
-    // ── SpeechRecognizer ──
+    private suspend fun persistCapturedRecording(
+        asrEngine: SherpaWhisperAsrEngine,
+        window: com.trama.shared.audio.CapturedAudioWindow,
+        elapsed: Int
+    ) {
+        try {
+            val startedAt = System.currentTimeMillis()
+            val transcript = asrEngine.transcribe(window, languageTag = "es")?.text?.trim().orEmpty()
+            val decodeMs = System.currentTimeMillis() - startedAt
+            CaptureLog.event(
+                gate = CaptureLog.Gate.RECORDING,
+                result = if (transcript.isNotBlank()) CaptureLog.Result.OK else CaptureLog.Result.NO_MATCH,
+                text = transcript.ifBlank { "empty_offline_transcript" },
+                meta = mapOf(
+                    "engine" to asrEngine.name,
+                    "windowMs" to window.durationMs(),
+                    "decodeMs" to decodeMs,
+                    "offline" to true
+                )
+            )
+            if (transcript.isBlank()) {
+                RecordingState.notifyError("La transcripción local salió vacía")
+                return
+            }
 
-    private fun buildRecognizerIntent(): Intent =
-        Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 3000L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 3000L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 5000L)
+            fullText = transcript
+            currentPartial = ""
+            RecordingState.update(false, elapsed.toLong(), transcript, "")
+
+            val repository = DatabaseProvider.getRepository(applicationContext)
+            val recordingId = repository.insertRecording(
+                Recording(
+                    transcription = transcript,
+                    durationSeconds = elapsed,
+                    source = Source.PHONE,
+                    processedLocally = true,
+                    processedBy = asrEngine.name
+                )
+            )
+
+            RecordingState.notifySaved(recordingId)
+            Log.i(TAG, "Offline recording saved (id=$recordingId, ${elapsed}s, decode=${decodeMs}ms)")
+
+            com.trama.app.summary.RecordingProcessorWorker.enqueue(applicationContext, recordingId)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to transcribe/persist offline recording", e)
+            RecordingState.notifyError("No se pudo transcribir la grabación local")
+        } finally {
+            finishAfterStop()
+        }
+    }
+
+    private fun finishAfterStop() {
+        RecordingState.reset()
+
+        if (ServiceController.shouldBeRunning(this@RecordingService)) {
+            Log.i(TAG, "Resuming KeywordListenerService after recording")
+            ServiceController.start(this@RecordingService)
         }
 
-    private fun startSession(rec: SpeechRecognizer) {
-        rec.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {}
-            override fun onBeginningOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) {}
-            override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() {}
-
-            override fun onResults(results: Bundle?) {
-                val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    ?.firstOrNull()?.trim() ?: ""
-                if (text.isNotBlank()) {
-                    fullText = if (fullText.isBlank()) text else "$fullText. $text"
-                }
-                currentPartial = ""
-                if (isActive) {
-                    try { rec.startListening(buildRecognizerIntent()) }
-                    catch (e: Exception) { Log.w(TAG, "Restart failed", e) }
-                }
-            }
-
-            override fun onPartialResults(partialResults: Bundle?) {
-                val text = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    ?.firstOrNull()?.trim() ?: ""
-                if (text.isNotBlank()) currentPartial = text
-            }
-
-            override fun onError(error: Int) {
-                Log.w(TAG, "Recognition error: $error")
-                currentPartial = ""
-                if (isActive && error != SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
-                    lifecycleScope.launch(Dispatchers.Main) {
-                        delay(500)
-                        if (isActive) {
-                            try { rec.startListening(buildRecognizerIntent()) }
-                            catch (e: Exception) { Log.w(TAG, "Restart failed", e) }
-                        }
-                    }
-                }
-            }
-
-            override fun onEvent(eventType: Int, params: Bundle?) {}
-        })
-        rec.startListening(buildRecognizerIntent())
+        capture = null
+        captureJob = null
+        stopJob = null
+        stopSelf()
+        Log.i(TAG, "Recording stopped")
     }
 
     // ── Notification ──
