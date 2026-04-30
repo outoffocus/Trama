@@ -1,6 +1,10 @@
 package com.trama.app.service
 
 import android.content.Context
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.Log
 import com.trama.app.diagnostics.CaptureLog
 import com.trama.app.summary.ActionItemProcessor
@@ -88,13 +92,37 @@ class CaptureSaver(
             onEntrySaved()
 
             EntryProcessingState.markProcessing(entryId)
+            var acceptedForTimeline = false
             try {
-                ActionItemProcessor(context).process(entryId, text, repo)
+                acceptedForTimeline = ActionItemProcessor(context).process(entryId, text, repo)
             } catch (e: Exception) {
                 Log.w(TAG, "ActionItemProcessor failed for entry $entryId", e)
             } finally {
                 EntryProcessingState.markFinished(entryId)
             }
+            if (acceptedForTimeline) {
+                notifyTimelineActionAdded()
+            }
+        }
+    }
+
+    private fun notifyTimelineActionAdded() {
+        try {
+            val pattern = longArrayOf(0, 45)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vibrator = context.getSystemService(VibratorManager::class.java)?.defaultVibrator
+                if (vibrator?.hasVibrator() == true) {
+                    vibrator.vibrate(VibrationEffect.createWaveform(pattern, -1))
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                val vibrator = context.getSystemService(Vibrator::class.java)
+                if (vibrator?.hasVibrator() == true) {
+                    vibrator.vibrate(VibrationEffect.createWaveform(pattern, -1))
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Timeline action vibration failed", e)
         }
     }
 

@@ -79,7 +79,7 @@ Estados degradados:
 - si una ventana falla al transcribirse, se registra como fallo recuperable y la captura se rearma
 - si hay audio activo de otra app, la escucha se pausa o ignora ventanas hasta que Android informe que el audio externo paro
 - la UI normal muestra estados simples; `Estado tecnico en inicio` permite ver en Home estados como `Procesando audio`, `Rearmando ASR local` o `ASR local no disponible`
-- la app vibra solo cuando una accion fue aceptada y guardada, no cuando el gate detecta un posible trigger
+- la app vibra solo cuando una accion aceptada ya termino el procesado y puede aparecer en el timeline, no durante gate/LLM/procesado
 
 ## Flujo en Wear OS
 

@@ -130,7 +130,7 @@ Propiedades:
 - errores de ventana ASR se tratan como recuperables y rearman la captura
 - ASR local no disponible es un estado terminal visible/diagnosticable
 - trazas en `CaptureLog` para diagnostico
-- la vibracion se emite solo cuando una accion fue aceptada y guardada; no en el gate ni al empezar a procesar
+- la vibracion se emite solo despues de `EntryProcessingState.markFinished`, cuando una accion aceptada deja de estar oculta por procesado y puede aparecer en el timeline
 - Home muestra estados tecnicos de escucha solo con el ajuste `Estado tecnico en inicio`
 
 Eventos relevantes de diagnostico:

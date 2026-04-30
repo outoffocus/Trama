@@ -1,10 +1,6 @@
 package com.trama.app.summary
 
 import android.content.Context
-import android.os.Build
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
 import android.util.Log
 import com.google.ai.client.generativeai.GenerativeModel
 import com.trama.app.GeminiConfig
@@ -35,7 +31,7 @@ import java.util.Locale
  */
 class ActionItemProcessor(private val context: Context) {
 
-    suspend fun process(entryId: Long, text: String, repository: DiaryRepository) {
+    suspend fun process(entryId: Long, text: String, repository: DiaryRepository): Boolean {
         val existingEntry = repository.getByIdOnce(entryId)
         val originalText = existingEntry?.text?.takeIf { it.isNotBlank() } ?: text
         val normalizedInput = existingEntry?.correctedText?.takeIf { it.isNotBlank() } ?: text
@@ -59,6 +55,7 @@ class ActionItemProcessor(private val context: Context) {
         } else {
             emptyList()
         }
+        var acceptedForTimeline = splitCleanTexts.isNotEmpty()
         val heuristicFallback = if (outcome == null && splitCleanTexts.isEmpty()) {
             buildHeuristicFallback(originalText, processingText)
         } else {
@@ -98,7 +95,7 @@ class ActionItemProcessor(private val context: Context) {
                         "actionability" to "%.2f".format(result.actionabilityScore)
                     )
                 )
-                notifyAcceptedAction()
+                acceptedForTimeline = true
                 // Persist any extra actions the LLM extracted from the same note.
                 persistLLMExtras(entryId, outcome.extras, repository)
             } else {
@@ -137,7 +134,7 @@ class ActionItemProcessor(private val context: Context) {
                         "route" to rejectedStatus(result)
                     )
                 )
-                return
+                return false
             }
         } else if (heuristicFallback != null && splitCleanTexts.isEmpty()) {
             if (shouldAcceptAsTask(heuristicFallback)) {
@@ -162,7 +159,7 @@ class ActionItemProcessor(private val context: Context) {
                         backend = "heuristic_fallback"
                     )
                 )
-                notifyAcceptedAction()
+                acceptedForTimeline = true
             } else {
                 repository.updateAIProcessing(
                     id = entryId,
@@ -190,7 +187,7 @@ class ActionItemProcessor(private val context: Context) {
                         backend = "heuristic_fallback"
                     )
                 )
-                return
+                return false
             }
         } else {
             Log.w(TAG, "No LLM available for entry $entryId, leaving as-is")
@@ -202,6 +199,7 @@ class ActionItemProcessor(private val context: Context) {
         } catch (e: Exception) {
             Log.w(TAG, "Duplicate check failed", e)
         }
+        return acceptedForTimeline
     }
 
     private suspend fun maybeAutoSplitEntry(
@@ -229,7 +227,6 @@ class ActionItemProcessor(private val context: Context) {
         )
 
         Log.i(TAG, "Auto-splitting entry $entryId into ${suggestions.size} actions")
-        notifyAcceptedAction()
 
         for (suggestion in suggestions.drop(1)) {
             val siblingId = repository.insert(
@@ -1029,26 +1026,6 @@ Reglas:
     private fun getApiKey(): String? =
         context.getSharedPreferences("daily_summary", Context.MODE_PRIVATE)
             .getString("gemini_api_key", null)
-
-    private fun notifyAcceptedAction() {
-        try {
-            val pattern = longArrayOf(0, 45)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vibrator = context.getSystemService(VibratorManager::class.java)?.defaultVibrator
-                if (vibrator?.hasVibrator() == true) {
-                    vibrator.vibrate(VibrationEffect.createWaveform(pattern, -1))
-                }
-            } else {
-                @Suppress("DEPRECATION")
-                val vibrator = context.getSystemService(Vibrator::class.java)
-                if (vibrator?.hasVibrator() == true) {
-                    vibrator.vibrate(VibrationEffect.createWaveform(pattern, -1))
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Accepted-action vibration failed", e)
-        }
-    }
 
     companion object {
         private const val TAG = "ActionItemProcessor"
