@@ -13,6 +13,12 @@ class DiagnosticsAnalyzerTest {
     fun `analysis computes funnel rates and recommendations`() {
         val events = listOf(
             event("ASR_GATE", "OK", "recuerdame comprar leche"),
+            event("ASR_GATE", "OK", "segment_finalized", mapOf("reason" to "silence_stop", "windowMs" to "6200")),
+            event("ASR_GATE", "OK", "segment_finalized", mapOf("reason" to "unmatched_segment_cap", "windowMs" to "30000")),
+            event("ASR_GATE", "OK", meta = mapOf("reason" to "uncertain_gate_fallback", "windowMs" to "10000")),
+            event("ASR_GATE", "NO_MATCH", "uncertain_gate_fallback_blocked", mapOf("reason" to "cooldown")),
+            event("SERVICE", "OK", "service_stop_requested", mapOf("reason" to "home_primary_stop")),
+            event("SERVICE", "REJECT", "onDestroy"),
             event("ASR_FINAL", "OK", "recuerdame comprar leche", mapOf("engine" to "vosk -> whisper", "decodeMs" to "900", "windowMs" to "5000")),
             event("SPEAKER", "REJECT", "anuncio de television", mapOf("sim" to "0.31")),
             event("SPEAKER", "REJECT", "noticias de la television", mapOf("sim" to "0.28")),
@@ -34,6 +40,12 @@ class DiagnosticsAnalyzerTest {
         assertEquals(3, analysis.funnel.speakerRejected)
         assertEquals(75, analysis.quality.speakerRejectRatePct)
         assertEquals(50, analysis.quality.savedPerFinalTranscriptPct)
+        assertEquals(1, analysis.quality.segmentsClosedBySilence)
+        assertEquals(1, analysis.quality.segmentsClosedByCap)
+        assertEquals(1, analysis.quality.uncertainFallbacks)
+        assertEquals(1, analysis.quality.uncertainFallbacksBlocked)
+        assertEquals(1, analysis.quality.explicitUserStops)
+        assertEquals(0, analysis.quality.unexpectedServiceStops)
         assertTrue(analysis.engines.any { it.value == "whisper" && it.count == 2 })
         assertTrue(analysis.rejectReasons.any { it.value == "missing_object" })
         assertTrue(analysis.frequentPhrases.any { it.value.contains("llamar") })
@@ -66,7 +78,7 @@ class DiagnosticsAnalyzerTest {
         text: String? = null,
         meta: Map<String, String> = emptyMap()
     ) = CaptureLog.Event(
-        ts = 1,
+        ts = if (text == "onDestroy") 2_000 else 1_000,
         gate = gate,
         result = result,
         text = text,

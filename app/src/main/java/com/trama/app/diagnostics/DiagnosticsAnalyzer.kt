@@ -43,6 +43,12 @@ object DiagnosticsAnalyzer {
         val discardedEntries: Int,
         val completedEntries: Int,
         val fallbackEvents: Int,
+        val segmentsClosedBySilence: Int,
+        val segmentsClosedByCap: Int,
+        val uncertainFallbacks: Int,
+        val uncertainFallbacksBlocked: Int,
+        val unexpectedServiceStops: Int,
+        val explicitUserStops: Int,
         val speakerRejectRatePct: Int,
         val llmRejectRatePct: Int,
         val savedPerFinalTranscriptPct: Int
@@ -95,6 +101,18 @@ object DiagnosticsAnalyzer {
                 event.meta.values.any { it.contains("fallback", ignoreCase = true) } ||
                     event.text?.contains("fallback", ignoreCase = true) == true
             },
+            segmentsClosedBySilence = events.countSegmentFinalized("silence_stop"),
+            segmentsClosedByCap = events.countSegmentFinalized("unmatched_segment_cap"),
+            uncertainFallbacks = events.count {
+                it.gate == "ASR_GATE" && it.meta["reason"] == "uncertain_gate_fallback"
+            },
+            uncertainFallbacksBlocked = events.count {
+                it.gate == "ASR_GATE" && it.text == "uncertain_gate_fallback_blocked"
+            },
+            unexpectedServiceStops = countUnexpectedServiceStops(events),
+            explicitUserStops = events.count {
+                it.gate == "SERVICE" && it.text == "service_stop_requested"
+            },
             speakerRejectRatePct = pct(funnel.speakerRejected, speakerTotal),
             llmRejectRatePct = pct(funnel.llmRejected, llmTotal),
             savedPerFinalTranscriptPct = pct(funnel.savedEntries, funnel.finalTranscripts)
@@ -138,8 +156,8 @@ object DiagnosticsAnalyzer {
 
     private fun buildFunnel(events: List<CaptureLog.Event>): Funnel =
         Funnel(
-            gateAccepted = events.count { it.gate == "ASR_GATE" && it.result == "OK" },
-            gateRejected = events.count { it.gate == "ASR_GATE" && it.result == "NO_MATCH" },
+            gateAccepted = events.count { it.isAsrGateDecision() && it.result == "OK" },
+            gateRejected = events.count { it.isAsrGateDecision() && it.result == "NO_MATCH" },
             finalTranscripts = events.count { it.gate == "ASR_FINAL" && it.result == "OK" },
             speakerAccepted = events.count { it.gate == "SPEAKER" && it.result == "OK" },
             speakerRejected = events.count { it.gate == "SPEAKER" && it.result == "REJECT" },
@@ -151,6 +169,11 @@ object DiagnosticsAnalyzer {
             recordingProcessed = events.count { it.gate == "RECORDING" && it.result == "OK" },
             recordingWithoutActions = events.count { it.gate == "RECORDING" && it.result == "NO_MATCH" }
         )
+
+    private fun CaptureLog.Event.isAsrGateDecision(): Boolean =
+        gate == "ASR_GATE" &&
+            text != "segment_finalized" &&
+            text != "uncertain_gate_fallback_blocked"
 
     private fun frequentPhrases(
         entries: List<DiaryEntry>,
@@ -225,6 +248,15 @@ object DiagnosticsAnalyzer {
         if (analysis.quality.fallbackEvents > 0) {
             add("Hay eventos de fallback: separar métricas de SpeechRecognizer frente a ASR local para saber si la promesa local-first se está cumpliendo.")
         }
+        if (analysis.quality.segmentsClosedByCap >= 3) {
+            add("Hay segmentos cerrados por cap de 30s: esto indica voz/ruido continuo sin trigger; revisar si el gate está demasiado estricto o si el entorno era conversación ambiental.")
+        }
+        if (analysis.quality.uncertainFallbacksBlocked >= 3) {
+            add("Hay fallbacks inciertos bloqueados por batería/cooldown: el ahorro está funcionando, pero puede limitar recall en entornos ruidosos.")
+        }
+        if (analysis.quality.unexpectedServiceStops > 0) {
+            add("Hay destrucciones del servicio sin parada explícita cercana: revisar watchdog, permisos de segundo plano y restricciones del fabricante.")
+        }
         if (analysis.frequentPhrases.take(5).any { it.value in TV_HINTS }) {
             add("Aparecen términos típicos de TV/ruido: reforzar speaker verification y añadir reglas negativas para habla no dirigida a Trama.")
         }
@@ -246,6 +278,25 @@ object DiagnosticsAnalyzer {
 
     private fun pct(part: Int, total: Int): Int =
         if (total <= 0) 0 else ((part.toDouble() / total.toDouble()) * 100).roundToInt()
+
+    private fun List<CaptureLog.Event>.countSegmentFinalized(reason: String): Int =
+        count {
+            it.gate == "ASR_GATE" &&
+                it.text == "segment_finalized" &&
+                it.meta["reason"] == reason
+        }
+
+    private fun countUnexpectedServiceStops(events: List<CaptureLog.Event>): Int {
+        val stopRequests = events
+            .filter { it.gate == "SERVICE" && it.text == "service_stop_requested" }
+            .map { it.ts }
+        return events.count { event ->
+            event.gate == "SERVICE" &&
+                event.result == "REJECT" &&
+                event.text == "onDestroy" &&
+                stopRequests.none { stopTs -> stopTs in (event.ts - 5_000L)..event.ts }
+        }
+    }
 
     private fun List<Long>.averageOrNull(): Long? =
         if (isEmpty()) null else average().roundToInt().toLong()

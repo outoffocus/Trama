@@ -3,6 +3,7 @@ package com.trama.app.service
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
+import com.trama.app.diagnostics.CaptureLog
 import com.trama.app.sync.SettingsSyncer
 import com.trama.app.ui.SettingsDataStore
 import com.trama.shared.sync.MicCoordinator
@@ -63,6 +64,11 @@ object ServiceController {
                 .putString(KEY_SUSPEND_REASON, SuspendReason.NONE.name)
                 .commit()
             ServiceWatchdogScheduler.schedule(context, reason = "user_start")
+            CaptureLog.event(
+                gate = CaptureLog.Gate.SERVICE,
+                result = CaptureLog.Result.OK,
+                text = "service_start_requested"
+            )
             val intent = Intent(context, KeywordListenerService::class.java)
             ContextCompat.startForegroundService(context, intent)
             _isRunning.value = true
@@ -75,7 +81,7 @@ object ServiceController {
      * Stop keyword service (user-initiated). Does NOT notify the watch —
      * use transferToWatch() to hand control to the watch explicitly.
      */
-    fun stop(context: Context) {
+    fun stop(context: Context, reason: String = "user_stop") {
         synchronized(transitionLock) {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit()
@@ -83,12 +89,42 @@ object ServiceController {
                 .putString(KEY_SUSPEND_REASON, SuspendReason.NONE.name)
                 .commit()
             ServiceWatchdogScheduler.cancel(context)
+            CaptureLog.event(
+                gate = CaptureLog.Gate.SERVICE,
+                result = CaptureLog.Result.OK,
+                text = "service_stop_requested",
+                meta = mapOf("reason" to reason)
+            )
             val intent = Intent(context, KeywordListenerService::class.java)
             context.stopService(intent)
             _isRunning.value = false
             if (!RecordingState.isRecording.value && !_isWatchActive.value) {
                 modeRef.set(ServiceMode.IDLE)
             }
+        }
+    }
+
+    fun rearm(context: Context, reason: String = "user_rearm") {
+        synchronized(transitionLock) {
+            if (RecordingState.isRecording.value) return
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_SHOULD_RUN, true)
+                .putString(KEY_SUSPEND_REASON, SuspendReason.NONE.name)
+                .commit()
+            ServiceWatchdogScheduler.schedule(context, reason = reason)
+            CaptureLog.event(
+                gate = CaptureLog.Gate.SERVICE,
+                result = CaptureLog.Result.OK,
+                text = "service_rearm_requested",
+                meta = mapOf("reason" to reason)
+            )
+            val intent = Intent(context, KeywordListenerService::class.java)
+                .putExtra("rearmReason", reason)
+            ContextCompat.startForegroundService(context, intent)
+            _isRunning.value = true
+            _isWatchActive.value = false
+            modeRef.set(ServiceMode.LISTENING)
         }
     }
 

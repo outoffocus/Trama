@@ -4,7 +4,7 @@ Trama es una app Android local-first para capturar recordatorios, tareas, grabac
 
 ## Estado actual del proyecto
 
-Situacion a fecha `2026-04-28`:
+Situacion a fecha `2026-04-30`:
 
 - proyecto Android multi-modulo con `app`, `shared` y `wear`
 - movil en Jetpack Compose + Room + WorkManager + Wear Data Layer
@@ -13,12 +13,15 @@ Situacion a fecha `2026-04-28`:
 - `SherpaWhisperAsrEngine` es la ruta principal de transcripcion final en movil
 - `SpeechRecognizer` queda como fallback en movil y reloj cuando el pipeline dedicado no esta disponible
 - `Gemini` cloud y `Gemma` local se usan para estructurar acciones, resumir grabaciones y generar memoria diaria
+- la escucha continua del movil trabaja en segmentos cortos y renovables para evitar ventanas largas/ruidosas atascadas
+- el fallback incierto a Whisper esta limitado por cooldown, carga y bateria para proteger consumo
 - la UI principal vive en `Home`, `Calendar`, `Chat`, `Recordings`, `PlaceDetail` y `Settings`
 - `DailyPage` y el markdown privado por fecha funcionan como memoria tecnica persistida
 
 ## Que hace hoy la app
 
 - escucha continua en el movil con captura contextual `pre-roll + voz + post-roll`
+- rotacion de segmentos sin trigger a 30s para que la escucha no dependa de reiniciar manualmente
 - gate temprano con Vosk para evitar transcribir todo con Whisper
 - transcripcion final on-device con sherpa-onnx / Whisper
 - deteccion configurable de intenciones, categorias y frases activadoras
@@ -32,6 +35,7 @@ Situacion a fecha `2026-04-28`:
 - asistente de chat sobre entradas, lugares y dias registrados
 - backup/exportacion/importacion JSON mediante Storage Access Framework
 - diagnostico exportable del pipeline de captura
+- contadores de diagnostico para segmentos cerrados, fallbacks inciertos, bloqueos por bateria/cooldown y paradas del servicio
 - sincronizacion telefono <-> reloj de entradas, ajustes, patrones, audio y control de microfono
 
 ## Arquitectura por modulos
@@ -56,6 +60,15 @@ Ruta preferente:
 8. `IntentDetector` + validaciones
 9. `ActionItemProcessor`
 10. Room + timeline + sync
+
+Comportamiento de escucha continua:
+
+- `SimpleVAD` abre segmentos cuando detecta voz y los cierra por silencio
+- si hay voz/ruido continuo sin trigger, el segmento se cierra a los 30s con `unmatched_segment_cap` y se abre otro si sigue habiendo voz
+- si Vosk detecta trigger en cualquier punto del segmento, esa decision se conserva aunque la evaluacion final de Vosk falle
+- Vosk evalua ventanas recientes de 3s, 5s, 8s, 12s y 15s
+- si Vosk devuelve vacio o fragmentos de 1-2 palabras, se permite un fallback incierto a Whisper con presupuesto conservador
+- fallback incierto: maximo cada 5 min en bateria, cada 2 min cargando, desactivado bajo 20% si no carga
 
 Fallback:
 
@@ -98,6 +111,9 @@ Trama combina varias rutas:
 - `Gemini` cloud para tareas de razonamiento y estructuracion cuando hay clave configurada
 - `Gemma` local descargable y configurable desde ajustes
 - heuristicas locales para validacion, deduplicacion y fallback cuando la IA no responde
+- el prompt de acciones exige que `cleanText` sea la accion minima autosuficiente, resolviendo pronombres y elipsis dentro de la misma transcripcion
+- el postprocesado recorta prefijos conversacionales cuando el LLM devuelve una frase entera con un trigger accionable dentro
+- la deduplicacion normaliza variantes y errores frecuentes de triggers (`tenemos que`, `tenemso que`, `tenes/tenés que`) antes de comparar
 
 La clave de Gemini todavia se guarda en `SharedPreferences`, por lo que moverla a almacenamiento seguro sigue siendo deuda prioritaria.
 

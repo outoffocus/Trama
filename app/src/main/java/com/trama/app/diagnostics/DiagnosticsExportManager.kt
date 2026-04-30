@@ -197,6 +197,9 @@ object DiagnosticsExportManager {
         "Review SUGGESTED entries for ambiguity: should they be pending, note, or discard?",
         "Compare SERVICE heartbeats, ASR_GATE, ASR_FINAL, SAVE and LLM counts to locate loss in the pipeline.",
         "Long SERVICE heartbeat gaps suggest the foreground listener stopped; ASR_GATE without ASR_FINAL suggests heard speech with no accepted trigger.",
+        "Compare segment_finalized reasons: silence_stop is normal; unmatched_segment_cap means continuous speech/noise was rotated at 30s instead of getting stuck.",
+        "Compare ASR_FINAL source=trigger vs source=uncertain_fallback; the latter should be rare and explains battery-sensitive recall attempts.",
+        "Review uncertain_gate_fallback_blocked reason=battery_low/cooldown to see when fallback was intentionally skipped.",
         "Cluster discarded text by expression type: microphone tests, conversational fragments, ASR corruption, missing object, duplicate.",
         "Estimate precision: pending tasks that are useful / all pending tasks.",
         "Estimate recall sample: discarded or unclear entries that should have become tasks."

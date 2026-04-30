@@ -280,6 +280,69 @@ class ActionItemProcessorTest {
     }
 
     @Test
+    fun `parseResult trims conversational prefix from actionable clause`() {
+        val json = """
+            {
+              "kind":"TASK",
+              "usefulnessScore":0.9,
+              "actionabilityScore":0.9,
+              "discardReason":null,
+              "isActionable":true,
+              "cleanText":"Hoy estoy hablando con elena y tenemso que comprar una cafetera nueva",
+              "actionType":"BUY",
+              "dueDate":null,
+              "priority":"NORMAL",
+              "confidence":0.86,
+              "actions":[],
+              "extraActions":[]
+            }
+        """.trimIndent()
+
+        val outcome = callPrivate<ActionItemProcessor.LLMOutcome>(
+            "parseResult",
+            json,
+            1.0f,
+            "hoy estuve hablando con elena y tenemos que comprar una cafetera nueva"
+        )
+
+        assertEquals("Comprar una cafetera nueva", outcome.primary.cleanText)
+        assertTrue(outcome.primary.isActionable)
+    }
+
+    @Test
+    fun `parseResult drops overlapping llm extras with typo variants`() {
+        val json = """
+            {
+              "kind":"TASK",
+              "usefulnessScore":0.9,
+              "actionabilityScore":0.9,
+              "discardReason":null,
+              "isActionable":true,
+              "cleanText":"Hoy estoy hablando con elena y tenemso que comprar una cafetera nueva",
+              "actionType":"BUY",
+              "dueDate":null,
+              "priority":"NORMAL",
+              "confidence":0.86,
+              "actions":[
+                {"cleanText":"Hoy estoy hablando con elena y tenemso que comprar una cafetera nueva","actionType":"BUY","dueDate":null,"priority":"NORMAL","confidence":0.86},
+                {"cleanText":"tenés que comprar una cafetera nueva","actionType":"BUY","dueDate":null,"priority":"NORMAL","confidence":0.84}
+              ],
+              "extraActions":[]
+            }
+        """.trimIndent()
+
+        val outcome = callPrivate<ActionItemProcessor.LLMOutcome>(
+            "parseResult",
+            json,
+            1.0f,
+            "hoy estuve hablando con elena y tenemos que comprar una cafetera nueva"
+        )
+
+        assertEquals("Comprar una cafetera nueva", outcome.primary.cleanText)
+        assertEquals(0, outcome.extras.size)
+    }
+
+    @Test
     fun `generic verbless fragments are still rejected`() {
         val result = callPrivate<ActionItemProcessor.ProcessingResult>(
             "buildProcessingResult",
@@ -335,6 +398,20 @@ class ActionItemProcessorTest {
         assertTrue(prompt.contains("\"cleanText\""))
         assertTrue(prompt.contains("\"actionType\""))
         assertTrue(prompt.contains("\"priority\""))
+    }
+
+    @Test
+    fun `buildPrompt instructs model to resolve pronouns and shared context`() {
+        val prompt = callPrivate<String>(
+            "buildPrompt",
+            "hoy hablé con Sadoth y mañana tengo que contestarle el mensaje. esta semana me tocó a mi pagar la piscina, la próxima semana le toca a Luis.",
+            "hoy hablé con Sadoth y mañana tengo que contestarle el mensaje. esta semana me tocó a mi pagar la piscina, la próxima semana le toca a Luis.",
+            ""
+        )
+
+        assertTrue(prompt.contains("resuelve referencias"))
+        assertTrue(prompt.contains("Contestarle el mensaje a Sadoth"))
+        assertTrue(prompt.contains("A Luis le toca pagar la piscina"))
     }
 
     @Suppress("UNCHECKED_CAST")

@@ -438,7 +438,7 @@ fun HomeScreen(
                                     }
                                     serviceRunning -> {
                                         quickActionsVisible = false
-                                        ServiceController.stop(context)
+                                        ServiceController.stop(context, reason = "home_primary_stop")
                                     }
                                     else -> {
                                         quickActionsVisible = false

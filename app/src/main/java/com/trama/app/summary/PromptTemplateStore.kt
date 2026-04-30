@@ -37,6 +37,9 @@ Analiza esta nota de voz capturada y devuelve SOLO un objeto JSON valido.
 - Usa la transcripcion original como fuente principal de verdad si difiere del texto normalizado.
 - Primero clasifica la utilidad real para el usuario. Solo extrae tarea si merece aparecer en su lista de pendientes.
 	- Piensa SIEMPRE en una lista de acciones. Si la nota contiene varias acciones independientes, devuelvelas TODAS en actions, en orden de aparicion. No fusiones acciones de tipos distintos en una sola tarea.
+	- Antes de escribir cleanText, resuelve referencias dentro de la misma transcripcion: "le", "lo", "la", "eso", "el mensaje", "le toca a X", "la proxima semana" pueden depender de una frase anterior.
+	- Si una frase futura depende de una frase pasada, combina SOLO la informacion necesaria. Ej: "esta semana me tocó pagar la piscina, la próxima semana le toca a Luis" => accion futura "A Luis le toca pagar la piscina", dueDate=la próxima semana.
+	- Si aparece "hoy hablé con X" y luego "mañana tengo que contestarle el mensaje", cleanText debe incluir a X: "Contestarle el mensaje a X", dueDate=mañana.
 
 Formato exacto:
 {
@@ -144,6 +147,7 @@ Reglas:
 - cleanText:
   - elimina solo el trigger inicial si existe: "recordar", "tengo que", "hay que", "deberia", "acordarme de", "acordarnos de", "me olvide", "se me fue la olla"
   - conserva el minimo contexto util para ejecutar la accion sin perder precision
+  - resuelve pronombres y elipsis con contexto cercano de la misma nota cuando sea evidente: "le" -> persona mencionada, "le toca a Luis" -> accion/objeto mencionados antes
   - NO elimines nombres propios, lugares, telefonos, numeros o fechas si ayudan a entender la accion
   - no la conviertas en una frase demasiado bonita ni demasiado general
   - es mejor una accion algo larga y fiel que una corta y ambigua
@@ -183,6 +187,7 @@ Reglas:
 	  - añade acciones separadas SOLO si son claramente independientes y accionables
 	  - si aparecen conectores como "y además", "también", "luego", "después" seguidos de otra obligación ("tengo que", "debería", "necesito"), normalmente es otra accion extra
 	  - conserva el contexto compartido dentro del texto de cada accion cuando haga falta para no perder informacion
+	  - cuando una accion usa pronombres o elipsis, escribe cada accion de forma autosuficiente: no dejes "contestarlo", "hacer eso", "le toca" sin persona/objeto si el contexto permite resolverlo
 
 <example id="7">
 Input: "deberia hacer la compra mañana y además tengo que llamar a mi hermana para decirle que comemos el domingo con mis padres"
@@ -192,6 +197,16 @@ Input: "deberia hacer la compra mañana y además tengo que llamar a mi hermana 
 <example id="8">
 Input: "me quedo pendiente enviar un email a Cecile y mover el tema de prevención"
 	Output: {"kind":"TASK","usefulnessScore":0.9,"actionabilityScore":0.9,"discardReason":null,"isActionable":true,"cleanText":"Enviar un email a Cecile","actionType":"SEND","dueDate":null,"priority":"NORMAL","confidence":0.86,"actions":[{"cleanText":"Enviar un email a Cecile","actionType":"SEND","dueDate":null,"priority":"NORMAL","confidence":0.86},{"cleanText":"Mover el tema de prevención","actionType":"GENERIC","dueDate":null,"priority":"NORMAL","confidence":0.86}],"extraActions":[{"cleanText":"Mover el tema de prevención","actionType":"GENERIC","dueDate":null,"priority":"NORMAL"}]}
+</example>
+
+<example id="9">
+Input: "hoy hable con Sadoth y mañana tengo que contestarle el mensaje"
+	Output: {"kind":"TASK","usefulnessScore":0.95,"actionabilityScore":0.95,"discardReason":null,"isActionable":true,"cleanText":"Contestarle el mensaje a Sadoth","actionType":"SEND","dueDate":"{{tomorrow}}","priority":"NORMAL","confidence":0.9,"actions":[{"cleanText":"Contestarle el mensaje a Sadoth","actionType":"SEND","dueDate":"{{tomorrow}}","priority":"NORMAL","confidence":0.9}],"extraActions":[]}
+</example>
+
+<example id="10">
+Input: "esta semana me toco a mi pagar la piscina, la proxima semana le toca a Luis"
+	Output: {"kind":"TASK","usefulnessScore":0.9,"actionabilityScore":0.9,"discardReason":null,"isActionable":true,"cleanText":"A Luis le toca pagar la piscina","actionType":"BUY","dueDate":null,"priority":"NORMAL","confidence":0.86,"dateMentions":["la proxima semana"],"actions":[{"cleanText":"A Luis le toca pagar la piscina","actionType":"BUY","dueDate":null,"priority":"NORMAL","confidence":0.86}],"extraActions":[]}
 </example>
 
 RESPONDE SOLO con el objeto JSON. No uses backticks ni bloques ``` ni texto fuera del JSON.

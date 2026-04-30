@@ -48,6 +48,7 @@ class ContextualAudioCaptureEngine(
         private const val MAX_CONSECUTIVE_EMPTY_READS = 120
         private const val ADAPTIVE_TRIGGER_SILENCE_MS = 2_500L
         private const val ADAPTIVE_SHORT_PHRASE_SILENCE_MS = 3_000L
+        private const val PERIODIC_FALLBACK_WINDOW_MS = 10_000L
     }
 
     private data class ActiveCapture(
@@ -70,11 +71,13 @@ class ContextualAudioCaptureEngine(
     @Volatile
     private var running = false
 
-    var onWindowCaptured: ((CapturedAudioWindow) -> Unit)? = null
+    var onWindowCaptured: ((CapturedAudioWindow, String) -> Unit)? = null
     var onStatusChanged: ((String) -> Unit)? = null
     var onGateMatch: ((String) -> Unit)? = null
     var onGateEvaluated: ((String, Boolean, String) -> Unit)? = null
+    var onSegmentFinalized: ((String, Long, Int, Boolean) -> Unit)? = null
     var shouldCaptureUnmatchedFinalWindow: ((CapturedAudioWindow, String, String) -> Boolean)? = null
+    var shouldCaptureUnmatchedGateWindow: ((CapturedAudioWindow, String, String, Boolean) -> Boolean)? = null
 
     fun updateConfig(newConfig: ContextualCaptureConfig) {
         config = sanitize(newConfig)
@@ -139,6 +142,18 @@ class ContextualAudioCaptureEngine(
                             onGateMatch?.invoke(eval.bestTranscript)
                             onStatusChanged?.invoke("trigger_detected")
                         }
+                    } else if (!eval.matched && !isFinal) {
+                        val fallbackWindow = snapshot.tailWindow(PERIODIC_FALLBACK_WINDOW_MS)
+                        if (shouldCaptureUnmatchedGateWindow?.invoke(
+                                fallbackWindow,
+                                eval.bestTranscript,
+                                eval.debugSummary,
+                                false
+                            ) == true
+                        ) {
+                            onStatusChanged?.invoke("trigger_uncertain")
+                            onWindowCaptured?.invoke(fallbackWindow, "uncertain_fallback")
+                        }
                     }
                 } catch (t: Throwable) {
                     Log.w(TAG, "Gate eval failed", t)
@@ -164,6 +179,12 @@ class ContextualAudioCaptureEngine(
 
             val finalWindow = capture.assembler.finalizeWindow(capture.preRollWindow)
             val dropped = capture.assembler.droppedSampleCount
+            onSegmentFinalized?.invoke(
+                reason,
+                finalWindow.durationMs(),
+                dropped,
+                capture.triggerMatched
+            )
             if (dropped > 0) {
                 Log.w(TAG, "Capture cap reached, dropped ${dropped} samples (reason=$reason). " +
                     "Engine likely failed to stop — check silence detection.")
@@ -188,18 +209,26 @@ class ContextualAudioCaptureEngine(
                     try {
                         val eval = evaluateGateWindows(finalWindow, isFinal = true, config = capture.config)
                         onGateEvaluated?.invoke(eval.bestTranscript, eval.matched, eval.debugSummary)
-                        if (eval.matched) {
-                            onGateMatch?.invoke(eval.bestTranscript)
+                        if (eval.matched || capture.triggerMatched) {
+                            if (eval.matched) {
+                                onGateMatch?.invoke(eval.bestTranscript)
+                            }
                             onStatusChanged?.invoke("trigger_detected")
-                            onWindowCaptured?.invoke(finalWindow)
+                            onWindowCaptured?.invoke(finalWindow, "trigger")
                         } else if (shouldCaptureUnmatchedFinalWindow?.invoke(
                                 finalWindow,
                                 eval.bestTranscript,
                                 eval.debugSummary
+                            ) == true ||
+                            shouldCaptureUnmatchedGateWindow?.invoke(
+                                finalWindow,
+                                eval.bestTranscript,
+                                eval.debugSummary,
+                                true
                             ) == true
                         ) {
                             onStatusChanged?.invoke("trigger_uncertain")
-                            onWindowCaptured?.invoke(finalWindow)
+                            onWindowCaptured?.invoke(finalWindow, "uncertain_fallback")
                         }
                     } catch (t: Throwable) {
                         Log.w(TAG, "Final gate eval failed", t)
@@ -210,7 +239,7 @@ class ContextualAudioCaptureEngine(
                     }
                 }
             } else {
-                onWindowCaptured?.invoke(finalWindow)
+                onWindowCaptured?.invoke(finalWindow, "no_gate")
                 onStatusChanged?.invoke("rearmed")
                 onStatusChanged?.invoke("listening")
             }
@@ -287,10 +316,26 @@ class ContextualAudioCaptureEngine(
 
                     if (reachedTriggerCap) {
                         finalizeCapture("post_roll_cap")
+                        if (vad.isSpeaking && activeCapture == null) {
+                            startCapture()
+                        }
                     } else if (capture.postRollRemainingSamples >= 0) {
                         capture.postRollRemainingSamples -= read
                         if (capture.postRollRemainingSamples <= 0) {
                             finalizeCapture("silence_stop")
+                            if (vad.isSpeaking && activeCapture == null) {
+                                startCapture()
+                            }
+                        }
+                    } else if (ContextualCapturePolicy.shouldRotateUnmatchedSegment(
+                            triggerMatched = capture.triggerMatched,
+                            capturedSamples = capture.capturedSamples,
+                            sampleRateHz = capture.config.sampleRateHz
+                        )
+                    ) {
+                        finalizeCapture("unmatched_segment_cap")
+                        if (vad.isSpeaking && activeCapture == null) {
+                            startCapture()
                         }
                     }
                 }

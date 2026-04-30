@@ -410,7 +410,7 @@ class ActionItemProcessor(private val context: Context) {
             apiKey = apiKey,
             generationConfig = generationConfig {
                 temperature = 0.1f
-                maxOutputTokens = 256
+                maxOutputTokens = 512
             }
         )
 
@@ -429,7 +429,7 @@ class ActionItemProcessor(private val context: Context) {
     ): LLMOutcome? {
         // Use the same structured prompt as Cloud
         val prompt = buildPrompt(originalText, normalizedInput, recentContext)
-        val responseText = GemmaClient.generate(context, prompt, maxTokens = 256, responsePrefix = "{") ?: return null
+        val responseText = GemmaClient.generate(context, prompt, maxTokens = 512, responsePrefix = "{") ?: return null
         Log.d(TAG, "Local model response: $responseText")
 
         return try {
@@ -471,7 +471,8 @@ class ActionItemProcessor(private val context: Context) {
             lower.contains("llamar") || lower.contains("llama") -> "CALL"
             lower.contains("comprar") || lower.contains("hacer la compra") ||
                 Regex("""\bcompra\b""").containsMatchIn(lower) -> "BUY"
-            lower.contains("enviar") || lower.contains("mandar") -> "SEND"
+            lower.contains("enviar") || lower.contains("mandar") ||
+                lower.contains("contestar") || lower.contains("responder") -> "SEND"
             lower.contains("reunión") || lower.contains("cita") || lower.contains("evento") -> "EVENT"
             lower.contains("revisar") || lower.contains("mirar") -> "REVIEW"
             lower.contains("hablar con") || lower.contains("decir a") || lower.contains("decirle") -> "TALK_TO"
@@ -545,6 +546,7 @@ class ActionItemProcessor(private val context: Context) {
                     displayTrigger = displayTrigger
                 )
             }
+            .filterNot { extra -> actionsOverlap(primary.cleanText, extra.cleanText) }
         val heuristicExtras = if (primary.kind == KIND_TASK) {
             buildHeuristicSupplementalActions(
                 sourceText = triggerSourceText,
@@ -632,7 +634,8 @@ class ActionItemProcessor(private val context: Context) {
         discardReason: String? = null,
         displayTrigger: String? = null
     ): ProcessingResult {
-        val displayText = withDisplayTrigger(cleanText, displayTrigger)
+        val canonicalCleanText = canonicalActionText(cleanText)
+        val displayText = withDisplayTrigger(canonicalCleanText, displayTrigger)
         val validatedActionType = validateActionType(actionType)
         val normalizedKind = normalizeKind(kind, modelIsActionable)
         val effectiveUsefulness = usefulnessScore ?: confidence
@@ -668,6 +671,30 @@ class ActionItemProcessor(private val context: Context) {
         return "$displayTrigger ${trimmed.replaceFirstChar { it.lowercase(Locale.getDefault()) }}"
     }
 
+    private fun canonicalActionText(text: String): String {
+        val normalized = text
+            .trim()
+            .replace(Regex("""\btenemso\b""", RegexOption.IGNORE_CASE), "tenemos")
+            .replace(Regex("""\btenés\b""", RegexOption.IGNORE_CASE), "tenes")
+        if (normalized.isBlank()) return normalized
+
+        val actionableTrigger = Regex(
+            """\b(?:tengo|tenemos|tenes|tienes)\s+que\s+|\bhay\s+que\s+|\b(?:debo|debemos|deberia|debería|necesito|necesitamos)\s+""",
+            RegexOption.IGNORE_CASE
+        )
+        val match = actionableTrigger.findAll(normalized).lastOrNull()
+        val actionClause = match
+            ?.let { normalized.substring(it.range.last + 1).trim() }
+            ?.trimStart(',', ';', ':', '-', ' ')
+            ?.takeIf { it.length >= 6 }
+            ?: normalized
+
+        return actionClause
+            .trim()
+            .trimEnd('.', ',', ';', ':', '!', '?', '¿', '¡')
+            .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
+    }
+
     private fun actionsOverlap(left: String, right: String): Boolean {
         val leftTokens = normalizeForComparison(left).split(" ").filter { it.length >= 3 }.toSet()
         val rightTokens = normalizeForComparison(right).split(" ").filter { it.length >= 3 }.toSet()
@@ -682,7 +709,7 @@ class ActionItemProcessor(private val context: Context) {
         Normalizer.normalize(value.lowercase(Locale.getDefault()), Normalizer.Form.NFD)
             .replace("\\p{Mn}+".toRegex(), "")
             .replace(Regex("[^a-z0-9\\s]"), " ")
-            .replace(Regex("\\b(?:tengo|deberia|debería|hacer|que|para|con|los|las|una|uno|mis|mi|el|la|de|a|y)\\b"), " ")
+            .replace(Regex("\\b(?:tengo|tenemos|tenemso|tienes|tenes|deberia|debería|hacer|que|para|con|los|las|una|uno|mis|mi|el|la|de|a|y)\\b"), " ")
             .replace(Regex("\\s+"), " ")
             .trim()
 

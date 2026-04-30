@@ -33,6 +33,11 @@ object DuplicateHeuristics {
         "fin de semana"
     )
 
+    private val actionTriggerRegex = Regex(
+        """\b(?:tengo|tenemos|tenemso|tienes|tenes)\s+que\s+|\bhay\s+que\s+|\b(?:debo|debemos|deberia|necesito|necesitamos)\s+""",
+        RegexOption.IGNORE_CASE
+    )
+
     private val weakTokens = setOf(
         "recordar",
         "recordarme",
@@ -40,13 +45,23 @@ object DuplicateHeuristics {
         "acordarme",
         "acordarnos",
         "tengo",
+        "tenemos",
+        "tenemso",
+        "tienes",
+        "tenes",
         "hay",
         "debo",
         "deberia",
         "necesito",
         "de",
+        "con",
         "que",
+        "y",
         "hoy",
+        "estoy",
+        "estuve",
+        "hablando",
+        "hable",
         "manana",
         "ayer",
         "luego",
@@ -161,7 +176,10 @@ object DuplicateHeuristics {
             .replace("[^\\p{L}\\p{N}]".toRegex(), "")
 
     private fun canonicalize(text: String): String {
-        var normalized = Normalizer.normalize(text.lowercase(Locale.getDefault()), Normalizer.Form.NFD)
+        val actionText = actionTriggerRegex.findAll(text).lastOrNull()
+            ?.let { text.substring(it.range.last + 1) }
+            ?: text
+        var normalized = Normalizer.normalize(actionText.lowercase(Locale.getDefault()), Normalizer.Form.NFD)
             .replace("\\p{M}+".toRegex(), "")
             .replace("[^\\p{L}\\p{N}\\s]".toRegex(), " ")
             .replace("\\s+".toRegex(), " ")

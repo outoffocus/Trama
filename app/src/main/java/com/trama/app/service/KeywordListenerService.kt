@@ -82,9 +82,10 @@ class KeywordListenerService : LifecycleService() {
         private const val ERROR_RETRY_DELAY_MS = 1000L
         private const val CONTEXTUAL_RESTART_DELAY_MS = 500L
         private const val SPEAKER_VERIFY_WINDOW_MS = 3_000L
-        private const val UNCERTAIN_GATE_FALLBACK_COOLDOWN_MS = 3L * 60L * 1000L
+        private const val UNCERTAIN_GATE_FALLBACK_COOLDOWN_MS = 5L * 60L * 1000L
         private const val UNCERTAIN_GATE_MIN_WINDOW_MS = 2_500L
         private const val UNCERTAIN_GATE_MAX_WINDOW_MS = 15_000L
+        private const val BLOCKED_FALLBACK_LOG_INTERVAL_MS = 60_000L
 
         private const val SLOW_MODE_THRESHOLD = 20
         private const val BATTERY_THRESHOLD = 15
@@ -129,6 +130,10 @@ class KeywordListenerService : LifecycleService() {
     @Volatile private var lastUncertainGateFallbackAt = 0L
     @Volatile
     private var batteryPct: Int = 100
+    @Volatile
+    private var charging = false
+    @Volatile
+    private var lastBlockedUncertainGateFallbackLogAt = 0L
     @Volatile
     private var batteryLowNoticeShown = false
 
@@ -177,6 +182,7 @@ class KeywordListenerService : LifecycleService() {
                     if (level >= 0) {
                         batteryPct = (level * 100) / scale
                     }
+                    charging = intent.isCharging()
 
                     if (batteryPct >= BATTERY_THRESHOLD) {
                         batteryLowNoticeShown = false
@@ -313,6 +319,7 @@ class KeywordListenerService : LifecycleService() {
         if (level >= 0) {
             batteryPct = (level * 100) / scale
         }
+        charging = sticky?.isCharging() == true
     }
 
     private suspend fun loadInitialSettings() {
@@ -505,10 +512,24 @@ class KeywordListenerService : LifecycleService() {
                     triggerReason = reason
                 )
             }
-            engine.shouldCaptureUnmatchedFinalWindow = { window, transcript, debugSummary ->
-                shouldEscalateUncertainGate(window.durationMs(), transcript, debugSummary)
+            engine.shouldCaptureUnmatchedFinalWindow = { _, _, _ -> false }
+            engine.shouldCaptureUnmatchedGateWindow = { window, transcript, debugSummary, isFinal ->
+                shouldEscalateUncertainGate(window.durationMs(), transcript, debugSummary, isFinal)
             }
-            engine.onWindowCaptured = { window ->
+            engine.onSegmentFinalized = { reason, windowMs, droppedSamples, triggerMatched ->
+                CaptureLog.event(
+                    gate = CaptureLog.Gate.ASR_GATE,
+                    result = CaptureLog.Result.OK,
+                    text = "segment_finalized",
+                    meta = mapOf(
+                        "reason" to reason,
+                        "windowMs" to windowMs,
+                        "droppedSamples" to droppedSamples,
+                        "triggerMatched" to triggerMatched
+                    )
+                )
+            }
+            engine.onWindowCaptured = { window, source ->
                 lifecycleScope.launch(Dispatchers.IO) {
                     val startedAt = System.currentTimeMillis()
                     publishAsrDebug(status = "procesando audio")
@@ -530,7 +551,8 @@ class KeywordListenerService : LifecycleService() {
                             meta = mapOf(
                                 "engine" to asrEngine.name,
                                 "windowMs" to window.durationMs(),
-                                "decodeMs" to elapsedMs
+                                "decodeMs" to elapsedMs,
+                                "source" to source
                             )
                         )
                         val speakerWindow = window
@@ -832,23 +854,30 @@ class KeywordListenerService : LifecycleService() {
             preRollSeconds = contextPreRollSeconds,
             postRollSeconds = contextPostRollSeconds,
             silenceStopMs = 1800L,
-            gateEvalWindowsMs = listOf(5_000L, 3_000L)
+            gateEvalWindowsMs = listOf(15_000L, 12_000L, 8_000L, 5_000L, 3_000L)
         )
     }
 
     private fun shouldEscalateUncertainGate(
         windowMs: Long,
         gateTranscript: String,
-        debugSummary: String
+        debugSummary: String,
+        isFinal: Boolean
     ): Boolean {
         val now = System.currentTimeMillis()
-        val words = gateTranscript.split("\\s+".toRegex()).count { it.isNotBlank() }
-        val gateLooksUnreliable = gateTranscript.isBlank() || words <= 2
-        val windowLooksUseful = windowMs in UNCERTAIN_GATE_MIN_WINDOW_MS..UNCERTAIN_GATE_MAX_WINDOW_MS
-        val cooldownElapsed = now - lastUncertainGateFallbackAt >= UNCERTAIN_GATE_FALLBACK_COOLDOWN_MS
-        val allowed = gateLooksUnreliable && windowLooksUseful && cooldownElapsed
+        val decision = UncertainGateFallbackPolicy.decide(
+            windowMs = windowMs,
+            gateTranscript = gateTranscript,
+            nowMs = now,
+            lastAllowedAtMs = lastUncertainGateFallbackAt,
+            batteryPct = batteryPct,
+            charging = charging,
+            normalCooldownMs = UNCERTAIN_GATE_FALLBACK_COOLDOWN_MS,
+            minWindowMs = UNCERTAIN_GATE_MIN_WINDOW_MS,
+            maxWindowMs = UNCERTAIN_GATE_MAX_WINDOW_MS
+        )
 
-        if (allowed) {
+        if (decision.allowed) {
             lastUncertainGateFallbackAt = now
             CaptureLog.event(
                 gate = CaptureLog.Gate.ASR_GATE,
@@ -856,7 +885,11 @@ class KeywordListenerService : LifecycleService() {
                 text = gateTranscript.ifBlank { null },
                 meta = mapOf(
                     "reason" to "uncertain_gate_fallback",
+                    "isFinal" to isFinal,
                     "windowMs" to windowMs,
+                    "batteryPct" to batteryPct,
+                    "charging" to charging,
+                    "cooldownMs" to decision.cooldownMs,
                     "summary" to debugSummary
                 )
             )
@@ -865,9 +898,43 @@ class KeywordListenerService : LifecycleService() {
                 gateText = debugSummary.ifBlank { "gate incierto" },
                 triggerReason = "gate incierto -> whisper"
             )
+        } else if (decision.blockedReason == "battery_low" || decision.blockedReason == "cooldown") {
+            logBlockedUncertainGateFallback(
+                reason = decision.blockedReason,
+                windowMs = windowMs,
+                isFinal = isFinal,
+                cooldownMs = decision.cooldownMs,
+                debugSummary = debugSummary
+            )
         }
 
-        return allowed
+        return decision.allowed
+    }
+
+    private fun logBlockedUncertainGateFallback(
+        reason: String,
+        windowMs: Long,
+        isFinal: Boolean,
+        cooldownMs: Long,
+        debugSummary: String
+    ) {
+        val now = System.currentTimeMillis()
+        if (now - lastBlockedUncertainGateFallbackLogAt < BLOCKED_FALLBACK_LOG_INTERVAL_MS) return
+        lastBlockedUncertainGateFallbackLogAt = now
+        CaptureLog.event(
+            gate = CaptureLog.Gate.ASR_GATE,
+            result = CaptureLog.Result.NO_MATCH,
+            text = "uncertain_gate_fallback_blocked",
+            meta = mapOf(
+                "reason" to reason,
+                "isFinal" to isFinal,
+                "windowMs" to windowMs,
+                "batteryPct" to batteryPct,
+                "charging" to charging,
+                "cooldownMs" to cooldownMs,
+                "summary" to debugSummary
+            )
+        )
     }
 
     private fun humanReadableAsrState(state: String): String {
@@ -1109,6 +1176,12 @@ class KeywordListenerService : LifecycleService() {
         val bm = getSystemService(BatteryManager::class.java)
         val level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         return level in 1 until BATTERY_THRESHOLD
+    }
+
+    private fun Intent.isCharging(): Boolean {
+        val status = getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+        return status == BatteryManager.BATTERY_STATUS_CHARGING ||
+            status == BatteryManager.BATTERY_STATUS_FULL
     }
 
 }

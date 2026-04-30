@@ -13,7 +13,7 @@ Trama debe leerse como una memoria operativa local-first:
 
 El objetivo del producto es capturar con poca friccion, estructurar despues y permitir recuperar contexto sin convertir al usuario en editor permanente.
 
-## 2. Estado a 2026-04-28
+## 2. Estado a 2026-04-30
 
 ### Movil
 
@@ -23,6 +23,8 @@ El objetivo del producto es capturar con poca friccion, estructurar despues y pe
 - `VoskGateAsr` como gate ligero
 - `SherpaWhisperAsrEngine` como transcriptor final
 - fallback a `SpeechRecognizer`
+- segmentacion de escucha continua en ventanas renovables, con cap de 30s para voz/ruido sin trigger
+- fallback incierto a Whisper con presupuesto por bateria/carga/cooldown
 - speaker verification offline integrada despues de Whisper
 - tracking opcional de ubicacion con dwell detection
 - lugares persistidos, valoraciones, opiniones y apertura en mapas externos
@@ -119,8 +121,22 @@ Propiedades:
 - audio contextual en RAM
 - preroll/postroll configurables desde ajustes
 - gate barato antes del transcriptor caro
+- segmentos sin trigger cerrados por cap de 30s para evitar acumulacion de audio viejo
+- si un trigger fue detectado durante el segmento, el cierre final no puede descartarlo por una reevaluacion posterior peor
+- fallback incierto a Whisper solo para gates vacios o muy pobres, con cooldown de 5 min en bateria y 2 min cargando
+- fallback incierto bloqueado bajo 20% de bateria cuando no esta cargando
 - trazas en `CaptureLog` para diagnostico
 - fallback degradado si el stack dedicado falla
+
+Eventos relevantes de diagnostico:
+
+- `SERVICE service_start_requested`
+- `SERVICE service_stop_requested reason=...`
+- `SERVICE service_rearm_requested reason=...`
+- `ASR_GATE segment_finalized reason=silence_stop|unmatched_segment_cap|post_roll_cap`
+- `ASR_GATE uncertain_gate_fallback batteryPct charging windowMs cooldownMs`
+- `ASR_GATE uncertain_gate_fallback_blocked reason=battery_low|cooldown`
+- `ASR_FINAL source=trigger|uncertain_fallback|no_gate decodeMs windowMs`
 
 ## 6. Grabaciones
 
@@ -152,6 +168,15 @@ Rutas:
 - Gemini cloud para estructuracion, acciones, resumenes y opiniones
 - Gemma local descargable para ejecucion on-device cuando esta disponible y habilitado
 - heuristicas locales para reparacion JSON, duplicados y sugerencias manuales
+
+Procesamiento de acciones:
+
+- `PromptTemplateStore.ACTION_ITEM` pide acciones autosuficientes y no frases conversacionales completas
+- el prompt exige resolver referencias internas de la misma transcripcion: pronombres, elipsis y contexto compartido
+- `ActionItemProcessor` recorta prefijos conversacionales cuando el modelo deja una clausula accionable dentro de una frase larga
+- `actions[]` es la lista canonica de tareas; `extraActions` queda como compatibilidad
+- extras solapadas con la accion primaria se descartan antes de persistir
+- `DuplicateHeuristics` compara una forma canonica de la accion, normalizando triggers y errores comunes antes de usar similitud
 
 `DailyPage` persiste:
 
@@ -311,7 +336,9 @@ Diagnostico:
 
 - `CaptureLog`
 - `DiagnosticsExportManager`
+- `DiagnosticsAnalyzer`
 - exportacion de eventos recientes y estadisticas del pipeline
+- contadores de segmentos cerrados por silencio/cap, fallbacks inciertos, fallbacks bloqueados, paradas explicitas y destrucciones inesperadas del servicio
 
 Esta pantalla es una de las principales candidatas a refactor por ViewModels y secciones mas aisladas.
 
@@ -380,6 +407,7 @@ Comandos utiles:
 - limites de coste/latencia para Gemini
 - simplificar `SettingsScreen`
 - separar responsabilidades de `ActionItemProcessor`
+- extraer politicas puras adicionales para probar mas casos de segmentacion y calidad de acciones sin Android runtime
 
 ### P2
 
