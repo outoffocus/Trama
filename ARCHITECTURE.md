@@ -122,6 +122,7 @@ Propiedades:
 - audio contextual en RAM
 - preroll/postroll configurables desde ajustes
 - gate barato antes del transcriptor caro
+- triggers base reducidos y literales; se evitan coincidencias fuzzy para no convertir ruido ambiental en ventanas Whisper
 - segmentos sin trigger cerrados por cap de 30s para evitar acumulacion de audio viejo
 - si un trigger fue detectado durante el segmento, el cierre final no puede descartarlo por una reevaluacion posterior peor
 - fallback incierto a Whisper solo para gates vacios o muy pobres, con cooldown de 5 min en bateria y 2 min cargando

@@ -57,10 +57,9 @@ class IntentDetectorTest {
     }
 
     @Test
-    fun `detects llamar a as comunicacion`() {
+    fun `rejects standalone communication verbs`() {
         val result = detector.detect("llamar a mi madre luego")
-        assertNotNull(result)
-        assertEquals("comunicacion", result!!.pattern?.id)
+        assertNull(result)
     }
 
     @Test
@@ -115,10 +114,9 @@ class IntentDetectorTest {
     }
 
     @Test
-    fun `detects fuzzy typo for recordar`() {
+    fun `rejects fuzzy single word reminder false positives`() {
         val result = detector.detect("recorda llamar a casa")
-        assertNotNull(result)
-        assertEquals("recordatorios", result!!.pattern?.id)
+        assertNull(result)
     }
 
     @Test
@@ -148,13 +146,15 @@ class IntentDetectorTest {
         assertEquals("recordatorios", detector.detect("tengo que acordarme de comprar leche")?.pattern?.id)
         assertEquals("recordatorios", detector.detect("recordar comprarle el regalo a papa")?.pattern?.id)
         assertNull(detector.detect("no queria verla ahi ahi no escucho"))
+        assertNull(detector.detect("recordó una cosa de ayer"))
+        assertNull(detector.detect("los niños tienen que dormir"))
     }
 
     @Test
     fun `detects explicit commitment triggers`() {
         assertEquals("compromisos", detector.detect("pasado mañana tengo ITV")?.pattern?.id)
         assertEquals("compromisos", detector.detect("tenemos reunión por la tarde")?.pattern?.id)
-        assertEquals("compromisos", detector.detect("quedé con Elena el viernes")?.pattern?.id)
+        assertNull(detector.detect("quedé con Elena el viernes"))
         assertEquals("compromisos", detector.detect("Lara tiene médico mañana")?.pattern?.id)
         assertEquals("compromisos", detector.detect("tiene dentista el lunes")?.pattern?.id)
     }

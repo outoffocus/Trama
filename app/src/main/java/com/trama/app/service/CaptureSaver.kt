@@ -87,11 +87,10 @@ class CaptureSaver(
                 text = text,
                 meta = mapOf("id" to entryId, "intent" to intentId, "label" to label)
             )
+            EntryProcessingState.markProcessing(entryId)
             onStatus("entrada guardada")
-            notifier.showNewEntry(entry)
             onEntrySaved()
 
-            EntryProcessingState.markProcessing(entryId)
             var acceptedForTimeline = false
             try {
                 acceptedForTimeline = ActionItemProcessor(context).process(entryId, text, repo)
@@ -101,6 +100,8 @@ class CaptureSaver(
                 EntryProcessingState.markFinished(entryId)
             }
             if (acceptedForTimeline) {
+                val acceptedEntry = repo.getByIdOnce(entryId) ?: entry
+                notifier.showNewEntry(acceptedEntry)
                 notifyTimelineActionAdded()
             }
         }

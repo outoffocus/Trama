@@ -27,6 +27,7 @@ Situacion a fecha `2026-04-30`:
 - gate temprano con Vosk para evitar transcribir todo con Whisper
 - transcripcion final on-device con sherpa-onnx / Whisper
 - deteccion configurable de intenciones, categorias y frases activadoras
+- triggers por defecto limitados a frases mas intencionales para reducir falsos positivos y llamadas caras a Whisper
 - speaker verification offline opcional despues de Whisper
 - posprocesado AI para limpiar texto, crear acciones, detectar fechas, prioridad y duplicados
 - grabaciones manuales en movil y reloj, con extraccion posterior de acciones sugeridas

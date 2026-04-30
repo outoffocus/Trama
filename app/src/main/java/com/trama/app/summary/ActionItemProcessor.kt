@@ -199,7 +199,12 @@ class ActionItemProcessor(private val context: Context) {
         } catch (e: Exception) {
             Log.w(TAG, "Duplicate check failed", e)
         }
-        return acceptedForTimeline
+        return acceptedForTimeline && repository.isVisiblePendingEntry(entryId)
+    }
+
+    private suspend fun DiaryRepository.isVisiblePendingEntry(entryId: Long): Boolean {
+        val entry = getByIdOnce(entryId) ?: return false
+        return entry.status == EntryStatus.PENDING && entry.duplicateOfId == null
     }
 
     private suspend fun maybeAutoSplitEntry(

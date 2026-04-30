@@ -1964,7 +1964,7 @@ fun SettingsScreen(
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                "Base recomendada: Recordatorios, Tareas y Comunicación. Sí merece la pena cubrir variantes útiles como singular/plural (\"tengo que\" y \"tenemos que\"), pero evita frases temporales como \"mañana tengo que\": el tiempo se resuelve después.",
+                                "Base recomendada: usa pocas frases muy intencionales. Mantén expresiones naturales como \"recordar\", \"necesito\", \"falta por\" o \"pendiente de\", pero evita triggers conversacionales sueltos como \"llama\", \"dile\" o \"pregunta\".",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
