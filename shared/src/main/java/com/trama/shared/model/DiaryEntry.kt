@@ -19,6 +19,7 @@ data class DiaryEntry(
     val correctedText: String? = null,       // LLM-corrected version of text
     val wasReviewedByLLM: Boolean = false,   // whether an LLM validated this entry
     val llmConfidence: Float? = null,        // LLM confidence score (0.0-1.0)
+    val processingBackend: String? = null,   // CLOUD, LOCAL, HEURISTIC, or null when unknown/not processed
     val isManual: Boolean = false,           // true if manually entered by user
     // ActionItem fields
     val status: String = EntryStatus.PENDING,      // PENDING, COMPLETED, DISCARDED
@@ -52,6 +53,12 @@ data class DiaryEntry(
             value
         }
     }
+}
+
+object EntryProcessingBackend {
+    const val CLOUD = "CLOUD"
+    const val LOCAL = "LOCAL"
+    const val HEURISTIC = "HEURISTIC"
 }
 
 /** Entry lifecycle status */

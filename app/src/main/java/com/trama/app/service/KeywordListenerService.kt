@@ -36,6 +36,7 @@ import com.trama.app.ui.SettingsDataStore
 import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.Source
 import com.trama.shared.speech.IntentDetector.DetectionResult
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -555,8 +556,8 @@ class KeywordListenerService : LifecycleService() {
                 )
             }
             engine.shouldCaptureUnmatchedFinalWindow = { _, _, _ -> false }
-            engine.shouldCaptureUnmatchedGateWindow = { window, transcript, debugSummary, isFinal ->
-                shouldEscalateUncertainGate(window.durationMs(), transcript, debugSummary, isFinal)
+            engine.shouldCaptureUnmatchedGateWindow = { windowMs, transcript, debugSummary, isFinal ->
+                shouldEscalateUncertainGate(windowMs, transcript, debugSummary, isFinal)
             }
             engine.onSegmentFinalized = { reason, windowMs, droppedSamples, triggerMatched ->
                 CaptureLog.event(
@@ -568,6 +569,18 @@ class KeywordListenerService : LifecycleService() {
                         "windowMs" to windowMs,
                         "droppedSamples" to droppedSamples,
                         "triggerMatched" to triggerMatched
+                    )
+                )
+            }
+            engine.onGateEvalSkipped = { reason, speechMs, thresholdMs ->
+                CaptureLog.event(
+                    gate = CaptureLog.Gate.ASR_GATE,
+                    result = CaptureLog.Result.NO_MATCH,
+                    text = "gate_eval_skipped",
+                    meta = mapOf(
+                        "reason" to reason,
+                        "speechMs" to speechMs,
+                        "thresholdMs" to thresholdMs
                     )
                 )
             }
@@ -685,6 +698,8 @@ class KeywordListenerService : LifecycleService() {
                         publishAsrDebug(status = "rearmando captura")
                         delay(CONTEXTUAL_RESTART_DELAY_MS)
                     }
+                } catch (ce: CancellationException) {
+                    throw ce
                 } catch (t: Throwable) {
                     Log.e(TAG, "Contextual capture crashed", t)
                     logOfflineAsrRecoverableFailure(

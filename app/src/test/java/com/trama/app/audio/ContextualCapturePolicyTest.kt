@@ -7,11 +7,12 @@ import org.junit.Test
 class ContextualCapturePolicyTest {
 
     @Test
-    fun `continuous unmatched speech rotates at 30 seconds`() {
+    fun `continuous unmatched speech rotates at the configured cap`() {
+        val capSeconds = (ContextualCapturePolicy.UNMATCHED_SEGMENT_CAP_MS / 1000L).toInt()
         assertTrue(
             ContextualCapturePolicy.shouldRotateUnmatchedSegment(
                 triggerMatched = false,
-                capturedSamples = 16_000 * 30,
+                capturedSamples = 16_000 * capSeconds,
                 sampleRateHz = 16_000
             )
         )
@@ -30,10 +31,12 @@ class ContextualCapturePolicyTest {
 
     @Test
     fun `short unmatched speech keeps accumulating`() {
+        val justBelowCapSamples =
+            ((ContextualCapturePolicy.UNMATCHED_SEGMENT_CAP_MS - 1_000L) * 16_000L / 1000L).toInt()
         assertFalse(
             ContextualCapturePolicy.shouldRotateUnmatchedSegment(
                 triggerMatched = false,
-                capturedSamples = 16_000 * 29,
+                capturedSamples = justBelowCapSamples,
                 sampleRateHz = 16_000
             )
         )

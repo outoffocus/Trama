@@ -130,6 +130,10 @@ interface DiaryDao {
     @Query("UPDATE diary_entries SET correctedText = :correctedText, wasReviewedByLLM = 1, llmConfidence = :confidence WHERE id = :id")
     suspend fun updateLLMReview(id: Long, correctedText: String?, confidence: Float)
 
+    /** Persist the actual processor used, without inferring it from confidence. */
+    @Query("UPDATE diary_entries SET processingBackend = :backend WHERE id = :id")
+    suspend fun updateProcessingBackend(id: Long, backend: String?)
+
     /** Mark entry as completed */
     @Query("UPDATE diary_entries SET status = 'COMPLETED', completedAt = :completedAt WHERE id = :id")
     suspend fun markCompleted(id: Long, completedAt: Long = System.currentTimeMillis())

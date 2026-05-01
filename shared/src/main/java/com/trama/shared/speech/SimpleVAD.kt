@@ -50,9 +50,36 @@ class SimpleVAD {
     var isSpeaking = false
         private set
 
+    @Volatile
+    private var speechMsAccumulator: Long = 0L
+
     var onVoiceStart: (() -> Unit)? = null
     var onVoiceEnd: (() -> Unit)? = null
     var onTimeout: (() -> Unit)? = null
+
+    /**
+     * If the VAD currently considers the signal as speech, add [frameDurationMs]
+     * to the running accumulator. Callers feed this from the capture loop so the
+     * gate ASR pre-filter can require sustained speech before invoking the model.
+     *
+     * Callers should only feed frames that were actually emitted by the mic
+     * (i.e. ignore the FRAME_SKIP semantics — we want real wall time of speech).
+     */
+    fun accumulateIfSpeaking(frameDurationMs: Long) {
+        if (isSpeaking && frameDurationMs > 0L) {
+            speechMsAccumulator += frameDurationMs
+        }
+    }
+
+    /** Read the accumulator without resetting it. */
+    fun peekSpeechMs(): Long = speechMsAccumulator
+
+    /** Atomically read the accumulator and reset it to zero. */
+    fun consumeSpeechMs(): Long {
+        val current = speechMsAccumulator
+        speechMsAccumulator = 0L
+        return current
+    }
 
     /**
      * Process a frame of 16-bit PCM audio.
@@ -100,6 +127,7 @@ class SimpleVAD {
         frameCounter = 0
         processedFrameCount = 0
         isSpeaking = false
+        speechMsAccumulator = 0L
     }
 
     private fun calculateRMS(buffer: ShortArray, length: Int): Double {

@@ -99,6 +99,7 @@ dependencies {
 
     // On-device LLM: MediaPipe (.task files) + LiteRT-LM (.litertlm files)
     implementation(libs.mediapipe.tasks.genai)
+    implementation(libs.mediapipe.tasks.core)
     implementation(libs.litertlm.android)
 
     // WorkManager (scheduled summary)

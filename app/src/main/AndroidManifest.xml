@@ -47,6 +47,17 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".screenshot.ScreenshotShareActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Trama">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+        </activity>
+
         <!-- Always-on keyword listener foreground service -->
         <service
             android:name=".service.KeywordListenerService"
@@ -63,6 +74,11 @@
             android:name=".service.LocationForegroundService"
             android:foregroundServiceType="location"
             android:exported="false" />
+
+        <service
+            android:name=".screenshot.IsolatedGemmaVisionService"
+            android:exported="false"
+            android:process=":llm" />
 
         <!-- Receives synced data and mic commands from watch -->
         <service

@@ -59,16 +59,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.EntryActionType
+import com.trama.shared.model.EntryProcessingBackend
 import com.trama.shared.model.EntryPriority
 import com.trama.shared.model.EntryStatus
 import com.trama.shared.model.Source
 import com.trama.app.service.EntryProcessingState
 import com.trama.app.ui.theme.LocalTramaColors
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Date
-import java.util.Locale
-import java.util.concurrent.TimeUnit
 
 /**
  * Card for a single diary entry / action item.
@@ -97,19 +93,9 @@ fun EntryCard(
     accentColor: Color? = null,
     modifier: Modifier = Modifier
 ) {
-    val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
-    val dayTimeFormat = SimpleDateFormat("d MMM · HH:mm", Locale("es"))
     val isCompleted = entry.status == EntryStatus.COMPLETED
     val primaryText = entry.displayText.ifBlank { entry.text }
     val t = LocalTramaColors.current
-
-    val startOfToday = Calendar.getInstance().apply {
-        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
-        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-    }.timeInMillis
-    val dueLabel = remember(entry.dueDate, startOfToday) {
-        entry.dueDate?.let { formatDueLabel(it, startOfToday) }
-    }
 
     val cardColor by animateColorAsState(
         targetValue = when {
@@ -215,27 +201,9 @@ fun EntryCard(
                         modifier       = Modifier.weight(1f)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
+                    EntrySourceIcon(entry.source)
                     if (processingBadge != null) {
                         ProcessingBadgeIcons(processingBadge)
-                    }
-                    if (processingBadge == null && dueLabel != null) {
-                        Text(
-                            text = dueLabel.text,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = when (dueLabel.urgency) {
-                                DueUrgency.Overdue -> t.red
-                                DueUrgency.Today -> t.warn
-                                DueUrgency.Future -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.52f)
-                            },
-                            maxLines = 1
-                        )
-                    } else if (processingBadge == null) {
-                        Text(
-                            text  = timeFormat.format(Date(entry.createdAt)),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.40f)
-                        )
                     }
                 }
             }
@@ -278,29 +246,6 @@ fun EntryCard(
     }
 }
 
-private enum class DueUrgency { Overdue, Today, Future }
-
-private data class DueLabel(
-    val text: String,
-    val urgency: DueUrgency
-)
-
-private fun formatDueLabel(dueDate: Long, startOfToday: Long): DueLabel {
-    val oneDayMs = TimeUnit.DAYS.toMillis(1)
-    val startOfTomorrow = startOfToday + oneDayMs
-    val startOfDayAfterTomorrow = startOfTomorrow + oneDayMs
-
-    return when {
-        dueDate < startOfToday -> DueLabel("Vencida", DueUrgency.Overdue)
-        dueDate < startOfTomorrow -> DueLabel("Hoy", DueUrgency.Today)
-        dueDate < startOfDayAfterTomorrow -> DueLabel("Mañana", DueUrgency.Future)
-        else -> DueLabel(
-            SimpleDateFormat("d MMM", Locale("es")).format(Date(dueDate)),
-            DueUrgency.Future
-        )
-    }
-}
-
 // ── Processing badge helpers ─────────────────────────────────────────────────
 
 private data class ProcessingBadge(
@@ -309,6 +254,36 @@ private data class ProcessingBadge(
     val contentDescription: String,
     val showSparkle: Boolean = false
 )
+
+@Composable
+private fun EntrySourceIcon(source: Source) {
+    val (icon, description, tint) = when (source) {
+        Source.PHONE -> Triple(
+            Icons.Default.Smartphone,
+            "Capturado desde el telefono",
+            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.46f)
+        )
+        Source.WATCH -> Triple(
+            Icons.Default.Watch,
+            "Capturado desde el reloj",
+            LocalTramaColors.current.watch.copy(alpha = 0.72f)
+        )
+        Source.SCREENSHOT -> Triple(
+            Icons.Default.AutoAwesome,
+            "Capturado desde pantalla",
+            LocalTramaColors.current.amber.copy(alpha = 0.72f)
+        )
+    }
+
+    Icon(
+        imageVector = icon,
+        contentDescription = description,
+        modifier = Modifier
+            .padding(end = 4.dp)
+            .size(14.dp),
+        tint = tint
+    )
+}
 
 @Composable
 private fun rememberProcessingBadge(
@@ -338,9 +313,9 @@ private fun rememberProcessingBadge(
         )
     }
 
-    val isCloudProcessed = entry.wasReviewedByLLM && (entry.llmConfidence ?: 0f) >= 0.85f
-    val isLocalProcessed = (entry.wasReviewedByLLM && !isCloudProcessed) ||
-        (!entry.wasReviewedByLLM && (entry.sourceRecordingId != null || entry.llmConfidence == 0.0f))
+    val isCloudProcessed = entry.processingBackend == EntryProcessingBackend.CLOUD
+    val isLocalProcessed = entry.processingBackend == EntryProcessingBackend.LOCAL
+    val isHeuristicProcessed = entry.processingBackend == EntryProcessingBackend.HEURISTIC
 
     return when {
         entry.isManual   -> ProcessingBadge(
@@ -357,6 +332,11 @@ private fun rememberProcessingBadge(
             icon               = Icons.Default.Smartphone,
             tint               = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
             contentDescription = "Procesado local"
+        )
+        isHeuristicProcessed -> ProcessingBadge(
+            icon               = Icons.Default.CheckCircle,
+            tint               = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+            contentDescription = "Procesado por reglas locales"
         )
         else -> null
     }

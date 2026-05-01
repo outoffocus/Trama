@@ -10,6 +10,7 @@ import com.trama.app.service.EntryProcessingState
 import com.trama.shared.data.DiaryRepository
 import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.EntryActionType
+import com.trama.shared.model.EntryProcessingBackend
 import com.trama.shared.model.EntryPriority
 import com.trama.shared.model.EntryStatus
 import kotlinx.coroutines.flow.firstOrNull
@@ -43,7 +44,8 @@ class ActionItemProcessor(private val context: Context) {
             entryId = entryId,
             originalText = originalText,
             normalizedInput = processingText,
-            recentContext = recentContext
+            recentContext = recentContext,
+            repository = repository
         )
         val result = outcome?.primary
         // Only run the heuristic auto-splitter when the LLM was unavailable or
@@ -51,6 +53,7 @@ class ActionItemProcessor(private val context: Context) {
         // result, trust it — re-splitting with regex was a source of false
         // positives (e.g. splitting on every verb in a single coherent request).
         val splitCleanTexts = if (outcome == null) {
+            repository.updateProcessingBackend(entryId, EntryProcessingBackend.HEURISTIC)
             maybeAutoSplitEntry(entryId, processingText, null, repository)
         } else {
             emptyList()
@@ -246,6 +249,7 @@ class ActionItemProcessor(private val context: Context) {
                     correctedText = null,
                     wasReviewedByLLM = true,
                     llmConfidence = result?.confidence ?: originalEntry.llmConfidence,
+                    processingBackend = originalEntry.processingBackend ?: EntryProcessingBackend.HEURISTIC,
                     status = EntryStatus.PENDING,
                     actionType = suggestion.actionType,
                     cleanText = suggestion.text,
@@ -267,14 +271,17 @@ class ActionItemProcessor(private val context: Context) {
         entryId: Long,
         originalText: String,
         normalizedInput: String,
-        recentContext: String
+        recentContext: String,
+        repository: DiaryRepository
     ): LLMOutcome? {
         // Try Cloud
         val apiKey = getApiKey()
         if (!apiKey.isNullOrBlank()) {
             try {
                 EntryProcessingState.updateBackend(entryId, EntryProcessingState.Backend.CLOUD)
-                return processWithCloud(originalText, normalizedInput, recentContext, apiKey)
+                val outcome = processWithCloud(originalText, normalizedInput, recentContext, apiKey)
+                repository.updateProcessingBackend(entryId, EntryProcessingBackend.CLOUD)
+                return outcome
             } catch (e: Exception) {
                 Log.w(TAG, "Cloud failed: ${e.javaClass.simpleName}", e)
             }
@@ -284,7 +291,9 @@ class ActionItemProcessor(private val context: Context) {
         if (GemmaClient.isModelAvailable(context)) {
             try {
                 EntryProcessingState.updateBackend(entryId, EntryProcessingState.Backend.LOCAL)
-                return processWithLocalModel(originalText, normalizedInput, recentContext)
+                val outcome = processWithLocalModel(originalText, normalizedInput, recentContext)
+                repository.updateProcessingBackend(entryId, EntryProcessingBackend.LOCAL)
+                return outcome
             } catch (e: Exception) {
                 Log.w(TAG, "Local model failed", e)
             }
@@ -888,6 +897,7 @@ class ActionItemProcessor(private val context: Context) {
                     correctedText = null,
                     wasReviewedByLLM = true,
                     llmConfidence = extra.confidence,
+                    processingBackend = originalEntry.processingBackend,
                     status = EntryStatus.PENDING,
                     actionType = extra.actionType,
                     cleanText = extra.cleanText,

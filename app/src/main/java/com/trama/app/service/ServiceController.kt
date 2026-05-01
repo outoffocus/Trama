@@ -37,9 +37,37 @@ object ServiceController {
         WATCH
     }
 
+    private const val START_DEBOUNCE_MS = 1_500L
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val transitionLock = Any()
     private val modeRef = AtomicReference(ServiceMode.IDLE)
+
+    @Volatile
+    private var lastStartRequestMs: Long = 0L
+    @Volatile
+    private var lastStartReason: String = ""
+
+    private fun shouldSuppressStart(reason: String): Boolean {
+        val now = System.currentTimeMillis()
+        val elapsed = now - lastStartRequestMs
+        if (elapsed in 0 until START_DEBOUNCE_MS) {
+            CaptureLog.event(
+                gate = CaptureLog.Gate.SERVICE,
+                result = CaptureLog.Result.REJECT,
+                text = "service_start_debounced",
+                meta = mapOf(
+                    "reason" to reason,
+                    "previousReason" to lastStartReason,
+                    "elapsedMs" to elapsed
+                )
+            )
+            return true
+        }
+        lastStartRequestMs = now
+        lastStartReason = reason
+        return false
+    }
 
     private val _isRunning = MutableStateFlow(false)
     val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()
@@ -63,6 +91,7 @@ object ServiceController {
                 .putBoolean(KEY_SHOULD_RUN, true)
                 .putString(KEY_SUSPEND_REASON, SuspendReason.NONE.name)
                 .commit()
+            if (shouldSuppressStart("user_start")) return
             ServiceWatchdogScheduler.schedule(context, reason = "user_start")
             CaptureLog.event(
                 gate = CaptureLog.Gate.SERVICE,
@@ -112,6 +141,7 @@ object ServiceController {
                 .putBoolean(KEY_SHOULD_RUN, true)
                 .putString(KEY_SUSPEND_REASON, SuspendReason.NONE.name)
                 .commit()
+            if (shouldSuppressStart("rearm:$reason")) return
             ServiceWatchdogScheduler.schedule(context, reason = reason)
             CaptureLog.event(
                 gate = CaptureLog.Gate.SERVICE,
@@ -258,6 +288,7 @@ object ServiceController {
         synchronized(transitionLock) {
             if (!shouldBeRunning(context)) return false
             if (suspendReason(context) != SuspendReason.NONE) return false
+            if (shouldSuppressStart("watchdog:$reason")) return true
             return runCatching {
                 val intent = Intent(context, KeywordListenerService::class.java)
                     .putExtra("watchdogReason", reason)

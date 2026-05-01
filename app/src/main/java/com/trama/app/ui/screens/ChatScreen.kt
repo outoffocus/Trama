@@ -93,6 +93,7 @@ fun ChatScreen(onBack: () -> Unit) {
     var inputText by remember { mutableStateOf("") }
     var isThinking by remember { mutableStateOf(false) }
     val entryCount by repository.countAll().collectAsState(initial = 0)
+    var memoryLabel by remember { mutableStateOf("memoria preparando indice") }
 
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
@@ -100,6 +101,14 @@ fun ChatScreen(onBack: () -> Unit) {
     LaunchedEffect(messages.size, isThinking) {
         val target = messages.size + (if (isThinking) 1 else 0)
         if (target > 0) listState.animateScrollToItem(target - 1)
+    }
+
+    LaunchedEffect(entryCount) {
+        memoryLabel = withContext(Dispatchers.IO) {
+            val pages = repository.getAllDailyPagesOnce().size
+            val places = repository.getAllPlacesOnce().size
+            "$entryCount entradas · $pages dias resumidos · $places sitios"
+        }
     }
 
     fun send(raw: String) {
@@ -155,7 +164,7 @@ fun ChatScreen(onBack: () -> Unit) {
                         }
                     }
                 )
-                ContextStrip(entryCount = entryCount)
+                ContextStrip(memoryLabel = memoryLabel)
             }
         },
         bottomBar = {
@@ -223,7 +232,7 @@ fun ChatScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun ContextStrip(entryCount: Int) {
+private fun ContextStrip(memoryLabel: String) {
     val t = LocalTramaColors.current
     Row(
         modifier = Modifier
@@ -240,7 +249,7 @@ private fun ContextStrip(entryCount: Int) {
         )
         Spacer(Modifier.width(8.dp))
         Text(
-            text = "$entryCount entradas indexadas",
+            text = memoryLabel,
             style = MaterialTheme.typography.labelMedium,
             color = t.mutedText,
         )

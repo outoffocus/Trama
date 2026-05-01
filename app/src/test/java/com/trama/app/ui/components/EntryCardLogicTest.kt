@@ -2,6 +2,7 @@ package com.trama.app.ui.components
 
 import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.EntryActionType
+import com.trama.shared.model.EntryProcessingBackend
 import com.trama.shared.model.EntryPriority
 import com.trama.shared.model.EntryStatus
 import com.trama.shared.model.Source
@@ -29,6 +30,7 @@ class EntryCardLogicTest {
         duration: Int = 5,
         wasReviewedByLLM: Boolean = false,
         llmConfidence: Float? = null,
+        processingBackend: String? = null,
         sourceRecordingId: Long? = null,
         isManual: Boolean = false,
         status: String = EntryStatus.PENDING,
@@ -48,6 +50,7 @@ class EntryCardLogicTest {
         duration = duration,
         wasReviewedByLLM = wasReviewedByLLM,
         llmConfidence = llmConfidence,
+        processingBackend = processingBackend,
         sourceRecordingId = sourceRecordingId,
         isManual = isManual,
         status = status,
@@ -61,52 +64,49 @@ class EntryCardLogicTest {
     )
 
     // ────────────────────────────────────────────────────────────────────────
-    // Cloud / CloudOff badge logic
-    // Cloud icon = validated by cloud LLM (wasReviewedByLLM + high confidence + no recording source)
-    // CloudOff icon = processed locally (from recording with local model, or low confidence)
+    // Processing badge logic
+    // Cloud/local icons come from explicit processingBackend, never from confidence.
     // ────────────────────────────────────────────────────────────────────────
 
     private fun isCloudProcessed(e: DiaryEntry): Boolean =
-        e.wasReviewedByLLM &&
-            e.llmConfidence != null && e.llmConfidence!! >= 0.85f
+        e.processingBackend == EntryProcessingBackend.CLOUD
 
     private fun isLocalProcessed(e: DiaryEntry): Boolean =
-        (e.wasReviewedByLLM && !isCloudProcessed(e)) ||
-            (!e.wasReviewedByLLM && (e.sourceRecordingId != null || e.llmConfidence == 0.0f))
+        e.processingBackend == EntryProcessingBackend.LOCAL
 
     @Test
-    fun `cloud badge shows for cloud-validated entry without recording source`() {
-        val e = entry(wasReviewedByLLM = true, llmConfidence = 0.9f, sourceRecordingId = null)
+    fun `cloud badge shows only for explicit cloud backend`() {
+        val e = entry(processingBackend = EntryProcessingBackend.CLOUD, llmConfidence = 0.1f)
         assertTrue("Should show cloud icon", isCloudProcessed(e))
         assertFalse("Should not show cloudOff", isLocalProcessed(e))
     }
 
     @Test
-    fun `cloudOff badge shows for locally processed entry from recording`() {
-        val e = entry(wasReviewedByLLM = true, llmConfidence = 0.8f, sourceRecordingId = 42L)
+    fun `local badge shows only for explicit local backend`() {
+        val e = entry(processingBackend = EntryProcessingBackend.LOCAL, llmConfidence = 0.95f)
         assertFalse("Should not show cloud", isCloudProcessed(e))
-        assertTrue("Should show cloudOff for local recording", isLocalProcessed(e))
+        assertTrue("Should show local badge", isLocalProcessed(e))
     }
 
     @Test
-    fun `cloud badge shows for cloud-processed entry from recording`() {
-        val e = entry(wasReviewedByLLM = true, llmConfidence = 0.9f, sourceRecordingId = 10L)
-        assertTrue("Cloud-processed recording entry shows cloud", isCloudProcessed(e))
-        assertFalse("Should not show cloudOff", isLocalProcessed(e))
+    fun `high confidence alone does not imply cloud backend`() {
+        val e = entry(wasReviewedByLLM = true, llmConfidence = 0.9f, sourceRecordingId = null)
+        assertFalse("Should not infer cloud from confidence", isCloudProcessed(e))
+        assertFalse("Should not infer local from confidence", isLocalProcessed(e))
     }
 
     @Test
-    fun `cloudOff badge shows when sourceRecordingId is not null`() {
+    fun `recording source alone does not imply local backend`() {
         val e = entry(wasReviewedByLLM = false, sourceRecordingId = 42L)
         assertFalse("Should not show cloud", isCloudProcessed(e))
-        assertTrue("sourceRecordingId should trigger cloudOff", isLocalProcessed(e))
+        assertFalse("Should not infer local from sourceRecordingId", isLocalProcessed(e))
     }
 
     @Test
-    fun `cloudOff badge shows when llmConfidence is zero`() {
+    fun `zero confidence alone does not imply local backend`() {
         val e = entry(wasReviewedByLLM = false, llmConfidence = 0.0f)
         assertFalse("Should not show cloud", isCloudProcessed(e))
-        assertTrue("Zero confidence should show cloudOff", isLocalProcessed(e))
+        assertFalse("Should not infer local from zero confidence", isLocalProcessed(e))
     }
 
     @Test
@@ -124,9 +124,9 @@ class EntryCardLogicTest {
     }
 
     @Test
-    fun `cloudOff when both sourceRecordingId present and llmConfidence zero`() {
+    fun `no local badge when both sourceRecordingId present and llmConfidence zero without backend`() {
         val e = entry(wasReviewedByLLM = false, sourceRecordingId = 5L, llmConfidence = 0.0f)
-        assertTrue("Should show cloudOff", isLocalProcessed(e))
+        assertFalse("Should not infer local backend", isLocalProcessed(e))
     }
 
     // ────────────────────────────────────────────────────────────────────────

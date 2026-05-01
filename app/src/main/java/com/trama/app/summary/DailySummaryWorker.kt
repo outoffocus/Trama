@@ -79,7 +79,7 @@ class DailySummaryWorker(
         )
 
         val intent = Intent(applicationContext, MainActivity::class.java).apply {
-            putExtra("navigate_to", "calendar")
+            putExtra("navigate_to", "summary")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val pendingIntent = PendingIntent.getActivity(
@@ -89,7 +89,7 @@ class DailySummaryWorker(
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setContentTitle("Memoria del dia lista")
             .setContentText(briefSummary.ifBlank { "Tu pagina diaria ya esta lista." })
-            .setSubText("Abre el calendario para revisar ese dia")
+            .setSubText("Toca para revisar tareas, duplicados y sitios")
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)

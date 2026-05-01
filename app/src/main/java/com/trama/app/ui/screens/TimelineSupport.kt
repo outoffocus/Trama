@@ -249,6 +249,13 @@ internal fun LazyListScope.timelineListContent(
         key = { index -> "$keyPrefix${events[index].id}" }
     ) { index ->
         val event = events[index]
+        val previousEvent = events.getOrNull(index - 1)
+        if (previousEvent == null || previousEvent.timestamp.hourBucket() != event.timestamp.hourBucket()) {
+            TimelineTimeMarker(
+                text = hourFormat.format(Date(event.timestamp.hourStartMillis())),
+                modifier = Modifier.padding(top = if (index == 0) 2.dp else 8.dp, bottom = 2.dp)
+            )
+        }
         when (event) {
             is TimelineEventUi.EntryCreated -> {
                 val context = LocalContext.current
@@ -371,7 +378,7 @@ internal fun LazyListScope.timelineListContent(
                     title = event.entry.displayText,
                     body = "Marcada como resuelta",
                     accent = accentConfig.completed,
-                    meta = hourFormat.format(Date(event.timestamp)),
+                    meta = null,
                     isSelectionMode = isSelectionMode,
                     isSelected = isSelected,
                     onLongClick = if (onEnterEntrySelectionMode != null && !isSelectionMode) {
@@ -411,19 +418,13 @@ internal fun LazyListScope.timelineListContent(
             }
             is TimelineEventUi.CalendarScheduled -> {
                 val calendarEvent = event.calendarEvent
-                val meta = if (calendarEvent.allDay) {
-                    "Todo el día"
-                } else {
-                    hourFormat.format(Date(calendarEvent.startMillis)) + " – " +
-                        hourFormat.format(Date(calendarEvent.endMillis))
-                }
                 TimelineStatusCard(
                     modifier = itemModifier,
-                    eyebrow = "Calendario",
+                    eyebrow = if (calendarEvent.allDay) "Calendario · todo el día" else "Calendario",
                     title = calendarEvent.title,
                     body = "",
                     accent = accentConfig.calendar,
-                    meta = meta,
+                    meta = null,
                     icon = {
                         Icon(
                             Icons.Default.CalendarMonth,
@@ -437,16 +438,13 @@ internal fun LazyListScope.timelineListContent(
                 val title = event.event.title
                 val isSelected = event.event.id in selectedEventIds
                 if (event.event.type == TimelineEventType.CALENDAR) {
-                    val meta = event.event.endTimestamp?.let { end ->
-                        hourFormat.format(Date(event.timestamp)) + " – " + hourFormat.format(Date(end))
-                    } ?: hourFormat.format(Date(event.timestamp))
                     TimelineStatusCard(
                         modifier = itemModifier,
                         eyebrow = if (event.event.source == TimelineEventSource.CALENDAR_IMPORT) "Google Calendar" else "Calendario",
                         title = title,
                         body = "",
                         accent = accentConfig.calendar,
-                        meta = meta,
+                        meta = null,
                         isSelectionMode = isSelectionMode,
                         isSelected = isSelected,
                         onLongClick = if (onEnterEventSelectionMode != null && !isSelectionMode) {
@@ -480,7 +478,7 @@ internal fun LazyListScope.timelineListContent(
                         event.event.subtitle ?: "Evento automático"
                     },
                     accent = accent,
-                    meta = hourFormat.format(Date(event.timestamp)),
+                    meta = null,
                     isSelectionMode = isSelectionMode,
                     isSelected = isSelected,
                     onLongClick = if (onEnterEventSelectionMode != null && !isSelectionMode) {
@@ -503,6 +501,47 @@ internal fun LazyListScope.timelineListContent(
         }
     }
 }
+
+@Composable
+private fun TimelineTimeMarker(
+    text: String,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(1.dp)
+                .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.38f))
+        )
+        Surface(
+            modifier = Modifier.padding(horizontal = 10.dp),
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(999.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.52f)
+        ) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+                modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
+            )
+        }
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(1.dp)
+                .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.38f))
+        )
+    }
+}
+
+private fun Long.hourBucket(): Long = this / 3_600_000L
+
+private fun Long.hourStartMillis(): Long = hourBucket() * 3_600_000L
 
 @Composable
 private fun TimelineCornerAccent(

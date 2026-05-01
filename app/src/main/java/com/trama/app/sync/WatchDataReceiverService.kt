@@ -141,12 +141,7 @@ class WatchDataReceiverService : WearableListenerService() {
                 }
             }
             SYNC_REQUEST_PATH -> {
-                Log.i(TAG, "Full sync requested by watch")
-                scope.launch {
-                    val repository = DatabaseProvider.getRepository(applicationContext)
-                    val syncer = PhoneToWatchSyncer(applicationContext, repository)
-                    syncer.syncAllToWatch()
-                }
+                Log.i(TAG, "Ignoring full diary sync request: watch does not display phone entries")
             }
             WATCH_DEBUG_PATH -> {
                 val payload = String(messageEvent.data)

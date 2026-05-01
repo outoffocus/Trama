@@ -1,7 +1,7 @@
 package com.trama.app.audio
 
 internal object ContextualCapturePolicy {
-    const val UNMATCHED_SEGMENT_CAP_MS = 30_000L
+    const val UNMATCHED_SEGMENT_CAP_MS = 12_000L
 
     fun shouldRotateUnmatchedSegment(
         triggerMatched: Boolean,

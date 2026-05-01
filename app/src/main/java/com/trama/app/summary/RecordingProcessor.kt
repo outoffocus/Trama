@@ -8,6 +8,7 @@ import com.google.ai.client.generativeai.type.generationConfig
 import com.trama.app.diagnostics.CaptureLog
 import com.trama.shared.data.DiaryRepository
 import com.trama.shared.model.DiaryEntry
+import com.trama.shared.model.EntryProcessingBackend
 import com.trama.shared.model.EntryStatus
 import com.trama.shared.model.RecordingStatus
 import com.trama.shared.model.Source
@@ -361,6 +362,11 @@ class RecordingProcessor(private val context: Context) {
                 dueDate = dueDate,
                 wasReviewedByLLM = true,
                 llmConfidence = confidence,
+                processingBackend = when (processedBy.lowercase(Locale.getDefault())) {
+                    "cloud", "gemini", "gemini_cloud" -> EntryProcessingBackend.CLOUD
+                    "local", "gemma", "gemma_local" -> EntryProcessingBackend.LOCAL
+                    else -> null
+                },
                 sourceRecordingId = recordingId,
                 status = EntryStatus.PENDING
             )

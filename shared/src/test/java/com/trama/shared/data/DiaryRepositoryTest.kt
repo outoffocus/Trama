@@ -204,6 +204,7 @@ private class FakeDiaryDao : DiaryDao {
     override suspend fun existsByCreatedAtAndText(createdAt: Long, text: String): Boolean = existsResult
     override suspend fun deleteByIds(ids: List<Long>) {}
     override suspend fun updateLLMReview(id: Long, correctedText: String?, confidence: Float) {}
+    override suspend fun updateProcessingBackend(id: Long, backend: String?) {}
     override suspend fun markCompleted(id: Long, completedAt: Long) {}
     override suspend fun markDiscarded(id: Long, now: Long) {}
     override suspend fun markPending(id: Long) {}

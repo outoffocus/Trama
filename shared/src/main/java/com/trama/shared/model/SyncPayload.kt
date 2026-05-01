@@ -38,7 +38,8 @@ data class SyncEntry(
     val actionType: String = "GENERIC",
     val cleanText: String? = null,
     val dueDate: Long? = null,
-    val priority: String = "NORMAL"
+    val priority: String = "NORMAL",
+    val processingBackend: String? = null
 ) {
     fun toDiaryEntry(): DiaryEntry = DiaryEntry(
         text = text,
@@ -53,7 +54,8 @@ data class SyncEntry(
         actionType = actionType,
         cleanText = cleanText,
         dueDate = dueDate,
-        priority = priority
+        priority = priority,
+        processingBackend = processingBackend
     )
 
     companion object {
@@ -70,7 +72,8 @@ data class SyncEntry(
             actionType = entry.actionType,
             cleanText = entry.cleanText,
             dueDate = entry.dueDate,
-            priority = entry.priority
+            priority = entry.priority,
+            processingBackend = entry.processingBackend
         )
     }
 }

@@ -56,6 +56,7 @@ import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Summarize
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -150,6 +151,7 @@ fun HomeScreen(
     onSettingsClick: () -> Unit,
     onCalendarClick: () -> Unit = {},
     onChatClick: () -> Unit = {},
+    onSummaryClick: () -> Unit = {},
     onRecordingClick: (Long) -> Unit = {},
     onPlaceClick: (Long) -> Unit = {},
     onRecordingsListClick: () -> Unit = {},
@@ -159,10 +161,6 @@ fun HomeScreen(
     val scope = rememberCoroutineScope()
     val uiState by viewModel.uiState.collectAsState()
 
-    // Full sync to watch on first open — ensures watch has current statuses
-    LaunchedEffect(Unit) {
-        viewModel.syncAllToWatch()
-    }
     val serviceRunning by ServiceController.isRunning.collectAsState()
     val watchActive by ServiceController.isWatchActive.collectAsState()
     val locationRunning by ServiceController.isLocationRunning.collectAsState()
@@ -428,6 +426,7 @@ fun HomeScreen(
                     locationRunning = locationRunning,
                     onAddClick = { showAddDialog = true },
                     onChatClick = onChatClick,
+                    onSummaryClick = onSummaryClick,
                     onSettingsClick = onSettingsClick,
                 )
             }
@@ -782,6 +781,7 @@ private fun HomeHeader(
     locationRunning: Boolean,
     onAddClick: () -> Unit,
     onChatClick: () -> Unit,
+    onSummaryClick: () -> Unit,
     onSettingsClick: () -> Unit,
 ) {
     val t = LocalTramaColors.current
@@ -810,6 +810,9 @@ private fun HomeHeader(
                 }
                 IconButton(onClick = onChatClick) {
                     Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = "Asistente", tint = t.teal)
+                }
+                IconButton(onClick = onSummaryClick) {
+                    Icon(Icons.Default.Summarize, contentDescription = "Revision del dia", tint = t.amber)
                 }
                 IconButton(onClick = onSettingsClick) {
                     Icon(Icons.Default.Settings, contentDescription = "Ajustes")

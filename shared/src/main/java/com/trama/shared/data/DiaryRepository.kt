@@ -77,6 +77,9 @@ class DiaryRepository(
     suspend fun updateLLMReview(id: Long, correctedText: String?, confidence: Float) =
         dao.updateLLMReview(id, correctedText, confidence)
 
+    suspend fun updateProcessingBackend(id: Long, backend: String?) =
+        dao.updateProcessingBackend(id, backend)
+
     suspend fun markCompleted(id: Long) = dao.markCompleted(id)
 
     suspend fun markDiscarded(id: Long) = dao.markDiscarded(id)

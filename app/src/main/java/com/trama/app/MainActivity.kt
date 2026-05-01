@@ -16,6 +16,7 @@ import androidx.compose.runtime.getValue
 import com.trama.app.service.ServiceController
 import com.trama.app.ui.MainViewModel
 import com.trama.app.ui.NavGraph
+import com.trama.app.ui.Routes
 import com.trama.app.ui.theme.TramaTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
@@ -64,8 +65,14 @@ class MainActivity : ComponentActivity() {
                 2 -> true
                 else -> isSystemInDarkTheme()
             }
+            val startDestination = when (intent?.getStringExtra("navigate_to")) {
+                Routes.SUMMARY -> Routes.SUMMARY
+                Routes.CHAT -> Routes.CHAT
+                "calendar", Routes.CALENDAR -> Routes.CALENDAR
+                else -> Routes.HOME
+            }
             TramaTheme(darkTheme = darkTheme) {
-                NavGraph()
+                NavGraph(startDestination = startDestination)
             }
         }
     }

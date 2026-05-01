@@ -22,6 +22,9 @@ object NotificationConfig {
     /** Notification for daily summary results. */
     const val CHANNEL_DAILY_SUMMARY = "trama_daily_summary"
 
+    /** Notifications for screenshot-to-action processing. */
+    const val CHANNEL_SCREENSHOT = "trama_screenshot"
+
     /** Foreground notification for passive location tracking. */
     const val CHANNEL_LOCATION = "trama_location"
 
@@ -35,6 +38,9 @@ object NotificationConfig {
 
     /** Notification ID for DailySummaryWorker. */
     const val ID_DAILY_SUMMARY = 2000
+
+    /** Notification ID for screenshot processing results. */
+    const val ID_SCREENSHOT = 2100
 
     /** Foreground notification ID for location tracking. */
     const val ID_LOCATION = 3

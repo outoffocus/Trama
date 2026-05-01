@@ -74,4 +74,54 @@ class SimpleVADTest {
     fun `FALLBACK_TIMEOUT_FRAMES constant is 357`() {
         assertEquals(357, SimpleVAD.FALLBACK_TIMEOUT_FRAMES)
     }
+
+    @Test
+    fun `accumulateIfSpeaking adds nothing while silent`() {
+        vad.accumulateIfSpeaking(32L)
+        assertEquals(0L, vad.peekSpeechMs())
+    }
+
+    @Test
+    fun `accumulateIfSpeaking accrues ms once VAD is speaking`() {
+        // Push enough speech frames to flip isSpeaking=true.
+        val buffer = makeSpeechBuffer(amplitude = 1000)
+        repeat(4) { vad.processFrame(buffer, buffer.size) }
+        assertTrue(vad.isSpeaking)
+
+        vad.accumulateIfSpeaking(32L)
+        vad.accumulateIfSpeaking(32L)
+        vad.accumulateIfSpeaking(32L)
+        assertEquals(96L, vad.peekSpeechMs())
+    }
+
+    @Test
+    fun `consumeSpeechMs returns and resets accumulator atomically`() {
+        val buffer = makeSpeechBuffer(amplitude = 1000)
+        repeat(4) { vad.processFrame(buffer, buffer.size) }
+        repeat(20) { vad.accumulateIfSpeaking(32L) }
+        assertEquals(640L, vad.peekSpeechMs())
+
+        val taken = vad.consumeSpeechMs()
+        assertEquals(640L, taken)
+        assertEquals(0L, vad.peekSpeechMs())
+    }
+
+    @Test
+    fun `accumulateIfSpeaking ignores non-positive durations`() {
+        val buffer = makeSpeechBuffer(amplitude = 1000)
+        repeat(4) { vad.processFrame(buffer, buffer.size) }
+        vad.accumulateIfSpeaking(0L)
+        vad.accumulateIfSpeaking(-5L)
+        assertEquals(0L, vad.peekSpeechMs())
+    }
+
+    @Test
+    fun `reset clears speech ms accumulator`() {
+        val buffer = makeSpeechBuffer(amplitude = 1000)
+        repeat(4) { vad.processFrame(buffer, buffer.size) }
+        vad.accumulateIfSpeaking(100L)
+        assertEquals(100L, vad.peekSpeechMs())
+        vad.reset()
+        assertEquals(0L, vad.peekSpeechMs())
+    }
 }

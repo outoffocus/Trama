@@ -1,16 +1,20 @@
 package com.trama.app.summary
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.content.Context
 import android.util.Log
+import com.google.mediapipe.framework.image.BitmapImageBuilder
+import com.google.mediapipe.tasks.genai.llminference.GraphOptions
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import com.google.mediapipe.tasks.genai.llminference.LlmInferenceSession
+import java.io.ByteArrayOutputStream
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import java.io.File
-
 /**
  * Unified local model client. Supports two runtimes:
  *
@@ -26,6 +30,11 @@ object GemmaClient {
     private const val TAG = "GemmaClient"
     const val DEFAULT_FILENAME = "gemma3-1b-it-int4.task"
     private const val GENERATION_TIMEOUT_MS = 30_000L
+    // Vision inference needs more time: cold model load (~20s for E4B) + image encoding + inference.
+    private const val MULTIMODAL_TIMEOUT_MS = 120_000L
+    // Max side before PNG-encoding for multimodal. Gemma 3n supports 256/512/768 natively;
+    // Google AI Edge Gallery caps at 1024 as pre-processing guard before the model rescales.
+    private const val MULTIMODAL_MAX_SIDE_PX = 1024
 
     // ── Active runtime (only one at a time) ──
     private var mediaPipeInference: LlmInference? = null
@@ -62,6 +71,9 @@ object GemmaClient {
 
     fun getModelFile(context: Context): File =
         File(context.filesDir, getModelFilename(context))
+
+    fun isLiteRtModel(context: Context): Boolean =
+        getModelFile(context).extension.equals("litertlm", ignoreCase = true)
 
     // ── Loading ──
 
@@ -100,6 +112,8 @@ object GemmaClient {
         val config = com.google.ai.edge.litertlm.EngineConfig(
             modelPath = modelPath,
             backend = com.google.ai.edge.litertlm.Backend.CPU(),
+            visionBackend = com.google.ai.edge.litertlm.Backend.GPU(),
+            audioBackend = null,
             maxNumTokens = 4096, // keep very conservative; large values trigger SIGSEGV even at 8192
             cacheDir = context.cacheDir.absolutePath
         )
@@ -153,6 +167,74 @@ object GemmaClient {
         }
     }
 
+    suspend fun generateMultimodal(
+        context: Context,
+        prompt: String,
+        images: List<Bitmap>,
+        maxTokens: Int = 1024,
+        responsePrefix: String? = null,
+        systemInstruction: String? = null
+    ): String? {
+        if (!isModelDownloaded(context) || images.isEmpty()) return null
+
+        return mutex.withLock {
+            withContext(Dispatchers.IO) {
+                try {
+                    val response = withTimeout(MULTIMODAL_TIMEOUT_MS) {
+                        ensureLoaded(context)
+
+                        if (litertEngine != null) {
+                            generateLiteRtLmMultimodal(prompt, images, systemInstruction)
+                        } else {
+                            generateMediaPipeMultimodal(prompt, images, responsePrefix, systemInstruction)
+                        }
+                    }
+
+                    Log.d(TAG, "Generated multimodal ${response?.length ?: 0} chars")
+                    response?.trim()
+                } catch (e: Throwable) {
+                    Log.w(TAG, "Multimodal generation failed: ${e.javaClass.simpleName}: ${e.message}")
+                    releaseInternal()
+                    null
+                }
+            }
+        }
+    }
+
+    suspend fun generateMultimodalFromFiles(
+        context: Context,
+        prompt: String,
+        imageFiles: List<File>,
+        maxTokens: Int = 1024,
+        responsePrefix: String? = null,
+        systemInstruction: String? = null
+    ): String? {
+        if (!isModelDownloaded(context) || imageFiles.isEmpty()) return null
+
+        return mutex.withLock {
+            withContext(Dispatchers.IO) {
+                try {
+                    val response = withTimeout(MULTIMODAL_TIMEOUT_MS) {
+                        ensureLoaded(context)
+
+                        if (litertEngine != null) {
+                            generateLiteRtLmMultimodalFromFiles(prompt, imageFiles, systemInstruction)
+                        } else {
+                            null
+                        }
+                    }
+
+                    Log.d(TAG, "Generated file multimodal ${response?.length ?: 0} chars")
+                    response?.trim()
+                } catch (e: Throwable) {
+                    Log.w(TAG, "File multimodal generation failed: ${e.javaClass.simpleName}: ${e.message}")
+                    releaseInternal()
+                    null
+                }
+            }
+        }
+    }
+
     private fun generateMediaPipe(
         prompt: String,
         responsePrefix: String?,
@@ -165,6 +247,35 @@ object GemmaClient {
         val session = LlmInferenceSession.createFromOptions(mediaPipeInference!!, sessionOptions)
         val formattedPrompt = formatMediaPipePrompt(prompt, responsePrefix, systemInstruction)
         session.addQueryChunk(formattedPrompt)
+        val response = session.generateResponse()
+        session.close()
+
+        return if (responsePrefix != null) {
+            responsePrefix + (response ?: "")
+        } else {
+            response
+        }
+    }
+
+    private fun generateMediaPipeMultimodal(
+        prompt: String,
+        images: List<Bitmap>,
+        responsePrefix: String?,
+        systemInstruction: String?
+    ): String? {
+        val sessionOptions = LlmInferenceSession.LlmInferenceSessionOptions.builder()
+            .setTemperature(0.2f)
+            .setTopK(10)
+            .setGraphOptions(GraphOptions.builder().setEnableVisionModality(true).build())
+            .build()
+        val session = LlmInferenceSession.createFromOptions(mediaPipeInference!!, sessionOptions)
+        val formattedPrompt = formatMediaPipePrompt(prompt, responsePrefix, systemInstruction)
+        session.addQueryChunk(formattedPrompt)
+        images.forEach { bitmap ->
+            BitmapImageBuilder(bitmap).build().use { mpImage ->
+                session.addImage(mpImage)
+            }
+        }
         val response = session.generateResponse()
         session.close()
 
@@ -219,6 +330,96 @@ object GemmaClient {
         // and the model may still wrap in code fences. Caller uses JsonRepair.extractAndRepair.
         return message.toString()
     }
+
+    private fun generateLiteRtLmMultimodal(
+        prompt: String,
+        images: List<Bitmap>,
+        systemInstruction: String?
+    ): String? = generateLiteRtLmMultimodalContents(prompt, images, systemInstruction)
+
+    private fun generateLiteRtLmMultimodalFromFiles(
+        prompt: String,
+        imageFiles: List<File>,
+        systemInstruction: String?
+    ): String? {
+        val bitmaps = imageFiles.mapNotNull { decodeScaled(it.absolutePath, MULTIMODAL_MAX_SIDE_PX) }
+        if (bitmaps.isEmpty()) return null
+        return try {
+            generateLiteRtLmMultimodalContents(prompt, bitmaps, systemInstruction)
+        } finally {
+            bitmaps.forEach { it.recycle() }
+        }
+    }
+
+    // Decode image file downsampled to at most maxSide px on the longest side.
+    // Gemma 3n natively handles 256/512/768 — the Gallery caps input at 1024 before the model rescales.
+    private fun decodeScaled(path: String, maxSide: Int): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(path, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+        var sampleSize = 1
+        while (bounds.outWidth / sampleSize > maxSide * 2 || bounds.outHeight / sampleSize > maxSide * 2) {
+            sampleSize *= 2
+        }
+        val opts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+        val decoded = BitmapFactory.decodeFile(path, opts) ?: return null
+
+        val longest = maxOf(decoded.width, decoded.height)
+        if (longest <= maxSide) return decoded
+
+        val scale = maxSide.toFloat() / longest
+        val scaled = Bitmap.createScaledBitmap(
+            decoded,
+            (decoded.width * scale).toInt().coerceAtLeast(1),
+            (decoded.height * scale).toInt().coerceAtLeast(1),
+            true
+        )
+        decoded.recycle()
+        return scaled
+    }
+
+    private fun generateLiteRtLmMultimodalContents(
+        prompt: String,
+        images: List<Bitmap>,
+        systemInstruction: String?
+    ): String? {
+        val engine = litertEngine!!
+        val samplerConfig = com.google.ai.edge.litertlm.SamplerConfig(
+            topK = 10,
+            topP = 0.9,
+            temperature = 0.1,
+            seed = 0
+        )
+        val conversationConfig = com.google.ai.edge.litertlm.ConversationConfig(
+            systemInstruction = com.google.ai.edge.litertlm.Contents.of(
+                "Responde solo con JSON valido. Sin markdown ni explicaciones."
+            ),
+            samplerConfig = samplerConfig
+        )
+        val conversation = engine.createConversation(conversationConfig)
+        val fullPrompt = if (!systemInstruction.isNullOrBlank()) {
+            "[CONTEXTO]\n$systemInstruction\n[FIN_CONTEXTO]\n\n$prompt"
+        } else {
+            prompt
+        }
+        val parts = mutableListOf<com.google.ai.edge.litertlm.Content>()
+        images.forEach { image ->
+            parts += com.google.ai.edge.litertlm.Content.ImageBytes(image.toPngByteArray())
+        }
+        // AI Edge Gallery appends text after image/audio for accurate last-token handling.
+        parts += com.google.ai.edge.litertlm.Content.Text(fullPrompt)
+
+        val message = conversation.sendMessage(com.google.ai.edge.litertlm.Contents.of(parts))
+        conversation.close()
+        return message.toString()
+    }
+
+    private fun Bitmap.toPngByteArray(): ByteArray =
+        ByteArrayOutputStream().use { stream ->
+            compress(Bitmap.CompressFormat.PNG, 100, stream)
+            stream.toByteArray()
+        }
 
     private fun formatMediaPipePrompt(
         prompt: String,

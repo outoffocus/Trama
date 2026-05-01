@@ -48,6 +48,7 @@ object BackupManager {
         val dueDate: Long? = null,
         val completedAt: Long? = null,
         val priority: String? = null,
+        val processingBackend: String? = null,
         val isManual: Boolean = false
     )
 
@@ -155,6 +156,7 @@ object BackupManager {
         dueDate = dueDate,
         completedAt = completedAt,
         priority = priority,
+        processingBackend = processingBackend,
         isManual = isManual
     )
 
@@ -203,6 +205,7 @@ object BackupManager {
         dueDate = dueDate,
         completedAt = completedAt,
         priority = priority ?: com.trama.shared.model.EntryPriority.NORMAL,
+        processingBackend = processingBackend,
         isManual = isManual
     )
 }

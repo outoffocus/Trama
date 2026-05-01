@@ -36,7 +36,8 @@ object DatabaseProvider {
                     DiaryDatabase.MIGRATION_8_9,
                     DiaryDatabase.MIGRATION_9_10,
                     DiaryDatabase.MIGRATION_10_11,
-                    DiaryDatabase.MIGRATION_11_12
+                    DiaryDatabase.MIGRATION_11_12,
+                    DiaryDatabase.MIGRATION_12_13
                 )
                 .fallbackToDestructiveMigration(dropAllTables = true)
                 .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
