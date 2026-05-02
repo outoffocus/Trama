@@ -27,6 +27,7 @@ class SettingsViewModel @Inject constructor(
     val speakerVerificationManager = SherpaSpeakerVerificationManager(appContext)
 
     val autoStart = settingsStore.autoStart
+    val recordingDuration = settingsStore.recordingDuration
     val summaryEnabled = settingsStore.summaryEnabled
     val summaryHour = settingsStore.summaryHour
     val visibleCalendarIds = settingsStore.visibleCalendarIds
@@ -71,6 +72,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     suspend fun setAutoStart(enabled: Boolean) = settingsStore.setAutoStart(enabled)
+    suspend fun setRecordingDuration(minutes: Int) = settingsStore.setRecordingDuration(minutes)
     suspend fun setSummaryEnabled(enabled: Boolean) = settingsStore.setSummaryEnabled(enabled)
     suspend fun setSummaryHour(hour: Int) = settingsStore.setSummaryHour(hour)
     suspend fun setVisibleCalendarIds(ids: Set<Long>) = settingsStore.setVisibleCalendarIds(ids)

@@ -53,12 +53,13 @@ class SettingsDataStore(private val context: Context) {
         val TIMELINE_COLOR_CALENDAR = intPreferencesKey("timeline_color_calendar")
         val VISIBLE_CALENDAR_IDS = stringPreferencesKey("visible_calendar_ids")
         val THEME_MODE = intPreferencesKey("theme_mode") // 0=system, 1=light, 2=dark
+        const val DEFAULT_THEME_MODE = 2
         val SHOW_OLD_ENTRIES_EXPANDED = booleanPreferencesKey("show_old_entries_expanded")
-        const val DEFAULT_DURATION = 30
+        const val DEFAULT_DURATION = 60  // Manual recording limit in MINUTES (not for continuous listening)
         const val DEFAULT_SUMMARY_HOUR = 21
         const val DEFAULT_BACKUP_HOUR = 3  // 3:00 AM
-        const val DEFAULT_CONTEXT_PRE_ROLL = 2
-        const val DEFAULT_CONTEXT_POST_ROLL = 8
+        const val DEFAULT_CONTEXT_PRE_ROLL = 2  // Continuous listening pre-roll in SECONDS
+        const val DEFAULT_CONTEXT_POST_ROLL = 8  // Continuous listening post-roll in SECONDS
         const val GATE_ENGINE_VOSK = "vosk"
         const val DEFAULT_LOCATION_INTERVAL_MINUTES = 5
         const val DEFAULT_LOCATION_DWELL_MINUTES = 15
@@ -223,7 +224,7 @@ class SettingsDataStore(private val context: Context) {
     }
 
     val themeMode: Flow<Int> = context.dataStore.data.map { prefs ->
-        prefs[THEME_MODE] ?: 0
+        prefs[THEME_MODE] ?: DEFAULT_THEME_MODE
     }
 
     val showOldEntriesExpanded: Flow<Boolean> = context.dataStore.data.map { prefs ->

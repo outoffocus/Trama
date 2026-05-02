@@ -141,6 +141,9 @@ fun SettingsScreen(
 
     // Settings state
     val autoStart by settings.autoStart.collectAsState(initial = false)
+    val recordingDuration by settings.recordingDuration.collectAsState(
+        initial = SettingsDataStore.DEFAULT_DURATION
+    )
     val summaryEnabled by settings.summaryEnabled.collectAsState(initial = true)
     val summaryHour by settings.summaryHour.collectAsState(initial = SettingsDataStore.DEFAULT_SUMMARY_HOUR)
     val visibleCalendarIds by settings.visibleCalendarIds.collectAsState(initial = null)
@@ -205,7 +208,7 @@ fun SettingsScreen(
     val timelineCalendarColorIndex by settings.timelineColorCalendar.collectAsState(
         initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_CALENDAR
     )
-    val themeMode by settings.themeMode.collectAsState(initial = 0)
+    val themeMode by settings.themeMode.collectAsState(initial = SettingsDataStore.DEFAULT_THEME_MODE)
     val showOldEntriesExpanded by settings.showOldEntriesExpanded.collectAsState(initial = false)
     val locationDebugStatus by LocationDebugState.status.collectAsState()
     val locationDebugLastSample by LocationDebugState.lastSample.collectAsState()
@@ -592,6 +595,40 @@ fun SettingsScreen(
                         "Vosk hace de filtro ligero y, si detecta una frase relevante, Whisper transcribe la captura completa. Estos dos controles solo ajustan cuánto contexto se conserva antes y después.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Límite de grabación manual",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            "${recordingDuration} min",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Slider(
+                        value = recordingDuration.toFloat(),
+                        onValueChange = {
+                            scope.launch { settings.setRecordingDuration(it.roundToInt()) }
+                        },
+                        valueRange = 5f..120f,
+                        steps = 114,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Text(
+                        "Máximo de grabación cuando presionas el botón de grabar. No afecta la escucha continua.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp)
                     )
 
                     Spacer(modifier = Modifier.height(14.dp))

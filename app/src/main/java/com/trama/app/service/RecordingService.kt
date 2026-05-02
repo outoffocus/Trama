@@ -23,6 +23,7 @@ import com.trama.shared.model.Source
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -40,12 +41,12 @@ class RecordingService : LifecycleService() {
         private const val NOTIFICATION_ID = NotificationConfig.ID_RECORDING
         const val ACTION_START = "com.trama.RECORD_START"
         const val ACTION_STOP = "com.trama.RECORD_STOP"
-        private const val MAX_RECORDING_DURATION_MS = 2L * 60L * 60L * 1000L
     }
 
     private var fullText = ""
     private var currentPartial = ""
     private var startTimeMs = 0L
+    private var maxRecordingDurationMs = 60L * 60L * 1000L  // Default 60 minutes, loaded from settings
     private var capture: OfflineDictationCapture? = null
     private var captureJob: Job? = null
     private var timerJob: Job? = null
@@ -60,6 +61,14 @@ class RecordingService : LifecycleService() {
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
         } else {
             startForeground(NOTIFICATION_ID, buildNotification(0))
+        }
+
+        // Load recording duration setting (in minutes)
+        lifecycleScope.launch(Dispatchers.IO) {
+            val settings = com.trama.app.ui.SettingsDataStore(applicationContext)
+            val durationMinutes = settings.recordingDuration.first()
+            maxRecordingDurationMs = durationMinutes * 60L * 1000L
+            Log.i(TAG, "Loaded manual recording duration limit: ${durationMinutes} minutes (${maxRecordingDurationMs}ms)")
         }
     }
 
@@ -116,7 +125,7 @@ class RecordingService : LifecycleService() {
         val activeCapture = OfflineDictationCapture()
         capture = activeCapture
         captureJob = lifecycleScope.launch(Dispatchers.IO) {
-            val window = activeCapture.capture(maxDurationMs = MAX_RECORDING_DURATION_MS)
+            val window = activeCapture.capture(maxDurationMs = maxRecordingDurationMs)
             if (isActive) {
                 Log.i(TAG, "Recording reached max duration; stopping")
                 isActive = false

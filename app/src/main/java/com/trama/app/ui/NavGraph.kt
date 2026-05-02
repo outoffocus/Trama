@@ -16,7 +16,6 @@ import com.trama.app.ui.screens.RecordingsListScreen
 import com.trama.app.ui.screens.SearchScreen
 import com.trama.app.ui.screens.SettingsSection
 import com.trama.app.ui.screens.SettingsScreen
-import com.trama.app.ui.screens.SummaryScreen
 
 object Routes {
     const val HOME = "home"
@@ -26,7 +25,6 @@ object Routes {
     const val SEARCH = "search"
     const val CALENDAR = "calendar?selectedDayStart={selectedDayStart}"
     const val CHAT = "chat"
-    const val SUMMARY = "summary"
     const val RECORDINGS_LIST = "recordings"
     const val RECORDING_DETAIL = "recording/{recordingId}"
     const val PLACE_DETAIL = "place/{placeId}"
@@ -55,35 +53,18 @@ fun NavGraph(startDestination: String) {
             HomeScreen(
                 onEntryClick = { entryId -> navController.navigate(Routes.detail(entryId)) },
                 onSettingsClick = { navController.navigate(Routes.SETTINGS) },
-                onCalendarClick = { navController.navigate(Routes.calendar()) },
+                onCalendarClick = { navController.navigate(Routes.CALENDAR) },
                 onChatClick = { navController.navigate(Routes.CHAT) },
-                onSummaryClick = { navController.navigate(Routes.SUMMARY) },
                 onRecordingClick = { recordingId ->
                     navController.navigate(Routes.recordingDetail(recordingId))
                 },
                 onPlaceClick = { placeId -> navController.navigate(Routes.placeDetail(placeId)) },
-                onRecordingsListClick = {
-                    navController.navigate(Routes.RECORDINGS_LIST)
-                }
+                onRecordingsListClick = { navController.navigate(Routes.RECORDINGS_LIST) }
             )
         }
 
         composable(Routes.CHAT) {
             ChatScreen(onBack = { navController.popBackStack() })
-        }
-
-        composable(Routes.SUMMARY) {
-            SummaryScreen(
-                onBack = {
-                    if (!navController.popBackStack()) {
-                        navController.navigate(Routes.HOME) {
-                            popUpTo(Routes.SUMMARY) { inclusive = true }
-                        }
-                    }
-                },
-                onEntryClick = { entryId -> navController.navigate(Routes.detail(entryId)) },
-                onPlaceClick = { placeId -> navController.navigate(Routes.placeDetail(placeId)) }
-            )
         }
 
         composable(
