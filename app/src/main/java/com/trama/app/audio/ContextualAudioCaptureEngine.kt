@@ -59,7 +59,7 @@ class ContextualAudioCaptureEngine(
         // suspend periodic gate evals: only the final eval at finalize time runs.
         // This is the dominant cost saver in continuous-speech environments where
         // the energy-based VAD pre-filter cannot help.
-        private const val AMBIENT_BACKOFF_THRESHOLD = 3
+        private const val AMBIENT_BACKOFF_THRESHOLD = 1
     }
 
     private data class ActiveCapture(
@@ -71,6 +71,7 @@ class ContextualAudioCaptureEngine(
         var lastGateTranscript: String = "",
         var firstTriggerAtSample: Int = -1,
         var lastGateCheckSample: Int = 0,
+        var lastGateEvalCoveredSample: Int = 0,
         var gateJob: Job? = null,
         var postRollRemainingSamples: Int = -1,
         var capturedSamples: Int = 0,
@@ -144,13 +145,23 @@ class ContextualAudioCaptureEngine(
 
         fun launchGateEval(capture: ActiveCapture, isFinal: Boolean) {
             if (capture.gateJob?.isActive == true) return
+            val coveredThroughSample = capture.capturedSamples
             val snapshot = capture.assembler.finalizeWindow(capture.preRollWindow)
             capture.gateJob = scope.launch(Dispatchers.IO) {
                 try {
-                    val eval = evaluateGateWindows(snapshot, isFinal = isFinal, config = capture.config)
+                    val eval = evaluateGateWindows(
+                        snapshot,
+                        isFinal = isFinal,
+                        config = capture.config,
+                        includeFullWindow = isFinal
+                    )
                     onGateEvaluated?.invoke(eval.bestTranscript, eval.matched, eval.debugSummary)
                     capture.lastGateTranscript = eval.bestTranscript
                     if (!isFinal) {
+                        capture.lastGateEvalCoveredSample = maxOf(
+                            capture.lastGateEvalCoveredSample,
+                            coveredThroughSample
+                        )
                         if (eval.bestTranscript.isBlank()) {
                             capture.consecutiveEmptyGateEvals += 1
                         } else {
@@ -229,11 +240,32 @@ class ContextualAudioCaptureEngine(
             )
 
             if (gateAsr.isAvailable) {
-                // Cancel any in-flight periodic gate job and run a final eval
+                if (capture.triggerMatched) {
+                    consecutiveCapsWithoutMatch = 0
+                    onStatusChanged?.invoke("trigger_detected")
+                    onWindowCaptured?.invoke(finalWindow, "trigger")
+                    onStatusChanged?.invoke("rearmed")
+                    onStatusChanged?.invoke("listening")
+                    return
+                }
+
+                // Cancel any in-flight periodic gate job and run a final eval.
+                // If periodic gate windows already covered the segment up to the
+                // final tail, avoid re-transcribing the full capture at close.
                 capture.gateJob?.cancel()
+                val finalTailMs = shortestGateTailMs(capture.config)
+                val finalTailSamples = ((finalTailMs * capture.config.sampleRateHz) / 1000L).toInt()
+                val periodicCoverageReachesFinalTail =
+                    capture.lastGateEvalCoveredSample > 0 &&
+                        capture.capturedSamples - capture.lastGateEvalCoveredSample <= finalTailSamples
                 scope.launch(Dispatchers.IO) {
                     try {
-                        val eval = evaluateGateWindows(finalWindow, isFinal = true, config = capture.config)
+                        val eval = evaluateGateWindows(
+                            finalWindow,
+                            isFinal = true,
+                            config = capture.config,
+                            includeFullWindow = !periodicCoverageReachesFinalTail
+                        )
                         onGateEvaluated?.invoke(eval.bestTranscript, eval.matched, eval.debugSummary)
                         if (eval.matched || capture.triggerMatched) {
                             consecutiveCapsWithoutMatch = 0
@@ -443,22 +475,19 @@ class ContextualAudioCaptureEngine(
     private suspend fun evaluateGateWindows(
         window: CapturedAudioWindow,
         isFinal: Boolean,
-        config: ContextualCaptureConfig
+        config: ContextualCaptureConfig,
+        includeFullWindow: Boolean = isFinal
     ): GateEvaluation {
         val candidateWindows = if (isFinal) {
             config.gateEvalWindowsMs
                 .filter { it > 0L }
                 .map(window::tailWindow)
-                .plus(window)
+                .let { tails -> if (includeFullWindow) tails.plus(window) else tails }
                 .distinctBy { it.durationMs() }
         } else {
             // Periodic gate eval runs every ~2.5s of speech: a single shortest tail
             // is enough to detect trigger words and keeps ASR cost ~3x lower.
-            val shortestTail = config.gateEvalWindowsMs
-                .filter { it > 0L }
-                .minOrNull()
-                ?: 3_000L
-            listOf(window.tailWindow(shortestTail))
+            listOf(window.tailWindow(shortestGateTailMs(config)))
         }
 
         val debugParts = mutableListOf<String>()
@@ -474,7 +503,8 @@ class ContextualAudioCaptureEngine(
             }
 
             val matched = transcript.isNotBlank() && triggerDetector(transcript)
-            debugParts += "${if (isFinal) "full" else "tail"}(${candidate.durationMs()}ms): '${transcript.ifBlank { "-" }}'${if (matched) " [MATCH]" else ""}"
+            val label = if (candidate.durationMs() >= window.durationMs()) "full" else "tail"
+            debugParts += "$label(${candidate.durationMs()}ms): '${transcript.ifBlank { "-" }}'${if (matched) " [MATCH]" else ""}"
             if (matched) {
                 return GateEvaluation(
                     matched = true,
@@ -489,6 +519,13 @@ class ContextualAudioCaptureEngine(
             bestTranscript = bestTranscript,
             debugSummary = debugParts.joinToString(" | ")
         )
+    }
+
+    private fun shortestGateTailMs(config: ContextualCaptureConfig): Long {
+        return config.gateEvalWindowsMs
+            .filter { it > 0L }
+            .minOrNull()
+            ?: 3_000L
     }
 
     private fun adaptiveSilenceStopMs(capture: ActiveCapture): Long {

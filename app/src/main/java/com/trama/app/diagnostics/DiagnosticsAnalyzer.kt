@@ -13,6 +13,7 @@ object DiagnosticsAnalyzer {
         val funnel: Funnel,
         val quality: Quality,
         val latency: Latency,
+        val power: Power,
         val engines: List<CountStat>,
         val rejectReasons: List<CountStat>,
         val qualityBuckets: List<CountStat>,
@@ -72,6 +73,16 @@ object DiagnosticsAnalyzer {
     )
 
     @Serializable
+    data class Power(
+        val avgBatteryTempC: Float?,
+        val maxBatteryTempC: Float?,
+        val thermalStatusCounts: List<CountStat>,
+        val worstThermalStatus: String?,
+        val observedBatteryDropPct: Int?,
+        val observedBatteryDropPerHourPct: Float?
+    )
+
+    @Serializable
     data class CountStat(
         val value: String,
         val count: Int
@@ -100,6 +111,7 @@ object DiagnosticsAnalyzer {
         val windowMs = events
             .filter { it.gate == "ASR_FINAL" && it.result == "OK" }
             .mapNotNull { it.meta["windowMs"]?.toLongOrNull() }
+        val power = buildPower(events)
 
         val llmTotal = funnel.llmAccepted + funnel.llmRejected
         val speakerTotal = funnel.speakerAccepted + funnel.speakerRejected
@@ -170,6 +182,7 @@ object DiagnosticsAnalyzer {
                 avgWindowMs = windowMs.averageOrNull(),
                 p95WindowMs = windowMs.percentile95OrNull()
             ),
+            power = power,
             engines = topCounts(
                 events.mapNotNull { it.meta["engine"] }
                     .map { it.substringAfter("->").trim().ifBlank { it } }
@@ -218,6 +231,58 @@ object DiagnosticsAnalyzer {
         )
 
         return analysis.copy(recommendations = recommendations(analysis))
+    }
+
+    private fun buildPower(events: List<CaptureLog.Event>): Power {
+        val temps = events.mapNotNull { it.meta["batteryTempC"]?.toFloatOrNull() }
+        val heartbeats = events
+            .filter { it.gate == "SERVICE" && it.text == "heartbeat" }
+            .mapNotNull { event ->
+                event.meta["batteryPct"]?.toIntOrNull()?.let { pct -> event.ts to pct }
+            }
+            .sortedBy { it.first }
+        val dischargeSamples = mutableListOf<Pair<Long, Int>>()
+        var bestDrop: Pair<Int, Float>? = null
+        fun finishDischargeSession() {
+            if (dischargeSamples.size < 2) return
+            val first = dischargeSamples.first()
+            val last = dischargeSamples.last()
+            val drop = first.second - last.second
+            val hours = (last.first - first.first) / 3_600_000f
+            if (drop > 0 && hours > 0f && (bestDrop == null || drop > bestDrop!!.first)) {
+                bestDrop = drop to (drop / hours)
+            }
+        }
+        for ((ts, pct) in heartbeats) {
+            val previous = dischargeSamples.lastOrNull()
+            if (previous == null || pct <= previous.second) {
+                dischargeSamples += ts to pct
+            } else {
+                finishDischargeSession()
+                dischargeSamples.clear()
+                dischargeSamples += ts to pct
+            }
+        }
+        finishDischargeSession()
+        val thermalCounts = topCounts(
+            events.mapNotNull { it.meta["thermalStatusLabel"] ?: it.meta["thermalStatus"] }
+        )
+        val worstThermal = events
+            .mapNotNull { event ->
+                val numeric = event.meta["thermalStatus"]?.toIntOrNull()
+                val label = event.meta["thermalStatusLabel"]
+                numeric?.let { it to (label ?: it.toString()) }
+            }
+            .maxByOrNull { it.first }
+            ?.second
+        return Power(
+            avgBatteryTempC = temps.averageFloatOrNull(),
+            maxBatteryTempC = temps.maxOrNull(),
+            thermalStatusCounts = thermalCounts,
+            worstThermalStatus = worstThermal,
+            observedBatteryDropPct = bestDrop?.first,
+            observedBatteryDropPerHourPct = bestDrop?.second
+        )
     }
 
     private fun buildFunnel(events: List<CaptureLog.Event>): Funnel =
@@ -317,6 +382,14 @@ object DiagnosticsAnalyzer {
         if (analysis.latency.p95DecodeMs != null && analysis.latency.p95DecodeMs > 8_000L) {
             add("ASR lento en p95: considerar modelo Whisper menor, menos ventana de audio o descarga de modelo por SoC.")
         }
+        if (analysis.power.maxBatteryTempC != null && analysis.power.maxBatteryTempC >= 40f) {
+            add("Temperatura de batería alta durante la escucha: correlacionar batteryTempC/thermalStatus con ASR_FINAL y ASR_GATE para localizar picos de CPU.")
+        }
+        if (analysis.power.worstThermalStatus != null &&
+            analysis.power.worstThermalStatus !in setOf("none", "0")
+        ) {
+            add("Android reportó presión térmica: revisar analysis.power.thermalStatusCounts y reducir ventanas/modelo si coincide con decodes largos.")
+        }
         if (analysis.quality.fallbackEvents > 0) {
             add("Hay eventos de fallback: separar métricas de SpeechRecognizer frente a ASR local para saber si la promesa local-first se está cumpliendo.")
         }
@@ -375,6 +448,9 @@ object DiagnosticsAnalyzer {
 
     private fun List<Long>.averageOrNull(): Long? =
         if (isEmpty()) null else average().roundToInt().toLong()
+
+    private fun List<Float>.averageFloatOrNull(): Float? =
+        if (isEmpty()) null else average().toFloat()
 
     private fun List<Long>.percentile95OrNull(): Long? {
         if (isEmpty()) return null

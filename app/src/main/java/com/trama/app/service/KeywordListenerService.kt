@@ -45,6 +45,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
+import java.util.Locale
 
 /**
  * Continuous local speech listening service.
@@ -118,6 +119,10 @@ class KeywordListenerService : LifecycleService() {
     @Volatile
     private var charging = false
     @Volatile
+    private var batteryTempC: Float? = null
+    @Volatile
+    private var batteryVoltageMv: Int? = null
+    @Volatile
     private var mediaPlaybackActive = false
     @Volatile
     private var lastBlockedUncertainGateFallbackLogAt = 0L
@@ -162,12 +167,7 @@ class KeywordListenerService : LifecycleService() {
             when (intent?.action) {
                 Intent.ACTION_BATTERY_LOW,
                 Intent.ACTION_BATTERY_CHANGED -> {
-                    val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
-                    val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1).coerceAtLeast(1)
-                    if (level >= 0) {
-                        batteryPct = (level * 100) / scale
-                    }
-                    charging = intent.isCharging()
+                    updateBatterySnapshot(intent)
 
                     if (batteryPct >= BATTERY_THRESHOLD) {
                         batteryLowNoticeShown = false
@@ -299,12 +299,7 @@ class KeywordListenerService : LifecycleService() {
         registerReceiver(batteryReceiver, filter)
 
         val sticky = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        val level = sticky?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
-        val scale = sticky?.getIntExtra(BatteryManager.EXTRA_SCALE, -1)?.coerceAtLeast(1) ?: 1
-        if (level >= 0) {
-            batteryPct = (level * 100) / scale
-        }
-        charging = sticky?.isCharging() == true
+        updateBatterySnapshot(sticky)
     }
 
     private suspend fun loadInitialSettings() {
@@ -547,7 +542,7 @@ class KeywordListenerService : LifecycleService() {
                     meta = mapOf(
                         "summary" to debugSummary,
                         "reason" to reason
-                    )
+                    ) + powerSnapshot()
                 )
                 publishAsrDebug(
                     status = if (matched) "trigger detectado" else "esperando trigger",
@@ -594,7 +589,7 @@ class KeywordListenerService : LifecycleService() {
                             meta = mapOf(
                                 "source" to source,
                                 "windowMs" to window.durationMs()
-                            )
+                            ) + powerSnapshot()
                         )
                         publishAsrDebug(status = "audio externo ignorado", triggerReason = "media_playback")
                         return@launch
@@ -622,7 +617,7 @@ class KeywordListenerService : LifecycleService() {
                                 "windowMs" to window.durationMs(),
                                 "decodeMs" to elapsedMs,
                                 "source" to source
-                            )
+                            ) + powerSnapshot()
                         )
                         val speakerWindow = window
                             .copy(preRollPcm = shortArrayOf())
@@ -779,12 +774,12 @@ class KeywordListenerService : LifecycleService() {
                 gate = CaptureLog.Gate.ASR_GATE,
                 result = CaptureLog.Result.NO_MATCH,
                 text = "media_playback_gate_blocked",
-                meta = mapOf(
-                    "windowMs" to windowMs,
-                    "isFinal" to isFinal,
-                    "summary" to debugSummary
-                )
-            )
+            meta = mapOf(
+                "windowMs" to windowMs,
+                "isFinal" to isFinal,
+                "summary" to debugSummary
+            ) + powerSnapshot()
+        )
             return false
         }
         val now = System.currentTimeMillis()
@@ -814,7 +809,7 @@ class KeywordListenerService : LifecycleService() {
                     "charging" to charging,
                     "cooldownMs" to decision.cooldownMs,
                     "summary" to debugSummary
-                )
+                ) + powerSnapshot()
             )
             publishAsrDebug(
                 status = "verificando frase",
@@ -856,7 +851,7 @@ class KeywordListenerService : LifecycleService() {
                 "charging" to charging,
                 "cooldownMs" to cooldownMs,
                 "summary" to debugSummary
-            )
+            ) + powerSnapshot()
         )
     }
 
@@ -1044,9 +1039,60 @@ class KeywordListenerService : LifecycleService() {
                 "screenOff" to screenOff,
                 "contextualJobActive" to (contextualCaptureJob?.isActive == true),
                 "batteryPct" to batteryPct,
+                "charging" to charging,
                 "dedicatedAsrFailedOver" to dedicatedAsrFailedOver
-            ) + meta
+            ) + powerSnapshot() + meta
         )
+    }
+
+    private fun updateBatterySnapshot(intent: Intent?) {
+        if (intent == null) return
+        val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+        val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1).coerceAtLeast(1)
+        if (level >= 0) {
+            batteryPct = (level * 100) / scale
+        }
+        charging = intent.isCharging()
+        val tempTenthsC = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
+        batteryTempC = tempTenthsC
+            .takeIf { it != Int.MIN_VALUE }
+            ?.let { it / 10f }
+        batteryVoltageMv = intent.getIntExtra(BatteryManager.EXTRA_VOLTAGE, Int.MIN_VALUE)
+            .takeIf { it != Int.MIN_VALUE && it > 0 }
+    }
+
+    private fun powerSnapshot(): Map<String, Any?> {
+        val thermalStatus = currentThermalStatus()
+        return mapOf(
+            "batteryPct" to batteryPct,
+            "charging" to charging,
+            "batteryTempC" to batteryTempC?.let { String.format(Locale.US, "%.1f", it) },
+            "batteryVoltageMv" to batteryVoltageMv,
+            "thermalStatus" to thermalStatus,
+            "thermalStatusLabel" to thermalStatusLabel(thermalStatus)
+        )
+    }
+
+    private fun currentThermalStatus(): Int? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+        return runCatching {
+            getSystemService(PowerManager::class.java).currentThermalStatus
+        }.getOrNull()
+    }
+
+    private fun thermalStatusLabel(status: Int?): String? {
+        if (status == null) return null
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+        return when (status) {
+            PowerManager.THERMAL_STATUS_NONE -> "none"
+            PowerManager.THERMAL_STATUS_LIGHT -> "light"
+            PowerManager.THERMAL_STATUS_MODERATE -> "moderate"
+            PowerManager.THERMAL_STATUS_SEVERE -> "severe"
+            PowerManager.THERMAL_STATUS_CRITICAL -> "critical"
+            PowerManager.THERMAL_STATUS_EMERGENCY -> "emergency"
+            PowerManager.THERMAL_STATUS_SHUTDOWN -> "shutdown"
+            else -> "unknown"
+        }
     }
 
     private fun isBatteryLow(): Boolean {
