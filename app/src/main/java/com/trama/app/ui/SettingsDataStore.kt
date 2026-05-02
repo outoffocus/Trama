@@ -57,7 +57,7 @@ class SettingsDataStore(private val context: Context) {
         const val DEFAULT_DURATION = 30
         const val DEFAULT_SUMMARY_HOUR = 21
         const val DEFAULT_BACKUP_HOUR = 3  // 3:00 AM
-        const val DEFAULT_CONTEXT_PRE_ROLL = 3
+        const val DEFAULT_CONTEXT_PRE_ROLL = 2
         const val DEFAULT_CONTEXT_POST_ROLL = 8
         const val GATE_ENGINE_VOSK = "vosk"
         const val DEFAULT_LOCATION_INTERVAL_MINUTES = 5

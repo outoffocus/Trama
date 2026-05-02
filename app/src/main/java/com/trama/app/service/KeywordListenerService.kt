@@ -761,7 +761,10 @@ class KeywordListenerService : LifecycleService() {
             preRollSeconds = contextPreRollSeconds,
             postRollSeconds = contextPostRollSeconds,
             silenceStopMs = 1800L,
-            gateEvalWindowsMs = listOf(15_000L, 12_000L, 8_000L, 5_000L, 3_000L)
+            // Final eval keeps a short tail (catch trigger word) plus the engine
+            // implicitly adds the full window. Intermediate sizes were redundant
+            // and cost N extra ASR transcriptions per finalize.
+            gateEvalWindowsMs = listOf(3_000L)
         )
     }
 
