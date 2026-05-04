@@ -59,16 +59,16 @@ class MainActivity : ComponentActivity() {
         syncSettingsToWatch(mainViewModel)
 
         setContent {
-            val themeMode by mainViewModel.themeMode.collectAsState(initial = 0)
+            val themeMode by mainViewModel.themeMode.collectAsState(
+                initial = com.trama.app.ui.SettingsDataStore.DEFAULT_THEME_MODE
+            )
             val darkTheme = when (themeMode) {
                 1 -> false
                 2 -> true
                 else -> isSystemInDarkTheme()
             }
             val startDestination = when (intent?.getStringExtra("navigate_to")) {
-                Routes.SUMMARY -> Routes.SUMMARY
                 Routes.CHAT -> Routes.CHAT
-                "calendar", Routes.CALENDAR -> Routes.CALENDAR
                 else -> Routes.HOME
             }
             TramaTheme(darkTheme = darkTheme) {

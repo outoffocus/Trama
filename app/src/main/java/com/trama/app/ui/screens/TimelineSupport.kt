@@ -44,7 +44,10 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,6 +55,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -85,10 +89,12 @@ sealed interface TimelineEventUi {
     val timestamp: Long
 
     data class EntryCreated(
-        val entry: DiaryEntry
+        val entry: DiaryEntry,
+        val occurrenceTimestamp: Long = entry.createdAt,
+        private val occurrenceId: String = "entry_created_${entry.id}"
     ) : TimelineEventUi {
-        override val id: String = "entry_created_${entry.id}"
-        override val timestamp: Long = entry.createdAt
+        override val id: String = occurrenceId
+        override val timestamp: Long = occurrenceTimestamp
     }
 
     data class EntryCompleted(
@@ -122,6 +128,7 @@ sealed interface TimelineEventUi {
 
 internal fun buildTimelineEvents(
     createdEntries: List<DiaryEntry>,
+    pendingEntryOccurrences: List<Pair<DiaryEntry, Long>> = emptyList(),
     completedEntries: List<DiaryEntry>,
     recordings: List<Recording>,
     calendarEvents: List<CalendarEvent> = emptyList(),
@@ -130,6 +137,15 @@ internal fun buildTimelineEvents(
     val events = buildList {
         createdEntries.forEach { entry ->
             add(TimelineEventUi.EntryCreated(entry))
+        }
+        pendingEntryOccurrences.forEach { (entry, timestamp) ->
+            add(
+                TimelineEventUi.EntryCreated(
+                    entry = entry,
+                    occurrenceTimestamp = timestamp,
+                    occurrenceId = "entry_pending_${entry.id}_$timestamp"
+                )
+            )
         }
         completedEntries
             .filter { it.completedAt != null }
@@ -153,6 +169,8 @@ internal fun TimelineList(
     onPlaceClick: (Long) -> Unit = {},
     onToggleComplete: ((DiaryEntry) -> Unit)? = null,
     onPostponeEntry: ((DiaryEntry, Long, String) -> Unit)? = null,
+    onReopenEntry: ((DiaryEntry) -> Unit)? = null,
+    onToggleCalendarComplete: ((TimelineEvent) -> Unit)? = null,
     isSelectionMode: Boolean = false,
     selectedEntryIds: Set<Long> = emptySet(),
     onEntrySelectionChange: ((Long, Boolean) -> Unit)? = null,
@@ -206,6 +224,8 @@ internal fun TimelineList(
             onPlaceClick = onPlaceClick,
             onToggleComplete = onToggleComplete,
             onPostponeEntry = onPostponeEntry,
+            onReopenEntry = onReopenEntry,
+            onToggleCalendarComplete = onToggleCalendarComplete,
             isSelectionMode = isSelectionMode,
             selectedEntryIds = selectedEntryIds,
             onEntrySelectionChange = onEntrySelectionChange,
@@ -233,6 +253,8 @@ internal fun LazyListScope.timelineListContent(
     onPlaceClick: (Long) -> Unit = {},
     onToggleComplete: ((DiaryEntry) -> Unit)? = null,
     onPostponeEntry: ((DiaryEntry, Long, String) -> Unit)? = null,
+    onReopenEntry: ((DiaryEntry) -> Unit)? = null,
+    onToggleCalendarComplete: ((TimelineEvent) -> Unit)? = null,
     isSelectionMode: Boolean = false,
     selectedEntryIds: Set<Long> = emptySet(),
     onEntrySelectionChange: ((Long, Boolean) -> Unit)? = null,
@@ -313,7 +335,7 @@ internal fun LazyListScope.timelineListContent(
                 }
                 SwipeableReminderCard(
                     entry = event.entry,
-                    enabled = event.entry.status == EntryStatus.PENDING &&
+                    enabled = event.entry.isLiveAction() &&
                         !isSelectionMode &&
                         onToggleComplete != null &&
                         onPostponeEntry != null,
@@ -360,7 +382,7 @@ internal fun LazyListScope.timelineListContent(
                         onLongClick = if (onEnterEntrySelectionMode != null && !isSelectionMode) {
                             { onEnterEntrySelectionMode(event.entry.id) }
                         } else null,
-                        onToggleComplete = if (event.entry.status == EntryStatus.PENDING && onToggleComplete != null) {
+                        onToggleComplete = if (event.entry.isLiveAction() && onToggleComplete != null) {
                             { onToggleComplete(event.entry) }
                         } else null,
                         isProcessing = event.entry.id in processingEntryIds,
@@ -372,29 +394,43 @@ internal fun LazyListScope.timelineListContent(
             }
             is TimelineEventUi.EntryCompleted -> {
                 val isSelected = event.entry.id in selectedEntryIds
-                TimelineStatusCard(
-                    modifier = itemModifier,
-                    eyebrow = "Completada",
-                    title = event.entry.displayText,
-                    body = "Marcada como resuelta",
-                    accent = accentConfig.completed,
-                    meta = null,
-                    isSelectionMode = isSelectionMode,
-                    isSelected = isSelected,
-                    onLongClick = if (onEnterEntrySelectionMode != null && !isSelectionMode) {
-                        { onEnterEntrySelectionMode(event.entry.id) }
-                    } else null,
-                    onClick = if (isSelectionMode && onEntrySelectionChange != null) {
-                        { onEntrySelectionChange(event.entry.id, !isSelected) }
-                    } else null,
-                    icon = {
-                        Icon(
-                            Icons.Default.CheckCircle,
-                            contentDescription = null,
-                            tint = accentConfig.completed
-                        )
-                    }
-                )
+                val completedCard: @Composable () -> Unit = {
+                    TimelineStatusCard(
+                        modifier = itemModifier,
+                        eyebrow = "Completada",
+                        title = event.entry.displayText,
+                        body = "Marcada como resuelta",
+                        accent = accentConfig.completed,
+                        meta = null,
+                        isSelectionMode = isSelectionMode,
+                        isSelected = isSelected,
+                        onLongClick = if (onEnterEntrySelectionMode != null && !isSelectionMode) {
+                            { onEnterEntrySelectionMode(event.entry.id) }
+                        } else null,
+                        onClick = if (isSelectionMode && onEntrySelectionChange != null) {
+                            { onEntrySelectionChange(event.entry.id, !isSelected) }
+                        } else {
+                            { onEntryClick(event.entry.id) }
+                        },
+                        icon = {
+                            Icon(
+                                Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = accentConfig.completed
+                            )
+                        }
+                    )
+                }
+                if (!isSelectionMode && onReopenEntry != null) {
+                    SwipeableTimelineActionCard(
+                        completed = true,
+                        accent = accentConfig.completed,
+                        onToggle = { onReopenEntry(event.entry) },
+                        content = completedCard
+                    )
+                } else {
+                    completedCard()
+                }
             }
             is TimelineEventUi.RecordingCaptured -> {
                 val isSelected = event.recording.id in selectedRecordingIds
@@ -438,29 +474,52 @@ internal fun LazyListScope.timelineListContent(
                 val title = event.event.title
                 val isSelected = event.event.id in selectedEventIds
                 if (event.event.type == TimelineEventType.CALENDAR) {
-                    TimelineStatusCard(
-                        modifier = itemModifier,
-                        eyebrow = if (event.event.source == TimelineEventSource.CALENDAR_IMPORT) "Google Calendar" else "Calendario",
-                        title = title,
-                        body = "",
-                        accent = accentConfig.calendar,
-                        meta = null,
-                        isSelectionMode = isSelectionMode,
-                        isSelected = isSelected,
-                        onLongClick = if (onEnterEventSelectionMode != null && !isSelectionMode) {
-                            { onEnterEventSelectionMode(event.event.id) }
-                        } else null,
-                        onClick = if (isSelectionMode && onEventSelectionChange != null) {
-                            { onEventSelectionChange(event.event.id, !isSelected) }
-                        } else null,
-                        icon = {
-                            Icon(
-                                Icons.Default.CalendarMonth,
-                                contentDescription = null,
-                                tint = accentConfig.calendar
-                            )
-                        }
-                    )
+                    val completed = event.event.completedAt != null
+                    val calendarCard: @Composable () -> Unit = {
+                        TimelineStatusCard(
+                            modifier = itemModifier,
+                            eyebrow = when {
+                                completed -> "Calendario completado"
+                                event.event.source == TimelineEventSource.CALENDAR_IMPORT -> "Google Calendar"
+                                else -> "Calendario"
+                            },
+                            title = title,
+                            body = "",
+                            accent = accentConfig.calendar,
+                            meta = null,
+                            quickActionLabel = if (!isSelectionMode && onToggleCalendarComplete != null) {
+                                if (completed) "Reabrir" else "Hecho"
+                            } else null,
+                            onQuickActionClick = if (!isSelectionMode && onToggleCalendarComplete != null) {
+                                { onToggleCalendarComplete(event.event) }
+                            } else null,
+                            isSelectionMode = isSelectionMode,
+                            isSelected = isSelected,
+                            onLongClick = if (onEnterEventSelectionMode != null && !isSelectionMode) {
+                                { onEnterEventSelectionMode(event.event.id) }
+                            } else null,
+                            onClick = if (isSelectionMode && onEventSelectionChange != null) {
+                                { onEventSelectionChange(event.event.id, !isSelected) }
+                            } else null,
+                            icon = {
+                                Icon(
+                                    Icons.Default.CalendarMonth,
+                                    contentDescription = null,
+                                    tint = accentConfig.calendar
+                                )
+                            }
+                        )
+                    }
+                    if (!isSelectionMode && onToggleCalendarComplete != null) {
+                        SwipeableTimelineActionCard(
+                            completed = completed,
+                            accent = accentConfig.calendar,
+                            onToggle = { onToggleCalendarComplete(event.event) },
+                            content = calendarCard
+                        )
+                    } else {
+                        calendarCard()
+                    }
                     return@items
                 }
                 val accent = if (event.event.isHighlight) accentConfig.place
@@ -539,9 +598,77 @@ private fun TimelineTimeMarker(
     }
 }
 
+@Composable
+private fun SwipeableTimelineActionCard(
+    completed: Boolean,
+    accent: Color,
+    onToggle: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            when (value) {
+                SwipeToDismissBoxValue.StartToEnd,
+                SwipeToDismissBoxValue.EndToStart -> {
+                    onToggle()
+                    false
+                }
+                SwipeToDismissBoxValue.Settled -> false
+            }
+        },
+        positionalThreshold = { it * 0.35f }
+    )
+    SwipeToDismissBox(
+        state = dismissState,
+        enableDismissFromStartToEnd = true,
+        enableDismissFromEndToStart = true,
+        backgroundContent = {
+            val direction = dismissState.dismissDirection
+            val alignment = if (direction == SwipeToDismissBoxValue.EndToStart) {
+                Alignment.CenterEnd
+            } else {
+                Alignment.CenterStart
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                    .background(accent.copy(alpha = if (direction == SwipeToDismissBoxValue.Settled) 0f else 0.86f))
+                    .padding(horizontal = 18.dp),
+                contentAlignment = alignment
+            ) {
+                if (direction != SwipeToDismissBoxValue.Settled) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            text = if (completed) "Reabrir" else "Hecho",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+                    }
+                }
+            }
+        }
+    ) {
+        content()
+    }
+}
+
 private fun Long.hourBucket(): Long = this / 3_600_000L
 
 private fun Long.hourStartMillis(): Long = hourBucket() * 3_600_000L
+
+private fun DiaryEntry.isLiveAction(): Boolean =
+    status != EntryStatus.COMPLETED && status != EntryStatus.DISCARDED
 
 @Composable
 private fun TimelineCornerAccent(
@@ -574,9 +701,9 @@ private fun TimelineStatusCard(
     isSelected: Boolean = false,
     icon: @Composable () -> Unit
 ) {
-    // Body, secondary eyebrow and inline icon are deliberately dropped: detail
-    // information lives in detail screens. We delegate to the unified TramaCard
-    // anatomy (stripe + eyebrow + title + meta).
+    // Body and secondary eyebrow are deliberately dropped: detail information
+    // lives in detail screens. The icon stays as the visual anchor for each
+    // timeline type: calendar, place, completion, etc.
     com.trama.app.ui.components.TramaCard(
         eyebrow = eyebrow ?: "",
         title = title,
@@ -586,8 +713,8 @@ private fun TimelineStatusCard(
         selected = isSelected,
         onClick = onClick,
         onLongClick = onLongClick,
-        leading = if (isSelectionMode) {
-            {
+        leading = {
+            if (isSelectionMode) {
                 Checkbox(
                     checked = isSelected,
                     onCheckedChange = null,
@@ -597,8 +724,12 @@ private fun TimelineStatusCard(
                         uncheckedColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
                     )
                 )
+            } else {
+                TimelineIconGlyph(accent = accent) {
+                    icon()
+                }
             }
-        } else null,
+        },
         trailing = if (!quickActionLabel.isNullOrBlank() && onQuickActionClick != null && !isSelectionMode) {
             {
                 Surface(
@@ -619,7 +750,24 @@ private fun TimelineStatusCard(
     )
     @Suppress("UNUSED_EXPRESSION") body  // body intentionally unused
     @Suppress("UNUSED_EXPRESSION") secondaryEyebrow
-    @Suppress("UNUSED_EXPRESSION") icon
+}
+
+@Composable
+private fun TimelineIconGlyph(
+    accent: Color,
+    content: @Composable () -> Unit
+) {
+    Surface(
+        modifier = Modifier.size(34.dp),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+        color = accent.copy(alpha = 0.13f)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Box(modifier = Modifier.size(18.dp), contentAlignment = Alignment.Center) {
+                content()
+            }
+        }
+    }
 }
 
 @Composable

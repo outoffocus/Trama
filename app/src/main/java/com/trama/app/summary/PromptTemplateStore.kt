@@ -84,20 +84,34 @@ CLASIFICACION:
 - NOTE: memoria u observacion personal que puede tener valor, pero no es una tarea que se pueda completar.
 - UNCLEAR: podria ser importante, pero faltan palabras, objeto/persona/destino, o la transcripcion no permite decidir.
 - DISCARD: ruido, prueba de micro, frase rota, auto-charla, pregunta sobre la app, comentario casual sin valor futuro.
-- Ante la duda entre TASK y otra categoria, NO uses TASK.
+
+REGLA CRITICA — sesgo a DISCARD:
+- Mostrar ruido al usuario es muy costoso (le obliga a borrar manualmente). Perder una nota dudosa es barato (el usuario puede repetirla).
+- Por defecto: DISCARD. Solo eleva a TASK si TODAS estas condiciones son ciertas:
+  1. La frase es una oracion COMPLETA, no un fragmento.
+  2. Hay un verbo accionable claro (llamar, comprar, enviar, pagar, escribir, recordar A ALGUIEN, ir, etc.).
+  3. Hay objeto/persona/destino CONCRETO (no "algo", no "eso", no pronombre sin antecedente claro).
+  4. La intencion es PERSONAL del usuario (no instruccion a otra persona, no ejemplo, no narracion).
+  5. El compromiso es FUTURO (no algo que ya pasó, no algo que ya no aplica).
+- Si dudas entre TASK/UNCLEAR → UNCLEAR.
+- Si dudas entre UNCLEAR/DISCARD → DISCARD.
+- Nunca eleves a TASK por "podria ser util". Esa es la trampa.
+- Fragmentos de menos de 4 palabras significativas (sin contar articulos/preposiciones) = DISCARD por defecto.
 - usefulnessScore mide si merece mostrarse al usuario. actionabilityScore mide si se puede marcar como hecha.
 	- Para NOTE, UNCLEAR o DISCARD: isActionable=false, confidence<=0.3, actionabilityScore<=0.3, extraActions=[].
 	- Para NOTE, UNCLEAR o DISCARD: isActionable=false, confidence<=0.3, actionabilityScore<=0.3, actions=[], extraActions=[].
 
-NO EXTRAER (isActionable=false, confidence<=0.3):
+NO EXTRAER (isActionable=false, confidence<=0.3, prefiere DISCARD si la frase no aporta nada):
 - solo expresiones temporales o de frecuencia: "mañana", "hoy", "esta tarde", "todos los días", "a veces"
 - frases sin verbo de accion claro + objeto/persona/destino: "hay que ver", "sería bueno"
 - reflexiones, auto-charla o preguntas retóricas: "no sé qué hacer", "¿y si lo dejo?"
-- fragmentos incompletos por mala transcripcion: "por la", "y luego el"
+- fragmentos incompletos por mala transcripcion: "por la", "y luego el", "tengo que", "lo que pasa es"
+- frases interrumpidas o cortadas a media oracion (terminan en preposicion, conjuncion o articulo)
 - meros comentarios sobre el pasado sin accion pendiente: "ayer fui al medico"
 - obligaciones negadas o canceladas: "ya no tengo que ir", "no hay que llamar", "no necesito hacerlo"
 - instrucciones conversacionales dirigidas a otra persona o ejemplos de trabajo: "Alex, tú creas una función...", "por ejemplo haces una llamada...", "eso se puede hacer en nada"
 - explicaciones sobre procesos, software, vídeos, noticias, debates o trabajo que contienen verbos de accion pero no son un compromiso pendiente del usuario
+- monologos donde el usuario piensa en voz alta sin un compromiso concreto: "estaba pensando que igual...", "no se si deberia..."
 - transcripciones con palabras mayormente sin sentido o repeticiones de ruido
 - referencias a una tarea que ya aparece en el CONTEXTO del inicio del prompt (ej: "eso que dije de Pedro", "la reunion del lunes"). En ese caso copia el texto literal de la nota en cleanText pero marca isActionable=false con confidence<=0.3 — no dupliques tareas existentes.
 
@@ -122,7 +136,17 @@ Output: {"kind":"TASK","usefulnessScore":0.95,"actionabilityScore":0.95,"discard
 
 <example id="4">
 Input: "hay que"
-Output: {"kind":"UNCLEAR","usefulnessScore":0.1,"actionabilityScore":0.0,"discardReason":"fragmento incompleto","isActionable": false, "cleanText": "hay que", "actionType": "GENERIC", "dueDate": null, "priority": "NORMAL", "confidence": 0.1, ...}
+Output: {"kind":"DISCARD","usefulnessScore":0.0,"actionabilityScore":0.0,"discardReason":"fragmento incompleto sin contenido","isActionable": false, "cleanText": "hay que", "actionType": "GENERIC", "dueDate": null, "priority": "NORMAL", "confidence": 0.05, ...}
+</example>
+
+<example id="4b">
+Input: "tengo que llamar"
+Output: {"kind":"DISCARD","usefulnessScore":0.1,"actionabilityScore":0.0,"discardReason":"falta a quien llamar","isActionable":false,"cleanText":"tengo que llamar","actionType":"CALL","dueDate":null,"priority":"NORMAL","confidence":0.1,"actions":[],"extraActions":[]}
+</example>
+
+<example id="4c">
+Input: "estaba pensando que igual deberia mirarlo"
+Output: {"kind":"DISCARD","usefulnessScore":0.1,"actionabilityScore":0.0,"discardReason":"monologo sin compromiso concreto","isActionable":false,"cleanText":"estaba pensando que igual deberia mirarlo","actionType":"GENERIC","dueDate":null,"priority":"NORMAL","confidence":0.1,"actions":[],"extraActions":[]}
 </example>
 
 <example id="5">
@@ -304,7 +328,9 @@ Reglas:
   - incluye solo tareas, compromisos o cosas por hacer mencionadas claramente
   - si no hay tareas, usa []
   - una accion debe tener intencion pendiente clara + verbo accionable + objeto/persona/destino concreto
-  - NO conviertas frases conversacionales en tareas. Ejemplos que deben producir []: "no quería verla ahí. Ahí no escucho", "voy a hablar como sale", "¿te asiste esto?", "¿no es barato?"
+  - REGLA CRITICA — sesgo a omitir: mostrar ruido al usuario es muy costoso. Si dudas, NO incluyas la accion. Solo eleva si la frase es completa, con verbo accionable claro y objeto/persona/destino concreto.
+  - Fragmentos cortos (menos de 4 palabras significativas) NO son acciones — omitelos.
+  - NO conviertas frases conversacionales en tareas. Ejemplos que deben producir []: "no quería verla ahí. Ahí no escucho", "voy a hablar como sale", "¿te asiste esto?", "¿no es barato?", "tengo que llamar" (sin a quién), "estaba pensando que igual..."
   - text: accion minima util, pero sin perder nombres, lugares, numeros ni fechas relevantes
   - originalText: conserva el fragmento original o casi original que origina la accion
   - normalizedText: corrige transcripcion pero preserva entidades

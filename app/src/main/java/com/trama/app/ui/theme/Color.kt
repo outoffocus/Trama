@@ -2,38 +2,39 @@ package com.trama.app.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// ── Trama Redesign v2 palette ─────────────────────────────────────────────────
-// Dark-first semantic tokens. 5 accents: amber (action), teal (completed/chat),
-// red (urgent), warn (overdue soft), watch (Wear sync).
+// ── Trama atelier palette ─────────────────────────────────────────────────────
+// Dark-first semantic tokens. Quiet graphite surfaces, soft ivory type and a
+// small set of warm/cool accents. The goal is premium utility, not decoration.
 
 // Neutrals — dark
-val TramaBgDark = Color(0xFF0B0B0D)
-val TramaSurfDark = Color(0xFF141416)
-val TramaSurf2Dark = Color(0xFF1C1C1F)
-val TramaSurf3Dark = Color(0xFF252527)
-val TramaTextDark = Color(0xFFF0EFE8)
-val TramaMutedDark = Color(0xFF6E6D68)
-val TramaDimDark = Color(0xFF3A3A3D)
-val TramaBorderDark = Color(0x12FFFFFF) // rgba(255,255,255,0.07)
-val TramaBorderDark2 = Color(0x0AFFFFFF) // rgba(255,255,255,0.04)
+val TramaBgDark = Color(0xFF08090A)
+val TramaSurfDark = Color(0xFF101214)
+val TramaSurf2Dark = Color(0xFF171A1C)
+val TramaSurf3Dark = Color(0xFF202427)
+val TramaTextDark = Color(0xFFF4F0E8)
+val TramaMutedDark = Color(0xFF9A958C)
+val TramaDimDark = Color(0xFF56524B)
+val TramaBorderDark = Color(0x1AFFFFFF)
+val TramaBorderDark2 = Color(0x0FFFFFFF)
 
 // Neutrals — light (warm off-white to stay coherent with dark)
-val TramaBgLight = Color(0xFFF6F3EC)
+val TramaBgLight = Color(0xFFF7F4EE)
 val TramaSurfLight = Color(0xFFFFFFFF)
-val TramaSurf2Light = Color(0xFFEFEBE2)
-val TramaSurf3Light = Color(0xFFE5E0D3)
-val TramaTextLight = Color(0xFF1A1A1C)
-val TramaMutedLight = Color(0xFF6B6A65)
-val TramaDimLight = Color(0xFFB8B6AE)
+val TramaSurf2Light = Color(0xFFF0ECE4)
+val TramaSurf3Light = Color(0xFFE5DED2)
+val TramaTextLight = Color(0xFF171614)
+val TramaMutedLight = Color(0xFF6D665E)
+val TramaDimLight = Color(0xFFAAA298)
 val TramaBorderLight = Color(0x14000000)
 val TramaBorderLight2 = Color(0x0A000000)
 
 // Semantic accents (identical across themes for brand consistency)
-val TramaAmber = Color(0xFFC8753A) // action / pending
-val TramaTeal = Color(0xFF4A9D8F)  // completed / chat / assistant
-val TramaRed = Color(0xFFD45A4A)   // urgent / overdue / recording
-val TramaWarn = Color(0xFFC8A43A)  // soft warn / due-today
-val TramaWatch = Color(0xFF5588EE) // Wear OS / sync
+val TramaAmber = Color(0xFFD48A52) // action / pending
+val TramaTeal = Color(0xFF79B8A6)  // completed / chat / assistant
+val TramaRed = Color(0xFFE06A5C)   // urgent / overdue / recording
+val TramaWarn = Color(0xFFD2B45F)  // soft warn / due-today
+val TramaWatch = Color(0xFF6EA1FF) // Wear OS / sync
+val TramaInkBlue = Color(0xFF9AB7FF)
 
 // Legacy tokens kept for callers still referencing them (Search/Category accents).
 // Values kept close to new palette to avoid jarring mix when rendered together.

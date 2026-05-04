@@ -19,7 +19,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Cloud
-import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Schedule
@@ -41,10 +40,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.trama.shared.model.Recording
 import com.trama.shared.model.RecordingStatus
-import com.trama.shared.model.Source
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import com.trama.app.ui.theme.LocalTramaColors
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -57,8 +53,8 @@ fun RecordingCard(
     onLongClick: (() -> Unit)? = null,
     accentColor: Color? = null
 ) {
-    val dateFormat = SimpleDateFormat("dd MMM · HH:mm", Locale("es"))
     val eventAccent = accentColor ?: MaterialTheme.colorScheme.tertiary
+    val t = LocalTramaColors.current
 
     Card(
         modifier = modifier
@@ -67,22 +63,23 @@ fun RecordingCard(
                 onClick = onClick,
                 onLongClick = onLongClick
             ),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (isSelected)
                 MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
             else
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)
+                t.surface2
         ),
-        border = androidx.compose.foundation.BorderStroke(1.dp, eventAccent.copy(alpha = 0.14f))
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = androidx.compose.foundation.BorderStroke(0.5.dp, t.softBorder)
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(top = 10.dp, end = 12.dp)
-                    .width(28.dp)
-                    .height(6.dp)
+                    .width(22.dp)
+                    .height(4.dp)
                     .clip(RoundedCornerShape(999.dp))
                     .background(eventAccent.copy(alpha = 0.85f))
             )

@@ -51,11 +51,12 @@ class DailySummaryWorker(
                 dayStartMillis = startOfDay,
                 status = com.trama.shared.model.DailyPageStatus.FINAL
             )
+            val agenda = AgendaBriefingBuilder.build(applicationContext)
 
             Log.i(TAG, "Daily page generated for $dateStr: ${page.briefSummary}")
 
             // Show notification
-            showNotification(page.briefSummary.orEmpty())
+            showNotification(page.briefSummary.orEmpty(), agenda)
 
             return Result.success()
         } catch (e: Exception) {
@@ -64,7 +65,7 @@ class DailySummaryWorker(
         }
     }
 
-    private fun showNotification(briefSummary: String) {
+    private fun showNotification(briefSummary: String, agenda: AgendaBriefing) {
         val manager = applicationContext.getSystemService(NotificationManager::class.java)
 
         // Create channel
@@ -79,7 +80,7 @@ class DailySummaryWorker(
         )
 
         val intent = Intent(applicationContext, MainActivity::class.java).apply {
-            putExtra("navigate_to", "summary")
+            putExtra("navigate_to", "calendar")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val pendingIntent = PendingIntent.getActivity(
@@ -87,13 +88,26 @@ class DailySummaryWorker(
         )
 
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-            .setContentTitle("Memoria del dia lista")
-            .setContentText(briefSummary.ifBlank { "Tu pagina diaria ya esta lista." })
-            .setSubText("Toca para revisar tareas, duplicados y sitios")
+            .setContentTitle(agenda.title)
+            .setContentText(agenda.shortText)
+            .setSubText("Toca para revisar agenda, tareas y sitios")
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(briefSummary))
+            .setStyle(
+                NotificationCompat.BigTextStyle().bigText(
+                    buildString {
+                        append(agenda.longText)
+                        val summary = briefSummary.ifBlank { null }
+                        if (summary != null) {
+                            appendLine()
+                            appendLine()
+                            append("Memoria del día: ")
+                            append(summary)
+                        }
+                    }
+                )
+            )
             .build()
 
         manager.notify(NOTIFICATION_ID, notification)

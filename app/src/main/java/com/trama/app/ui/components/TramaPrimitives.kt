@@ -146,11 +146,11 @@ fun StatusPill(
 
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(8.dp),
         color = bg,
     ) {
         Row(
-            modifier = Modifier.padding(start = 10.dp, end = 12.dp, top = 5.dp, bottom = 5.dp),
+            modifier = Modifier.padding(start = 10.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
@@ -276,7 +276,7 @@ fun SoftCard(
     val t = LocalTramaColors.current
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(8.dp),
         color = background ?: t.surface,
         border = BorderStroke(1.dp, borderColor ?: t.softBorder),
     ) { content() }
@@ -296,7 +296,7 @@ fun TransferToWatchChip(
     val label = if (toWatch) "Recuperar escucha" else "Transferir al reloj →"
     Surface(
         modifier = modifier.clickable { onClick() },
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(8.dp),
         color = t.watchBg,
         border = BorderStroke(1.dp, t.watch.copy(alpha = 0.3f)),
     ) {
@@ -355,10 +355,10 @@ fun TramaCard(
                     )
                 } else Modifier
             ),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = container),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = BorderStroke(0.5.dp, accent.copy(alpha = 0.08f)),
+        border = BorderStroke(0.5.dp, if (selected) accent.copy(alpha = 0.34f) else t.softBorder),
     ) {
         Row(
             modifier = Modifier
@@ -402,7 +402,7 @@ fun TramaCard(
                 Spacer(Modifier.height(2.dp))
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.titleSmall,
+                        style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = if (dimmed) t.mutedText else MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,

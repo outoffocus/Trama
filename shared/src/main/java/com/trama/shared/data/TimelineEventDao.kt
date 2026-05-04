@@ -38,6 +38,9 @@ interface TimelineEventDao {
     @Update
     suspend fun update(event: TimelineEvent)
 
+    @Query("UPDATE timeline_events SET completedAt = :completedAt WHERE id = :id")
+    suspend fun updateCompletedAt(id: Long, completedAt: Long?)
+
     @Query("UPDATE timeline_events SET title = :title WHERE placeId = :placeId")
     suspend fun updateTitleForPlace(placeId: Long, title: String)
 

@@ -87,19 +87,19 @@ val LocalTramaColors = staticCompositionLocalOf { TramaDarkColors }
 
 private val DarkColorScheme = darkColorScheme(
     primary = TramaAmber,
-    onPrimary = Color.White,
+    onPrimary = Color(0xFF201008),
     primaryContainer = TramaAmber.copy(alpha = 0.16f),
     onPrimaryContainer = TramaAmber,
     secondary = TramaTeal,
-    onSecondary = Color.White,
+    onSecondary = Color(0xFF061A15),
     secondaryContainer = TramaTeal.copy(alpha = 0.16f),
     onSecondaryContainer = TramaTeal,
     tertiary = TramaWatch,
-    onTertiary = Color.White,
+    onTertiary = Color(0xFF081226),
     tertiaryContainer = TramaWatch.copy(alpha = 0.16f),
     onTertiaryContainer = TramaWatch,
     error = TramaRed,
-    onError = Color.White,
+    onError = Color(0xFF260B08),
     errorContainer = TramaRed.copy(alpha = 0.16f),
     onErrorContainer = TramaRed,
     background = TramaBgDark,
@@ -111,6 +111,9 @@ private val DarkColorScheme = darkColorScheme(
     surfaceTint = TramaAmber,
     outline = TramaMutedDark,
     outlineVariant = TramaDimDark,
+    inverseSurface = TramaTextDark,
+    inverseOnSurface = TramaBgDark,
+    scrim = Color.Black,
 )
 
 private val LightColorScheme = lightColorScheme(
@@ -157,6 +160,9 @@ fun TramaTheme(
             val window = (view.context as? Activity)?.window ?: return@SideEffect
             window.statusBarColor = colorScheme.background.toArgb()
             window.navigationBarColor = colorScheme.background.toArgb()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                window.isNavigationBarContrastEnforced = false
+            }
             val insetsController = WindowCompat.getInsetsController(window, view)
             insetsController.isAppearanceLightStatusBars = !darkTheme
             insetsController.isAppearanceLightNavigationBars = !darkTheme

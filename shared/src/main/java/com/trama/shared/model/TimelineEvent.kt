@@ -24,7 +24,8 @@ data class TimelineEvent(
     val isHighlight: Boolean = false,
     val placeId: Long? = null,
     val source: String = TimelineEventSource.AUTO,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val completedAt: Long? = null
 )
 
 object TimelineEventType {

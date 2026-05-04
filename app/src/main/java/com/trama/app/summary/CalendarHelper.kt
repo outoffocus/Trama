@@ -11,6 +11,8 @@ import android.provider.CalendarContract
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.ContextCompat
+import com.trama.shared.model.TimelineEvent
+import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -178,6 +180,28 @@ object CalendarHelper {
             "No se pudo abrir el evento. Abre Calendario manualmente en esa hora.",
             Toast.LENGTH_LONG
         ).show()
+    }
+
+    fun openTimelineEvent(context: Context, event: TimelineEvent) {
+        val parsedEventId = event.dataJson?.let { payload ->
+            runCatching { JSONObject(payload).optLong("eventId").takeIf { it > 0L } }.getOrNull()
+        }
+        val parsedCalendarId = event.dataJson?.let { payload ->
+            runCatching { JSONObject(payload).optLong("calendarId").takeIf { it > 0L } }.getOrNull()
+        }
+        openEvent(
+            context,
+            CalendarEvent(
+                id = parsedEventId ?: -1L,
+                calendarId = parsedCalendarId ?: -1L,
+                title = event.title,
+                description = event.subtitle,
+                startMillis = event.timestamp,
+                endMillis = event.endTimestamp ?: event.timestamp,
+                location = null,
+                allDay = false
+            )
+        )
     }
 
     /**

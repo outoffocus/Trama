@@ -21,7 +21,7 @@ import com.trama.shared.model.TimelineEvent
         DwellDetectionState::class,
         DailyPage::class
     ],
-    version = 13
+    version = 14
 )
 @TypeConverters(Converters::class)
 abstract class DiaryDatabase : RoomDatabase() {
@@ -186,6 +186,11 @@ abstract class DiaryDatabase : RoomDatabase() {
         val MIGRATION_12_13 = object : Migration(12, 13) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE diary_entries ADD COLUMN processingBackend TEXT DEFAULT NULL")
+            }
+        }
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE timeline_events ADD COLUMN completedAt INTEGER DEFAULT NULL")
             }
         }
     }

@@ -323,9 +323,27 @@ fun EntryDetailScreen(
                 Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
                     DetailRow("Capturado", dateFormat.format(Date(currentEntry.createdAt)))
                     DetailRow("Fuente", if (currentEntry.source == Source.PHONE) "Teléfono" else "Reloj")
+                    DetailRow(
+                        "Estado",
+                        if (currentEntry.status == EntryStatus.COMPLETED) "Completada" else "Pendiente"
+                    )
                     DetailRow("Palabra clave", currentEntry.keyword.ifBlank { "—" })
                     DetailRow("Confianza", "${(currentEntry.confidence * 100).toInt()}%")
                     DetailRow("Duración", "${currentEntry.duration}s")
+                }
+            }
+
+            if (currentEntry.status == EntryStatus.COMPLETED) {
+                Spacer(modifier = Modifier.height(12.dp))
+                FilledTonalButton(
+                    onClick = {
+                        scope.launch {
+                            repository.markPending(entryId)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Reabrir tarea")
                 }
             }
 
@@ -373,6 +391,17 @@ fun EntryDetailScreen(
             confirmButton = {
                 TextButton(onClick = {
                     scope.launch {
+                        com.trama.app.diagnostics.CaptureLog.logUserDelete(
+                            entryId = currentEntry.id,
+                            text = currentEntry.displayText.ifBlank { currentEntry.text },
+                            createdAtMs = currentEntry.createdAt,
+                            status = currentEntry.status,
+                            actionType = currentEntry.actionType,
+                            isManual = currentEntry.isManual,
+                            wasCompleted = currentEntry.completedAt != null,
+                            hadDueDate = currentEntry.dueDate != null,
+                            source = "detail_screen"
+                        )
                         repository.deleteById(entryId)
                     }
                     onBack()

@@ -32,8 +32,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Cloud
-import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.Event
+import androidx.compose.material.icons.filled.Forum
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material3.Card
@@ -65,6 +70,7 @@ import com.trama.shared.model.EntryStatus
 import com.trama.shared.model.Source
 import com.trama.app.service.EntryProcessingState
 import com.trama.app.ui.theme.LocalTramaColors
+import com.trama.app.ui.theme.TramaColors
 
 /**
  * Card for a single diary entry / action item.
@@ -94,14 +100,15 @@ fun EntryCard(
     modifier: Modifier = Modifier
 ) {
     val isCompleted = entry.status == EntryStatus.COMPLETED
+    val isSuggested = entry.status == EntryStatus.SUGGESTED
     val primaryText = entry.displayText.ifBlank { entry.text }
     val t = LocalTramaColors.current
 
     val cardColor by animateColorAsState(
         targetValue = when {
             isSelected  -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
-            isCompleted -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-            else        -> MaterialTheme.colorScheme.surface
+            isCompleted -> t.surface.copy(alpha = 0.52f)
+            else        -> t.surface2
         },
         label = "cardColor"
     )
@@ -112,6 +119,9 @@ fun EntryCard(
         else                 -> accentColor ?: MaterialTheme.colorScheme.primary
     }
     val eventAccent = accentColor ?: MaterialTheme.colorScheme.primary
+    val actionVisual = remember(entry.actionType, eventAccent) {
+        actionVisualFor(entry.actionType, eventAccent, t)
+    }
     val processingBadge = rememberProcessingBadge(
         entry = entry,
         isProcessing = isProcessing,
@@ -128,13 +138,13 @@ fun EntryCard(
                 onClick = onClick,
                 onLongClick = onLongClick
             ),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = cardColor),
-        elevation = CardDefaults.cardElevation(defaultElevation = if (isCompleted) 0.dp else 1.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         border = androidx.compose.foundation.BorderStroke(
             width = 0.5.dp,
             color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.30f)
-                    else            eventAccent.copy(alpha = 0.12f)
+                    else            t.softBorder
         )
     ) {
         Row(
@@ -166,7 +176,7 @@ fun EntryCard(
                     modifier = Modifier
                         .width(3.dp)
                         .fillMaxHeight()
-                        .clip(RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp))
+                        .clip(RoundedCornerShape(topStart = 8.dp, bottomStart = 8.dp))
                         .background(
                             if (isCompleted) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.12f)
                             else             priorityColor.copy(alpha = 0.70f)
@@ -174,22 +184,27 @@ fun EntryCard(
                 )
             }
 
-            // ── Main content column ─────────────────────────────────────────
+            ActionGlyph(
+                icon = actionVisual.icon,
+                tint = if (isCompleted) t.dimText else actionVisual.color,
+                background = if (isCompleted) t.hairline else actionVisual.color.copy(alpha = 0.13f),
+                modifier = Modifier.padding(start = 10.dp)
+            )
+
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .padding(
-                        start  = 11.dp,
-                        end    = if (onToggleComplete != null || onQuickActionClick != null) 2.dp else 11.dp,
+                        start  = 10.dp,
+                        end    = if (onQuickActionClick != null) 2.dp else 11.dp,
                         top    = 9.dp,
                         bottom = 9.dp
                     )
             ) {
-                // Title — primary and only content
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text           = primaryText,
-                        style          = MaterialTheme.typography.titleSmall,
+                        style          = MaterialTheme.typography.titleMedium,
                         fontWeight     = if (isCompleted) FontWeight.Normal else FontWeight.SemiBold,
                         color          = if (isCompleted)
                                              MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
@@ -200,22 +215,44 @@ fun EntryCard(
                         textDecoration = if (isCompleted) TextDecoration.LineThrough else TextDecoration.None,
                         modifier       = Modifier.weight(1f)
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    EntrySourceIcon(entry.source)
-                    if (processingBadge != null) {
-                        ProcessingBadgeIcons(processingBadge)
+                    if (isSuggested && !isSelectionMode) {
+                        Spacer(Modifier.width(8.dp))
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = t.teal.copy(alpha = 0.14f)
+                        ) {
+                            Text(
+                                text = "SUGERIDA",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = t.teal,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                            )
+                        }
                     }
+                }
+                Spacer(Modifier.height(5.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = actionVisual.label.uppercase(),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (isCompleted) t.dimText else actionVisual.color
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    EntrySourceIcon(entry.source)
+                    if (processingBadge != null) ProcessingBadgeIcons(processingBadge)
                 }
             }
 
-            // ── Right action: quick-action button or completion checkbox ────
+            // ── Right action: quick-action button ───────────────────────────
             if (!isSelectionMode) {
                 if (onQuickActionClick != null && quickActionIcon != null) {
                     Surface(
                         onClick  = onQuickActionClick,
                         modifier = Modifier.padding(end = 8.dp),
                         shape    = CircleShape,
-                        color    = eventAccent.copy(alpha = 0.10f)
+                        color    = eventAccent.copy(alpha = 0.13f)
                     ) {
                         Box(
                             modifier        = Modifier.size(40.dp),
@@ -229,17 +266,6 @@ fun EntryCard(
                             )
                         }
                     }
-                } else if (onToggleComplete != null) {
-                    Checkbox(
-                        checked        = isCompleted,
-                        onCheckedChange = { onToggleComplete() },
-                        modifier       = Modifier.padding(end = 6.dp),
-                        colors         = CheckboxDefaults.colors(
-                            checkedColor   = MaterialTheme.colorScheme.primary,
-                            uncheckedColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.28f),
-                            checkmarkColor = MaterialTheme.colorScheme.onPrimary
-                        )
-                    )
                 }
             }
         }
@@ -248,12 +274,53 @@ fun EntryCard(
 
 // ── Processing badge helpers ─────────────────────────────────────────────────
 
+private data class ActionVisual(
+    val icon: ImageVector,
+    val label: String,
+    val color: Color
+)
+
 private data class ProcessingBadge(
     val icon: ImageVector,
     val tint: Color,
     val contentDescription: String,
     val showSparkle: Boolean = false
 )
+
+@Composable
+private fun ActionGlyph(
+    icon: ImageVector,
+    tint: Color,
+    background: Color,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.size(34.dp),
+        shape = RoundedCornerShape(8.dp),
+        color = background
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+    }
+}
+
+private fun actionVisualFor(type: String, fallback: Color, t: TramaColors): ActionVisual {
+    return when (type) {
+        EntryActionType.CALL -> ActionVisual(Icons.Default.Phone, "Llamar", t.watch)
+        EntryActionType.BUY -> ActionVisual(Icons.Default.ShoppingCart, "Comprar", t.amber)
+        EntryActionType.SEND -> ActionVisual(Icons.Default.Send, "Enviar", t.teal)
+        EntryActionType.EVENT -> ActionVisual(Icons.Default.Event, "Evento", t.warn)
+        EntryActionType.REVIEW -> ActionVisual(Icons.Default.Search, "Revisar", t.teal)
+        EntryActionType.TALK_TO -> ActionVisual(Icons.Default.Forum, "Hablar", t.watch)
+        else -> ActionVisual(Icons.Default.CheckCircle, EntryActionType.label(type), fallback)
+    }
+}
 
 @Composable
 private fun EntrySourceIcon(source: Source) {
@@ -296,7 +363,7 @@ private fun rememberProcessingBadge(
         return ProcessingBadge(
             icon = when (backend) {
                 EntryProcessingState.Backend.CLOUD -> Icons.Default.Cloud
-                EntryProcessingState.Backend.LOCAL -> Icons.Default.Smartphone
+                EntryProcessingState.Backend.LOCAL -> Icons.Default.AutoAwesome
                 EntryProcessingState.Backend.UNKNOWN -> Icons.Default.AutoAwesome
             },
             tint = when (backend) {
@@ -327,11 +394,6 @@ private fun rememberProcessingBadge(
             icon               = Icons.Default.Cloud,
             tint               = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
             contentDescription = "Procesado online"
-        )
-        isLocalProcessed -> ProcessingBadge(
-            icon               = Icons.Default.Smartphone,
-            tint               = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
-            contentDescription = "Procesado local"
         )
         isHeuristicProcessed -> ProcessingBadge(
             icon               = Icons.Default.CheckCircle,

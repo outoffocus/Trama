@@ -37,7 +37,8 @@ object CaptureLog {
         LLM,             // ActionItemProcessor actionability gate
         SAVE,            // Final persistence
         RECORDING,       // RecordingProcessor outcome per recording
-        SERVICE          // Foreground listener lifecycle / heartbeat
+        SERVICE,         // Foreground listener lifecycle / heartbeat
+        USER_DELETE      // User-initiated entry deletion (negative-feedback signal)
     }
 
     /** Outcome for the given gate. */
@@ -100,6 +101,48 @@ object CaptureLog {
                 // best effort; never crash the pipeline on a log write
             }
         }
+    }
+
+    /**
+     * Convenience helper to log a user-initiated entry deletion.
+     *
+     * The intent is to capture negative-feedback signal: when the user
+     * deletes an entry without ever interacting with it (no edit, no
+     * complete, deleted shortly after creation), the entry was likely
+     * noise that the LLM should not have surfaced. Downstream analysis
+     * can use these events to tune prompts or build a per-user blocklist.
+     *
+     * Pass entry data BEFORE the actual delete (so we still have it).
+     */
+    fun logUserDelete(
+        entryId: Long,
+        text: String?,
+        createdAtMs: Long,
+        status: String,
+        actionType: String? = null,
+        isManual: Boolean = false,
+        wasCompleted: Boolean = false,
+        hadDueDate: Boolean = false,
+        source: String,
+        extra: Map<String, Any?> = emptyMap()
+    ) {
+        val ageMs = System.currentTimeMillis() - createdAtMs
+        val meta = buildMap {
+            put("id", entryId)
+            put("ageSec", ageMs / 1000)
+            put("status", status)
+            put("manual", isManual)
+            put("hadDueDate", hadDueDate)
+            put("wasCompleted", wasCompleted)
+            put("source", source)
+            actionType?.let { put("actionType", it) }
+            // Heuristic flag: deleted within 30 min of creation, never completed,
+            // never manually entered → strong "this was noise" signal.
+            val likelyNoise = !isManual && !wasCompleted && ageMs < 30L * 60 * 1000
+            put("likelyNoise", likelyNoise)
+            putAll(extra)
+        }
+        event(Gate.USER_DELETE, Result.OK, text = text, meta = meta)
     }
 
     /** Events newer than [sinceMs]. Returns empty list on any failure. */

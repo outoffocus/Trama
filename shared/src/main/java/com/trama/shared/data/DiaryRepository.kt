@@ -217,6 +217,12 @@ class DiaryRepository(
     suspend fun updateTimelineEvent(event: TimelineEvent) =
         timelineEventDao?.update(event)
 
+    suspend fun markTimelineEventCompleted(id: Long, completedAt: Long = System.currentTimeMillis()) =
+        timelineEventDao?.updateCompletedAt(id, completedAt)
+
+    suspend fun markTimelineEventPending(id: Long) =
+        timelineEventDao?.updateCompletedAt(id, null)
+
     suspend fun deleteTimelineEventById(id: Long) =
         timelineEventDao?.deleteById(id)
 
