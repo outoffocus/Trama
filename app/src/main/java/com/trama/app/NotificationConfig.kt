@@ -22,6 +22,9 @@ object NotificationConfig {
     /** Notification for daily summary results. */
     const val CHANNEL_DAILY_SUMMARY = "trama_daily_summary"
 
+    /** Notification for the weekly agenda briefing. */
+    const val CHANNEL_WEEKLY_AGENDA = "trama_weekly_agenda"
+
     /** Notifications for screenshot-to-action processing. */
     const val CHANNEL_SCREENSHOT = "trama_screenshot"
 
@@ -38,6 +41,9 @@ object NotificationConfig {
 
     /** Notification ID for DailySummaryWorker. */
     const val ID_DAILY_SUMMARY = 2000
+
+    /** Notification ID for WeeklyAgendaWorker. */
+    const val ID_WEEKLY_AGENDA = 2200
 
     /** Notification ID for screenshot processing results. */
     const val ID_SCREENSHOT = 2100

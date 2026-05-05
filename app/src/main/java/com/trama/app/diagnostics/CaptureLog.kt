@@ -124,6 +124,8 @@ object CaptureLog {
         wasCompleted: Boolean = false,
         hadDueDate: Boolean = false,
         source: String,
+        reason: String? = null,
+        learningEnabled: Boolean = false,
         extra: Map<String, Any?> = emptyMap()
     ) {
         val ageMs = System.currentTimeMillis() - createdAtMs
@@ -136,6 +138,8 @@ object CaptureLog {
             put("wasCompleted", wasCompleted)
             put("source", source)
             actionType?.let { put("actionType", it) }
+            reason?.let { put("reason", it) }
+            put("learningEnabled", learningEnabled)
             // Heuristic flag: deleted within 30 min of creation, never completed,
             // never manually entered → strong "this was noise" signal.
             val likelyNoise = !isManual && !wasCompleted && ageMs < 30L * 60 * 1000

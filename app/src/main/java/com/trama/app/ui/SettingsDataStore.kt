@@ -55,6 +55,12 @@ class SettingsDataStore(private val context: Context) {
         val THEME_MODE = intPreferencesKey("theme_mode") // 0=system, 1=light, 2=dark
         const val DEFAULT_THEME_MODE = 2
         val SHOW_OLD_ENTRIES_EXPANDED = booleanPreferencesKey("show_old_entries_expanded")
+        val LEARN_FROM_DELETIONS = booleanPreferencesKey("learn_from_deletions")
+        val WEEKLY_AGENDA_ENABLED = booleanPreferencesKey("weekly_agenda_enabled")
+        val WEEKLY_AGENDA_DAY_OF_WEEK = intPreferencesKey("weekly_agenda_day_of_week") // java.util.Calendar.SUNDAY..SATURDAY
+        val WEEKLY_AGENDA_HOUR = intPreferencesKey("weekly_agenda_hour")
+        const val DEFAULT_WEEKLY_AGENDA_DAY_OF_WEEK = java.util.Calendar.SUNDAY
+        const val DEFAULT_WEEKLY_AGENDA_HOUR = 9
         const val DEFAULT_DURATION = 60  // Manual recording limit in MINUTES (not for continuous listening)
         const val DEFAULT_SUMMARY_HOUR = 21
         const val DEFAULT_BACKUP_HOUR = 3  // 3:00 AM
@@ -229,6 +235,33 @@ class SettingsDataStore(private val context: Context) {
 
     val showOldEntriesExpanded: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[SHOW_OLD_ENTRIES_EXPANDED] ?: false
+    }
+
+    val learnFromDeletions: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[LEARN_FROM_DELETIONS] ?: false
+    }
+
+    suspend fun setLearnFromDeletions(enabled: Boolean) {
+        context.dataStore.edit { it[LEARN_FROM_DELETIONS] = enabled }
+    }
+
+    val weeklyAgendaEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[WEEKLY_AGENDA_ENABLED] ?: true
+    }
+    val weeklyAgendaDayOfWeek: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[WEEKLY_AGENDA_DAY_OF_WEEK] ?: DEFAULT_WEEKLY_AGENDA_DAY_OF_WEEK
+    }
+    val weeklyAgendaHour: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[WEEKLY_AGENDA_HOUR] ?: DEFAULT_WEEKLY_AGENDA_HOUR
+    }
+    suspend fun setWeeklyAgendaEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[WEEKLY_AGENDA_ENABLED] = enabled }
+    }
+    suspend fun setWeeklyAgendaDayOfWeek(dayOfWeek: Int) {
+        context.dataStore.edit { it[WEEKLY_AGENDA_DAY_OF_WEEK] = dayOfWeek }
+    }
+    suspend fun setWeeklyAgendaHour(hour: Int) {
+        context.dataStore.edit { it[WEEKLY_AGENDA_HOUR] = hour.coerceIn(0, 23) }
     }
 
     /**

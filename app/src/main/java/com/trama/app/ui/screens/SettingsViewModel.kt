@@ -60,6 +60,10 @@ class SettingsViewModel @Inject constructor(
     val timelineColorCalendar = settingsStore.timelineColorCalendar
     val themeMode = settingsStore.themeMode
     val showOldEntriesExpanded = settingsStore.showOldEntriesExpanded
+    val learnFromDeletions = settingsStore.learnFromDeletions
+    val weeklyAgendaEnabled = settingsStore.weeklyAgendaEnabled
+    val weeklyAgendaDayOfWeek = settingsStore.weeklyAgendaDayOfWeek
+    val weeklyAgendaHour = settingsStore.weeklyAgendaHour
 
     private val summaryPrefs = appContext.getSharedPreferences("daily_summary", Context.MODE_PRIVATE)
     private val _geminiApiKey = MutableStateFlow(summaryPrefs.getString("gemini_api_key", "") ?: "")
@@ -84,6 +88,10 @@ class SettingsViewModel @Inject constructor(
     suspend fun setListeningStatusOnHome(enabled: Boolean) = settingsStore.setListeningStatusOnHome(enabled)
     suspend fun setThemeMode(mode: Int) = settingsStore.setThemeMode(mode)
     suspend fun setShowOldEntriesExpanded(expanded: Boolean) = settingsStore.setShowOldEntriesExpanded(expanded)
+    suspend fun setLearnFromDeletions(enabled: Boolean) = settingsStore.setLearnFromDeletions(enabled)
+    suspend fun setWeeklyAgendaEnabled(enabled: Boolean) = settingsStore.setWeeklyAgendaEnabled(enabled)
+    suspend fun setWeeklyAgendaDayOfWeek(dayOfWeek: Int) = settingsStore.setWeeklyAgendaDayOfWeek(dayOfWeek)
+    suspend fun setWeeklyAgendaHour(hour: Int) = settingsStore.setWeeklyAgendaHour(hour)
     suspend fun setTimelineColorPending(index: Int) = settingsStore.setTimelineColorPending(index)
     suspend fun setTimelineColorCompleted(index: Int) = settingsStore.setTimelineColorCompleted(index)
     suspend fun setTimelineColorRecording(index: Int) = settingsStore.setTimelineColorRecording(index)

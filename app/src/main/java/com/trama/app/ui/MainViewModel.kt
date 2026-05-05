@@ -32,4 +32,18 @@ class MainViewModel @Inject constructor(
             SettingsSyncer(appContext).syncPatterns(intentPatterns, customKeywords)
         }
     }
+
+    /** Schedules or cancels the weekly agenda worker based on current settings. */
+    fun scheduleWeeklyAgenda() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val enabled = settings.weeklyAgendaEnabled.first()
+            if (!enabled) {
+                com.trama.app.summary.WeeklyAgendaScheduler.cancel(appContext)
+                return@launch
+            }
+            val dow = settings.weeklyAgendaDayOfWeek.first()
+            val hour = settings.weeklyAgendaHour.first()
+            com.trama.app.summary.WeeklyAgendaScheduler.schedule(appContext, dow, hour)
+        }
+    }
 }

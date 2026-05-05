@@ -36,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -383,28 +384,51 @@ fun EntryDetailScreen(
         }
     }
 
-    if (showDeleteDialog) {
+    val settings = remember(context) { com.trama.app.ui.SettingsDataStore(context) }
+    val learnFromDeletions by settings.learnFromDeletions.collectAsState(initial = false)
+
+    fun performDelete(reason: com.trama.app.summary.DeletionFeedbackStore.Reason?) {
+        scope.launch {
+            val text = currentEntry.displayText.ifBlank { currentEntry.text }
+            com.trama.app.diagnostics.CaptureLog.logUserDelete(
+                entryId = currentEntry.id,
+                text = text,
+                createdAtMs = currentEntry.createdAt,
+                status = currentEntry.status,
+                actionType = currentEntry.actionType,
+                isManual = currentEntry.isManual,
+                wasCompleted = currentEntry.completedAt != null,
+                hadDueDate = currentEntry.dueDate != null,
+                source = "detail_screen",
+                reason = reason?.storageKey,
+                learningEnabled = learnFromDeletions
+            )
+            if (learnFromDeletions && reason != null && reason.isQualitySignal) {
+                com.trama.app.summary.DeletionFeedbackStore.record(context, text, reason)
+            }
+            repository.deleteById(entryId)
+        }
+        onBack()
+    }
+
+    if (showDeleteDialog && learnFromDeletions) {
+        com.trama.app.ui.components.DeleteReasonDialog(
+            entryCount = 1,
+            onDismiss = { showDeleteDialog = false },
+            onConfirm = { reason ->
+                showDeleteDialog = false
+                performDelete(reason)
+            }
+        )
+    } else if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
             title = { Text("Eliminar entrada") },
             text = { Text("¿Estás seguro de que quieres eliminar esta entrada?") },
             confirmButton = {
                 TextButton(onClick = {
-                    scope.launch {
-                        com.trama.app.diagnostics.CaptureLog.logUserDelete(
-                            entryId = currentEntry.id,
-                            text = currentEntry.displayText.ifBlank { currentEntry.text },
-                            createdAtMs = currentEntry.createdAt,
-                            status = currentEntry.status,
-                            actionType = currentEntry.actionType,
-                            isManual = currentEntry.isManual,
-                            wasCompleted = currentEntry.completedAt != null,
-                            hadDueDate = currentEntry.dueDate != null,
-                            source = "detail_screen"
-                        )
-                        repository.deleteById(entryId)
-                    }
-                    onBack()
+                    showDeleteDialog = false
+                    performDelete(reason = null)
                 }) {
                     Text("Eliminar", color = MaterialTheme.colorScheme.error)
                 }

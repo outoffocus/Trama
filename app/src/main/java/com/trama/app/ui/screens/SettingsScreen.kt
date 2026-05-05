@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.material3.FilterChip
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -146,6 +147,9 @@ fun SettingsScreen(
     )
     val summaryEnabled by settings.summaryEnabled.collectAsState(initial = true)
     val summaryHour by settings.summaryHour.collectAsState(initial = SettingsDataStore.DEFAULT_SUMMARY_HOUR)
+    val weeklyAgendaEnabled by settings.weeklyAgendaEnabled.collectAsState(initial = true)
+    val weeklyAgendaDayOfWeek by settings.weeklyAgendaDayOfWeek.collectAsState(initial = SettingsDataStore.DEFAULT_WEEKLY_AGENDA_DAY_OF_WEEK)
+    val weeklyAgendaHour by settings.weeklyAgendaHour.collectAsState(initial = SettingsDataStore.DEFAULT_WEEKLY_AGENDA_HOUR)
     val visibleCalendarIds by settings.visibleCalendarIds.collectAsState(initial = null)
     val intentPatterns by settings.intentPatterns.collectAsState(initial = IntentPattern.DEFAULTS)
 
@@ -210,6 +214,8 @@ fun SettingsScreen(
     )
     val themeMode by settings.themeMode.collectAsState(initial = SettingsDataStore.DEFAULT_THEME_MODE)
     val showOldEntriesExpanded by settings.showOldEntriesExpanded.collectAsState(initial = false)
+    val learnFromDeletions by settings.learnFromDeletions.collectAsState(initial = false)
+    var deletionFeedbackCount by remember { mutableStateOf(com.trama.app.summary.DeletionFeedbackStore.count(context)) }
     val locationDebugStatus by LocationDebugState.status.collectAsState()
     val locationDebugLastSample by LocationDebugState.lastSample.collectAsState()
     val locationDebugCandidate by LocationDebugState.candidate.collectAsState()
@@ -868,6 +874,49 @@ fun SettingsScreen(
                 )
             }
 
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Aprender de mis eliminaciones", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Al borrar una tarea, eliges el motivo. Si dices que era ruido, " +
+                            "la app filtra patrones similares antes de mostrarlos.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = learnFromDeletions,
+                    onCheckedChange = { scope.launch { settings.setLearnFromDeletions(it) } }
+                )
+            }
+            if (learnFromDeletions) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Patrones aprendidos: $deletionFeedbackCount",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(
+                        onClick = {
+                            com.trama.app.summary.DeletionFeedbackStore.clear(context)
+                            deletionFeedbackCount = 0
+                        },
+                        enabled = deletionFeedbackCount > 0
+                    ) {
+                        Text("Borrar lo aprendido")
+                    }
+                }
+            }
+
             SectionDivider()
 
             SectionHeader("Timeline")
@@ -1385,6 +1434,114 @@ fun SettingsScreen(
                             }
                         }
                     }
+                }
+            }
+
+            SectionDivider()
+
+            SectionHeader("Agenda semanal")
+
+            SettingToggle(
+                title = "Aviso semanal",
+                subtitle = "Notificación con eventos del calendario y tareas pendientes",
+                checked = weeklyAgendaEnabled,
+                onCheckedChange = {
+                    scope.launch {
+                        settings.setWeeklyAgendaEnabled(it)
+                        if (it) {
+                            com.trama.app.summary.WeeklyAgendaScheduler.schedule(
+                                context, weeklyAgendaDayOfWeek, weeklyAgendaHour
+                            )
+                        } else {
+                            com.trama.app.summary.WeeklyAgendaScheduler.cancel(context)
+                        }
+                    }
+                }
+            )
+
+            AnimatedVisibility(visible = weeklyAgendaEnabled) {
+                Column {
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text(
+                        "Día",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    val dayLabels = listOf(
+                        java.util.Calendar.MONDAY to "Lun",
+                        java.util.Calendar.TUESDAY to "Mar",
+                        java.util.Calendar.WEDNESDAY to "Mié",
+                        java.util.Calendar.THURSDAY to "Jue",
+                        java.util.Calendar.FRIDAY to "Vie",
+                        java.util.Calendar.SATURDAY to "Sáb",
+                        java.util.Calendar.SUNDAY to "Dom"
+                    )
+                    androidx.compose.foundation.layout.FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        dayLabels.forEach { (dow, label) ->
+                            FilterChip(
+                                selected = weeklyAgendaDayOfWeek == dow,
+                                onClick = {
+                                    scope.launch {
+                                        settings.setWeeklyAgendaDayOfWeek(dow)
+                                        com.trama.app.summary.WeeklyAgendaScheduler.schedule(
+                                            context, dow, weeklyAgendaHour
+                                        )
+                                    }
+                                },
+                                label = { Text(label) },
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Hora",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            "${weeklyAgendaHour}:00",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Slider(
+                        value = weeklyAgendaHour.toFloat(),
+                        onValueChange = {
+                            val h = it.roundToInt()
+                            scope.launch {
+                                settings.setWeeklyAgendaHour(h)
+                                com.trama.app.summary.WeeklyAgendaScheduler.schedule(
+                                    context, weeklyAgendaDayOfWeek, h
+                                )
+                            }
+                        },
+                        valueRange = 0f..23f, steps = 22,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    TextButton(
+                        onClick = {
+                            com.trama.app.summary.WeeklyAgendaScheduler.runNow(context)
+                        }
+                    ) {
+                        Text("Probar ahora")
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
                 }
             }
 

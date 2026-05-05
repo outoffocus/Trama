@@ -29,6 +29,7 @@ object PromptTemplateStore {
             subtitle = "Limpia una nota y extrae tipo, fecha y prioridad",
             defaultTemplate = """
 {{recentContext}}
+{{userNoiseExamples}}
 Analiza esta nota de voz capturada y devuelve SOLO un objeto JSON valido.
 - No añadas explicaciones, markdown, backticks ni texto extra.
 - Si dudas entre varias interpretaciones, elige la mas conservadora y mas literal.

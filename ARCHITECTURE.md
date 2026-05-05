@@ -6,6 +6,7 @@ Trama debe leerse como una memoria operativa local-first:
 
 - `Home`: flujo vivo del dia actual
 - `Calendar`: historico accionable por dia
+- `Agenda`: proximas tareas y eventos, separada del historico diario
 - `Chat`: preguntas sobre memoria, lugares, tareas y dias
 - `Recordings`: grabaciones manuales y acciones extraidas
 - `DailyPage + markdown`: memoria tecnica privada generada por fecha
@@ -13,7 +14,7 @@ Trama debe leerse como una memoria operativa local-first:
 
 El objetivo del producto es capturar con poca friccion, estructurar despues y permitir recuperar contexto sin convertir al usuario en editor permanente.
 
-## 2. Estado a 2026-04-30
+## 2. Estado a 2026-05-04
 
 ### Movil
 
@@ -30,8 +31,11 @@ El objetivo del producto es capturar con poca friccion, estructurar despues y pe
 - tracking opcional de ubicacion con dwell detection
 - lugares persistidos, valoraciones, opiniones y apertura en mapas externos
 - importacion de calendarios seleccionados del sistema
+- pantalla `Agenda` para vencidas, esta/proxima semana, tareas futuras y tareas sin fecha
+- aviso semanal configurable por WorkManager con eventos de calendario y tareas con fecha
 - chat local sobre repositorio y contexto diario
 - Gemini cloud + Gemma local para procesamiento, resumen y extraccion
+- aprendizaje opt-in desde eliminaciones marcadas como ruido o "no es para mi"; alimenta un gate pre-LLM y ejemplos `DISCARD`
 - WorkManager para resumen diario, procesado diferido y backups
 - diagnostico exportable del pipeline de captura
 
@@ -79,6 +83,7 @@ Dependencias relevantes:
 
 - `HomeScreen`
 - `CalendarScreen`
+- `AgendaScreen`
 - `ChatScreen`
 - `SearchScreen`
 - `SettingsScreen` y secciones internas
@@ -114,7 +119,7 @@ Flujo:
 8. Speaker verification opcional calcula embedding sobre la misma ventana.
 9. `IntentDetector` clasifica contra patrones configurables.
 10. `EntryValidatorHeuristics` y deduplicacion filtran ruido.
-11. `ActionItemProcessor` limpia, enriquece y persiste.
+11. `ActionItemProcessor` aplica aprendizaje de eliminaciones si esta activo, limpia, enriquece y persiste.
 12. Room, timeline, sync y UI reciben el resultado.
 
 Propiedades:
@@ -133,6 +138,7 @@ Propiedades:
 - trazas en `CaptureLog` para diagnostico
 - la vibracion se emite solo despues de `EntryProcessingState.markFinished`, cuando una accion aceptada deja de estar oculta por procesado y puede aparecer en el timeline
 - Home muestra estados tecnicos de escucha solo con el ajuste `Estado tecnico en inicio`
+- si `Aprender de mis eliminaciones` esta activo, las entradas parecidas a patrones borrados como ruido se descartan antes de gastar una llamada LLM
 
 Eventos relevantes de diagnostico:
 
@@ -149,6 +155,7 @@ Eventos relevantes de diagnostico:
 - `ASR_GATE media_playback_gate_blocked`
 - `ASR_FINAL source=trigger|uncertain_fallback|no_gate decodeMs windowMs`
 - `ASR_FINAL media_playback_blocked_window`
+- `LLM decision=blocked_by_signal signalReason similarity`
 
 ## 6. Grabaciones
 
@@ -168,6 +175,7 @@ Las grabaciones manuales se guardan como `Recording`, se transcriben y pueden pr
 Archivos:
 
 - `app/summary/ActionItemProcessor.kt`
+- `app/summary/DeletionFeedbackStore.kt`
 - `app/summary/SummaryGenerator.kt`
 - `app/summary/DailyPageGenerator.kt`
 - `app/summary/DailySummaryWorker.kt`
@@ -181,12 +189,14 @@ Rutas:
 - Gemma local descargable para ejecucion on-device cuando esta disponible y habilitado
 - heuristicas locales para reparacion JSON, duplicados y sugerencias manuales
 - prompt de acciones orientado a extraer la accion minima autosuficiente y rechazar ruido conversacional/no accionable
+- `DeletionFeedbackStore` persiste hasta 100 ejemplos locales de eliminaciones con razon de calidad, compara por similitud Jaccard y expone los 3 mas recientes como few-shot `DISCARD`
 - `ActionQualityGate` conserva una barrera local post-LLM contra ruido, fragmentos incompletos, negaciones y errores ASR frecuentes
 - la suite `ActionQualityGateProductTest` combina ejemplos curados y corpus sintetico masivo para medir riesgo de falsos positivos/negativos
 
 Procesamiento de acciones:
 
 - `PromptTemplateStore.ACTION_ITEM` pide acciones autosuficientes y no frases conversacionales completas
+- el placeholder `{{userNoiseExamples}}` inyecta ejemplos aprendidos solo cuando existe feedback local
 - el prompt exige resolver referencias internas de la misma transcripcion: pronombres, elipsis y contexto compartido
 - `ActionItemProcessor` recorta prefijos conversacionales cuando el modelo deja una clausula accionable dentro de una frase larga
 - `actions[]` es la lista canonica de tareas; `extraActions` queda como compatibilidad
@@ -247,6 +257,7 @@ Archivos:
 
 - `app/ui/screens/HomeScreen.kt`
 - `app/ui/screens/CalendarScreen.kt`
+- `app/ui/screens/AgendaScreen.kt`
 - `app/ui/screens/TimelineSupport.kt`
 - `app/ui/screens/PlaceDetailScreen.kt`
 - `app/location/DwellDetector.kt`
@@ -255,12 +266,14 @@ Archivos:
 - `app/service/LocationForegroundService.kt`
 - `app/summary/GoogleCalendarSyncManager.kt`
 
-El timeline mezcla:
+El timeline diario mezcla:
 
 - acciones pendientes/completadas
 - grabaciones
 - dwell events
 - eventos de calendario importados
+
+`CalendarScreen` queda enfocado en el historico por dia. La vista compacta de proximas tareas abre `AgendaScreen`, que agrupa vencidas, esta semana, proxima semana, mas adelante y sin fecha. `AgendaBriefingBuilder` usa el mismo repositorio para construir un texto semanal con eventos de calendario, tareas con fecha y vencidas.
 
 Los lugares se detectan por dwell y se pueden resolver con Google Places si hay clave. La app no usa un mapa embebido en la ruta principal; abre Google Maps o navegador mediante intent. `osmdroid` sigue declarado como dependencia, pero no aparece en la UI principal actual.
 
@@ -335,6 +348,8 @@ Tipos sincronizados:
 - descarga/configuracion de Gemma
 - speaker verification
 - Google Calendar
+- agenda semanal: dia/hora, activar/desactivar y probar ahora
+- aprendizaje desde eliminaciones, con contador y borrado de patrones aprendidos
 - backups
 - diagnostico de captura
 - colores del timeline
@@ -357,6 +372,7 @@ Diagnostico:
 - `Estado tecnico en inicio`, apagado por defecto, sustituye la etiqueta normal de Home por el estado real de escucha para pruebas
 - los usuarios normales mantienen etiquetas simples como `Escuchando`, `Grabando` o `En el reloj`
 - contadores de segmentos cerrados por silencio/cap, fallbacks inciertos, fallbacks bloqueados, paradas explicitas y destrucciones inesperadas del servicio
+- `CaptureLog.logUserDelete` registra razon de borrado y si el aprendizaje estaba activo
 
 Esta pantalla es una de las principales candidatas a refactor por ViewModels y secciones mas aisladas.
 
@@ -366,6 +382,7 @@ Estado actual:
 
 - audio contextual del movil vive en memoria durante la captura
 - audio del reloj se transfiere al telefono para procesado local
+- feedback de eliminaciones se guarda localmente en `filesDir/diagnostics/deletion_feedback.json` y se puede borrar desde ajustes
 - Room no esta cifrado
 - Gemini API key se guarda en `SharedPreferences`
 - tokens/model URL de Gemma tambien requieren endurecimiento

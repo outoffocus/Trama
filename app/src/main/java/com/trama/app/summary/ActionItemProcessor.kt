@@ -38,6 +38,29 @@ class ActionItemProcessor(private val context: Context) {
         val normalizedInput = existingEntry?.correctedText?.takeIf { it.isNotBlank() } ?: text
         val processingText = normalizedInput.ifBlank { originalText }
 
+        // Level 1 — pre-LLM noise gate from user feedback. If this entry's text
+        // closely matches a pattern the user previously flagged as "ruido" or
+        // "no es para mí", auto-discard without spending an LLM call.
+        DeletionFeedbackStore.bestMatch(context, processingText)?.let { (signal, score) ->
+            if (score >= DeletionFeedbackStore.SIMILARITY_BLOCK_THRESHOLD) {
+                repository.markDiscarded(entryId)
+                Log.i(TAG, "Pre-LLM block: entry $entryId matches noise signal (score=$score)")
+                CaptureLog.event(
+                    gate = CaptureLog.Gate.LLM,
+                    result = CaptureLog.Result.REJECT,
+                    text = processingText,
+                    meta = mapOf(
+                        "id" to entryId,
+                        "decision" to "blocked_by_signal",
+                        "signalText" to signal.text.take(120),
+                        "signalReason" to signal.reason,
+                        "similarity" to "%.2f".format(score)
+                    )
+                )
+                return false
+            }
+        }
+
         val recentContext = buildRecentContext(entryId, repository)
 
         val outcome = tryProcess(
@@ -543,6 +566,7 @@ class ActionItemProcessor(private val context: Context) {
         val tomorrow = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 1) }
         val tomorrowStr = dateFormat.format(tomorrow.time)
         val contextBlock = buildContextBlock(recentContext)
+        val userNoiseExamples = buildUserNoiseExamplesBlock()
         return PromptTemplateStore.render(
             context,
             PromptTemplateStore.ACTION_ITEM,
@@ -552,9 +576,29 @@ class ActionItemProcessor(private val context: Context) {
                 "normalizedInput" to normalizedInput,
                 "today" to today,
                 "tomorrow" to tomorrowStr,
-                "recentContext" to contextBlock
+                "recentContext" to contextBlock,
+                "userNoiseExamples" to userNoiseExamples
             )
         )
+    }
+
+    /**
+     * Render the most-recent user-flagged noise patterns as DISCARD examples.
+     * Returns "" when the store is empty so the placeholder collapses cleanly.
+     */
+    private fun buildUserNoiseExamplesBlock(): String {
+        val examples = DeletionFeedbackStore.recentNoiseExamples(context)
+        if (examples.isEmpty()) return ""
+        return buildString {
+            appendLine()
+            appendLine("EJEMPLOS APRENDIDOS DE ESTE USUARIO (siempre DISCARD — el usuario los eliminó como ruido):")
+            examples.forEachIndexed { index, txt ->
+                appendLine("- \"${txt.replace('"', '\'').take(160)}\"")
+                if (index >= DeletionFeedbackStore.FEW_SHOT_LIMIT - 1) return@forEachIndexed
+            }
+            appendLine("Si la nueva nota es muy similar a alguno de estos patrones, marca DISCARD.")
+            appendLine()
+        }
     }
 
 

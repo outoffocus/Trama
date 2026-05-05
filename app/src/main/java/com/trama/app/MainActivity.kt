@@ -58,6 +58,9 @@ class MainActivity : ComponentActivity() {
         // Sync keywords to watch on every app open
         syncSettingsToWatch(mainViewModel)
 
+        // Schedule (or cancel) the weekly agenda briefing based on current settings.
+        scheduleWeeklyAgenda()
+
         setContent {
             val themeMode by mainViewModel.themeMode.collectAsState(
                 initial = com.trama.app.ui.SettingsDataStore.DEFAULT_THEME_MODE
@@ -69,6 +72,7 @@ class MainActivity : ComponentActivity() {
             }
             val startDestination = when (intent?.getStringExtra("navigate_to")) {
                 Routes.CHAT -> Routes.CHAT
+                Routes.AGENDA, "agenda" -> Routes.AGENDA
                 else -> Routes.HOME
             }
             TramaTheme(darkTheme = darkTheme) {
@@ -87,6 +91,10 @@ class MainActivity : ComponentActivity() {
         if (!ServiceController.isRunning.value) {
             ServiceController.start(this)
         }
+    }
+
+    private fun scheduleWeeklyAgenda() {
+        viewModel.scheduleWeeklyAgenda()
     }
 
     private fun maybeStartLocationService(mainViewModel: MainViewModel = viewModel) {

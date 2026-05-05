@@ -150,7 +150,8 @@ fun CalendarScreen(
     onRecordingClick: (Long) -> Unit = {},
     onPlaceClick: (Long) -> Unit = {},
     onChatClick: () -> Unit = {},
-    onSettingsClick: () -> Unit = {}
+    onSettingsClick: () -> Unit = {},
+    onAgendaClick: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val repository = remember { DatabaseProvider.getRepository(context) }
@@ -400,7 +401,6 @@ fun CalendarScreen(
     var otherDaysExpanded by remember { mutableStateOf(true) }
     var todayExpanded by remember { mutableStateOf(true) }
     var completedExpanded by remember { mutableStateOf(true) }
-    var upcomingExpanded by remember { mutableStateOf(false) }
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
 
     fun exitSelectionMode() {
@@ -418,7 +418,10 @@ fun CalendarScreen(
         micActionsVisible = false
     }
 
-    fun deleteSelected() {
+    val learnFromDeletions by settings.learnFromDeletions.collectAsState(initial = false)
+    var pendingBulkDelete by remember { mutableStateOf(false) }
+
+    fun performBulkDelete(reason: com.trama.app.summary.DeletionFeedbackStore.Reason?) {
         val entryIds = selectedEntryIds.toList()
         val recordingIds = selectedRecordingIds.toList()
         val eventIds = selectedEventIds.toList()
@@ -428,9 +431,10 @@ fun CalendarScreen(
             if (entryIds.isNotEmpty()) {
                 entryIds.forEach { id ->
                     repository.getByIdOnce(id)?.let { e ->
+                        val text = e.displayText.ifBlank { e.text }
                         com.trama.app.diagnostics.CaptureLog.logUserDelete(
                             entryId = e.id,
-                            text = e.displayText.ifBlank { e.text },
+                            text = text,
                             createdAtMs = e.createdAt,
                             status = e.status,
                             actionType = e.actionType,
@@ -438,8 +442,13 @@ fun CalendarScreen(
                             wasCompleted = e.completedAt != null,
                             hadDueDate = e.dueDate != null,
                             source = "selection_bulk",
+                            reason = reason?.storageKey,
+                            learningEnabled = learnFromDeletions,
                             extra = mapOf("batchSize" to entryIds.size)
                         )
+                        if (learnFromDeletions && reason != null && reason.isQualitySignal) {
+                            com.trama.app.summary.DeletionFeedbackStore.record(context, text, reason)
+                        }
                     }
                 }
                 repository.deleteByIds(entryIds)
@@ -447,7 +456,28 @@ fun CalendarScreen(
             if (recordingIds.isNotEmpty()) repository.deleteRecordingsByIds(recordingIds)
             if (eventIds.isNotEmpty()) repository.deleteTimelineEventsByIds(eventIds)
             exitSelectionMode()
+            pendingBulkDelete = false
         }
+    }
+
+    fun deleteSelected() {
+        if (selectedEntryIds.isEmpty() && selectedRecordingIds.isEmpty() && selectedEventIds.isEmpty()) return
+        // Only show the reason picker when learning is enabled AND at least
+        // one diary entry is involved. Recordings / calendar events are not
+        // quality signals, so deleting only those skips the dialog.
+        if (learnFromDeletions && selectedEntryIds.isNotEmpty()) {
+            pendingBulkDelete = true
+        } else {
+            performBulkDelete(reason = null)
+        }
+    }
+
+    if (pendingBulkDelete) {
+        com.trama.app.ui.components.DeleteReasonDialog(
+            entryCount = selectedEntryIds.size,
+            onDismiss = { pendingBulkDelete = false },
+            onConfirm = { reason -> performBulkDelete(reason) }
+        )
     }
 
     fun toggleEntrySelection(id: Long, selected: Boolean) {
@@ -736,10 +766,7 @@ fun CalendarScreen(
                     selectedDayLabel = selectedDayLabel,
                     monthLabel = monthFormat.format(Date(selectedDayStart)).replaceFirstChar { it.uppercase() },
                     upcomingThisWeekCount = upcomingThisWeek.size,
-                    onUpcomingPeekClick = {
-                        upcomingExpanded = true
-                        scope.launch { listState.animateScrollToItem(Int.MAX_VALUE) }
-                    },
+                    onUpcomingPeekClick = onAgendaClick,
                     onNavigateDay = { offset -> navigateDay(offset) },
                     onOpenMonthPicker = { showMonthSheet = true },
                     onToday = { goToToday() },
@@ -949,64 +976,6 @@ fun CalendarScreen(
                         }
                     }
 
-                    if (upcomingTotal > 0) {
-                        item("upcoming_header") {
-                            CollapsibleSectionHeader(
-                                title = "Próximamente",
-                                count = upcomingTotal,
-                                expanded = upcomingExpanded,
-                                onClick = { upcomingExpanded = !upcomingExpanded }
-                            )
-                        }
-                        if (upcomingExpanded) {
-                            upcomingGroup(
-                                keyPrefix = "upcoming_thisweek_",
-                                title = "Esta semana",
-                                entries = upcomingThisWeek,
-                                accentColor = timelineAccentConfig.pending,
-                                selectionMode = selectionMode,
-                                selectedEntryIds = selectedEntryIds,
-                                processingEntryIds = processingEntryIds,
-                                processingBackends = processingBackends,
-                                onEntryClick = onEntryClick,
-                                onToggleSelection = { id, sel -> toggleEntrySelection(id, sel) },
-                                onEnterSelection = { id -> enterEntrySelection(id) },
-                                onComplete = { entry -> markEntryCompleted(entry) },
-                                onPostpone = { entry, due -> postponeEntry(entry, due) }
-                            )
-                            upcomingGroup(
-                                keyPrefix = "upcoming_nextweek_",
-                                title = "Próxima semana",
-                                entries = upcomingNextWeek,
-                                accentColor = timelineAccentConfig.pending,
-                                selectionMode = selectionMode,
-                                selectedEntryIds = selectedEntryIds,
-                                processingEntryIds = processingEntryIds,
-                                processingBackends = processingBackends,
-                                onEntryClick = onEntryClick,
-                                onToggleSelection = { id, sel -> toggleEntrySelection(id, sel) },
-                                onEnterSelection = { id -> enterEntrySelection(id) },
-                                onComplete = { entry -> markEntryCompleted(entry) },
-                                onPostpone = { entry, due -> postponeEntry(entry, due) }
-                            )
-                            upcomingGroup(
-                                keyPrefix = "upcoming_later_",
-                                title = "Más adelante",
-                                entries = upcomingLater,
-                                accentColor = timelineAccentConfig.pending,
-                                selectionMode = selectionMode,
-                                selectedEntryIds = selectedEntryIds,
-                                processingEntryIds = processingEntryIds,
-                                processingBackends = processingBackends,
-                                onEntryClick = onEntryClick,
-                                onToggleSelection = { id, sel -> toggleEntrySelection(id, sel) },
-                                onEnterSelection = { id -> enterEntrySelection(id) },
-                                onComplete = { entry -> markEntryCompleted(entry) },
-                                onPostpone = { entry, due -> postponeEntry(entry, due) }
-                            )
-                        }
-                    }
-
                     item("daily_summary") {
                         DailyPageSummaryCard(
                             page = if (isSelectedToday) null else selectedDailyPage,
@@ -1109,48 +1078,6 @@ private fun CollapsibleSectionHeader(
             contentDescription = null,
             tint = t.mutedText,
             modifier = Modifier.size(20.dp)
-        )
-    }
-}
-
-private fun LazyListScope.upcomingGroup(
-    keyPrefix: String,
-    title: String,
-    entries: List<DiaryEntry>,
-    accentColor: Color,
-    selectionMode: Boolean,
-    selectedEntryIds: Set<Long>,
-    processingEntryIds: Set<Long>,
-    processingBackends: Map<Long, EntryProcessingState.Backend>,
-    onEntryClick: (Long) -> Unit,
-    onToggleSelection: (Long, Boolean) -> Unit,
-    onEnterSelection: (Long) -> Unit,
-    onComplete: (DiaryEntry) -> Unit,
-    onPostpone: (DiaryEntry, Long) -> Unit
-) {
-    if (entries.isEmpty()) return
-    item(key = "${keyPrefix}sub_header") {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.SemiBold,
-            color = LocalTramaColors.current.mutedText,
-            modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 2.dp)
-        )
-    }
-    items(entries, key = { "$keyPrefix${it.id}" }) { entry ->
-        PendingEntryCard(
-            entry = entry,
-            selectedEntryIds = selectedEntryIds,
-            selectionMode = selectionMode,
-            processingEntryIds = processingEntryIds,
-            processingBackends = processingBackends,
-            accentColor = accentColor,
-            onEntryClick = onEntryClick,
-            onToggleSelection = onToggleSelection,
-            onEnterSelection = onEnterSelection,
-            onComplete = onComplete,
-            onPostpone = onPostpone
         )
     }
 }

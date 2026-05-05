@@ -4,7 +4,7 @@ Trama es una app Android local-first para capturar recordatorios, tareas, grabac
 
 ## Estado actual del proyecto
 
-Situacion a fecha `2026-04-30`:
+Situacion a fecha `2026-05-04`:
 
 - proyecto Android multi-modulo con `app`, `shared` y `wear`
 - movil en Jetpack Compose + Room + WorkManager + Wear Data Layer
@@ -13,11 +13,12 @@ Situacion a fecha `2026-04-30`:
 - `SherpaWhisperAsrEngine` es la ruta principal de transcripcion final en movil
 - el movil no usa `SpeechRecognizer`: si el ASR offline no esta disponible, la captura se marca como degradada y se diagnostica explicitamente
 - `Gemini` cloud y `Gemma` local se usan para estructurar acciones, resumir grabaciones y generar memoria diaria
+- la app puede aprender, de forma opt-in, patrones de eliminaciones marcadas como ruido y usarlos como gate pre-LLM
 - la escucha continua del movil trabaja en segmentos cortos y renovables para evitar ventanas largas/ruidosas atascadas
 - el fallback incierto a Whisper esta limitado por cooldown, carga y bateria para proteger consumo
 - la escucha se pausa cuando Android informa audio activo de otra app, para evitar capturas de YouTube/Spotify
 - Home puede mostrar estados tecnicos de escucha solo si el ajuste `Estado tecnico en inicio` esta activado
-- la UI principal vive en `Home`, `Calendar`, `Chat`, `Recordings`, `PlaceDetail` y `Settings`
+- la UI principal vive en `Home`, `Calendar`, `Agenda`, `Chat`, `Recordings`, `PlaceDetail` y `Settings`
 - `DailyPage` y el markdown privado por fecha funcionan como memoria tecnica persistida
 
 ## Que hace hoy la app
@@ -30,9 +31,12 @@ Situacion a fecha `2026-04-30`:
 - triggers por defecto limitados a frases mas intencionales para reducir falsos positivos y llamadas caras a Whisper
 - speaker verification offline opcional despues de Whisper
 - posprocesado AI para limpiar texto, crear acciones, detectar fechas, prioridad y duplicados
+- aprendizaje opcional desde eliminaciones: al borrar una entrada se puede indicar si era ruido, no era para el usuario, estaba mal transcrita, duplicada o caducada
 - grabaciones manuales en movil y reloj, con extraccion posterior de acciones sugeridas
 - timeline operativo del dia con tareas, grabaciones, eventos de calendario y visitas a lugares
 - calendario historico por dia con tareas, lugares, grabaciones y valoraciones
+- agenda dedicada para tareas vencidas, esta semana, proxima semana, mas adelante y sin fecha
+- aviso semanal configurable por WorkManager con eventos de calendario y tareas con fecha
 - tracking opcional de ubicacion por dwell, resolucion de lugares y apertura en Google Maps / navegador
 - importacion de calendarios seleccionados del sistema
 - asistente de chat sobre entradas, lugares y dias registrados
@@ -110,7 +114,7 @@ La app mantiene memoria por fecha en dos capas:
 - `DailyPage` en Room
 - markdown privado en `filesDir/daily-pages/`
 
-El `Calendar` es la UI principal del historico. El `Chat` consulta entradas, lugares y contexto diario para responder preguntas como donde estuviste, que tareas completaste o que lugares visitaste.
+El `Calendar` es la UI principal del historico por dia. `Agenda` concentra lo que viene despues: vencidas, esta/proxima semana, tareas futuras y tareas sin fecha. El `Chat` consulta entradas, lugares y contexto diario para responder preguntas como donde estuviste, que tareas completaste o que lugares visitaste.
 
 ## IA
 
@@ -120,6 +124,7 @@ Trama combina varias rutas:
 - `Gemma` local descargable y configurable desde ajustes
 - heuristicas locales para validacion, deduplicacion y fallback cuando la IA no responde
 - el prompt de acciones exige que `cleanText` sea la accion minima autosuficiente, resolviendo pronombres y elipsis dentro de la misma transcripcion
+- si `Aprender de mis eliminaciones` esta activo, `ActionItemProcessor` compara entradas nuevas contra patrones eliminados como ruido antes de llamar al LLM e inyecta ejemplos recientes como `DISCARD`
 - el postprocesado recorta prefijos conversacionales cuando el LLM devuelve una frase entera con un trigger accionable dentro
 - la deduplicacion normaliza variantes y errores frecuentes de triggers (`tenemos que`, `tenemso que`, `tenes/tenés que`) antes de comparar
 - `ActionQualityGateProductTest` genera miles de ejemplos sinteticos accionables/no accionables para vigilar precision antes de publicar
@@ -130,6 +135,7 @@ La clave de Gemini todavia se guarda en `SharedPreferences`, por lo que moverla 
 
 - el audio contextual del movil vive en RAM durante la captura
 - el reloj puede transferir audio al telefono para transcripcion local
+- los patrones aprendidos de eliminaciones se guardan localmente en `filesDir/diagnostics/deletion_feedback.json` y se pueden borrar desde ajustes
 - la base Room no esta cifrada todavia
 - los backups son JSON y dependen del destino elegido por el usuario
 - las claves externas y tokens locales necesitan endurecimiento

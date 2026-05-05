@@ -6,6 +6,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.trama.app.ui.screens.AgendaScreen
 import com.trama.app.ui.screens.CalendarScreen
 import com.trama.app.ui.screens.ChatScreen
 import com.trama.app.ui.screens.EntryDetailScreen
@@ -23,6 +24,7 @@ object Routes {
     const val SETTINGS_SECTION = "settings/{section}"
     const val SEARCH = "search"
     const val CHAT = "chat"
+    const val AGENDA = "agenda"
     const val RECORDINGS_LIST = "recordings"
     const val RECORDING_DETAIL = "recording/{recordingId}"
     const val PLACE_DETAIL = "place/{placeId}"
@@ -49,6 +51,7 @@ fun NavGraph(startDestination: String) {
                 onEntryClick = { entryId -> navController.navigate(Routes.detail(entryId)) },
                 onSettingsClick = { navController.navigate(Routes.SETTINGS) },
                 onChatClick = { navController.navigate(Routes.CHAT) },
+                onAgendaClick = { navController.navigate(Routes.AGENDA) },
                 onRecordingClick = { recordingId ->
                     navController.navigate(Routes.recordingDetail(recordingId))
                 },
@@ -58,6 +61,13 @@ fun NavGraph(startDestination: String) {
 
         composable(Routes.CHAT) {
             ChatScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable(Routes.AGENDA) {
+            AgendaScreen(
+                onBack = { navController.popBackStack() },
+                onEntryClick = { entryId -> navController.navigate(Routes.detail(entryId)) }
+            )
         }
 
         composable(
