@@ -118,12 +118,56 @@ class DailyPageGenerator(
         timelineEvents: List<TimelineEvent>
     ): List<Place> {
         val placeIds = timelineEvents.mapNotNull { it.placeId }.toSet()
-        return repository.getAllPlacesOnce()
+        val allPlaces = repository.getAllPlacesOnce()
+        val visited = allPlaces
             .filter { place ->
                 val visitedToday = (place.lastVisitAt ?: Long.MIN_VALUE) in dayStartMillis..endOfDay
                 visitedToday || place.id in placeIds
             }
-            .sortedByDescending { it.lastVisitAt ?: 0L }
+            .toMutableList()
+
+        // Currently active dwell: the user is at a place right now but the dwell
+        // has not closed yet, so no TimelineEvent / lastVisitAt update has fired
+        // for this visit. Resolve the anchor against existing places and include
+        // the match so today's report doesn't omit the place where the user is.
+        val liveDwell = repository.getDwellDetectionState()
+        val active = liveDwell?.active == true &&
+            liveDwell.dwellStartedAt != null &&
+            liveDwell.dwellStartedAt!! <= endOfDay &&
+            (liveDwell.dwellStartedAt!! >= dayStartMillis ||
+                System.currentTimeMillis() in dayStartMillis..endOfDay)
+        if (active) {
+            val anchorLat = liveDwell?.anchorLat
+            val anchorLon = liveDwell?.anchorLon
+            if (anchorLat != null && anchorLon != null) {
+                val deltaLat = 80.0 / 111_320.0
+                val deltaLon = 80.0 / (111_320.0 * kotlin.math.cos(Math.toRadians(anchorLat)).coerceAtLeast(0.1))
+                val nearby = repository.findPlacesInBoundingBox(
+                    minLat = anchorLat - deltaLat,
+                    maxLat = anchorLat + deltaLat,
+                    minLon = anchorLon - deltaLon,
+                    maxLon = anchorLon + deltaLon
+                ).minByOrNull { haversineMeters(anchorLat, anchorLon, it.latitude, it.longitude) }
+                    ?.takeIf { haversineMeters(anchorLat, anchorLon, it.latitude, it.longitude) <= 80.0 }
+                if (nearby != null && visited.none { it.id == nearby.id }) {
+                    visited += nearby
+                }
+            }
+        }
+
+        return visited.sortedByDescending { it.lastVisitAt ?: 0L }
+    }
+
+    private fun haversineMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val r = 6_371_000.0
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val a = kotlin.math.sin(dLat / 2).let { it * it } +
+            kotlin.math.cos(Math.toRadians(lat1)) *
+            kotlin.math.cos(Math.toRadians(lat2)) *
+            kotlin.math.sin(dLon / 2).let { it * it }
+        val c = 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
+        return r * c
     }
 
     private fun buildMarkdown(
