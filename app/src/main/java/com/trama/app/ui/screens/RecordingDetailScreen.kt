@@ -56,6 +56,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -474,13 +475,9 @@ private fun RecordingActionItem(
         onClick = onClick,
         onAccept = onAccept,
         onDismiss = onDismiss,
-        onQuickActionClick = quickAction
-            ?.takeIf { action ->
-                action.action.type == ActionType.CALENDAR_EVENT ||
-                    action.action.type == ActionType.REMINDER ||
-                    action.action.type == ActionType.TODO
-            }
-            ?.let { action ->
+        quickActionLabel = quickAction?.label,
+        quickActionIcon = quickAction?.icon,
+        onQuickActionClick = quickAction?.let { action ->
             {
                 if (action.action.type == ActionType.CALENDAR_EVENT || action.action.type == ActionType.REMINDER) {
                     if (CalendarHelper.hasWriteCalendarPermission(context)) {
@@ -510,6 +507,8 @@ private fun ActionItemCard(
     onClick: () -> Unit,
     onAccept: (() -> Unit)? = null,
     onDismiss: (() -> Unit)? = null,
+    quickActionLabel: String? = null,
+    quickActionIcon: ImageVector? = null,
     onQuickActionClick: (() -> Unit)? = null
 ) {
     val isDuplicate = duplicateOfText != null
@@ -619,8 +618,8 @@ private fun ActionItemCard(
                 Spacer(modifier = Modifier.width(2.dp))
                 IconButton(onClick = onQuickActionClick, modifier = Modifier.size(32.dp)) {
                     Icon(
-                        Icons.Default.CalendarMonth,
-                        contentDescription = "Añadir al calendario",
+                        quickActionIcon ?: Icons.Default.Add,
+                        contentDescription = quickActionLabel ?: "Ejecutar acción",
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(20.dp)
                     )
