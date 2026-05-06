@@ -34,7 +34,11 @@ class ContextualAudioCaptureEngine(
     private val context: Context,
     initialConfig: ContextualCaptureConfig,
     private val gateAsr: LightweightGateAsr = NoOpLightweightGateAsr,
-    private val triggerDetector: (String) -> Boolean = { false }
+    private val triggerDetector: (String) -> Boolean = { false },
+    // Returns true when thermal/battery pressure should suspend periodic gate
+    // evals to cut CPU. Final eval at segment close still runs so we don't
+    // lose recall entirely.
+    private val isThrottled: () -> Boolean = { false }
 ) {
     companion object {
         private const val TAG = "ContextualAudioCapture"
@@ -113,25 +117,11 @@ class ContextualAudioCaptureEngine(
             FRAME_SIZE * 2
         )
 
-        val audioRecord = try {
-            @Suppress("MissingPermission")
-            AudioRecord(
-                MediaRecorder.AudioSource.MIC,
-                loopConfig.sampleRateHz,
-                CHANNEL,
-                ENCODING,
-                bufferSize
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to create AudioRecord", e)
-            return@withContext
-        }
-
-        if (audioRecord.state != AudioRecord.STATE_INITIALIZED) {
-            Log.e(TAG, "AudioRecord not initialized")
-            audioRecord.release()
-            return@withContext
-        }
+        // VOICE_RECOGNITION enables the device DSP's NS+AGC tuned for speech,
+        // which improves WER in family/TV background and reduces spurious VAD
+        // triggers vs. raw MIC. Falls back to MIC if the device rejects it.
+        val audioRecord = createAudioRecord(loopConfig.sampleRateHz, bufferSize)
+            ?: return@withContext
 
         val rollingBuffer = CircularAudioBuffer(
             sampleRateHz = loopConfig.sampleRateHz,
@@ -334,11 +324,11 @@ class ContextualAudioCaptureEngine(
         }
 
         running = true
-        audioRecord.startRecording()
-        onStatusChanged?.invoke("listening")
-        Log.i(TAG, "Contextual audio capture started")
-
         try {
+            audioRecord.startRecording()
+            onStatusChanged?.invoke("listening")
+            Log.i(TAG, "Contextual audio capture started")
+
             val buffer = ShortArray(FRAME_SIZE)
             var consecutiveEmptyReads = 0
             while (running && isActive) {
@@ -366,13 +356,21 @@ class ContextualAudioCaptureEngine(
                     if (gateAsr.isAvailable && capture.postRollRemainingSamples < 0) {
                         val minCheckSamples = ((MIN_TRIGGER_CHECK_MS * capture.config.sampleRateHz) / 1000L).toInt()
                         val ambientBackoff = consecutiveCapsWithoutMatch >= AMBIENT_BACKOFF_THRESHOLD
+                        val thermalThrottled = isThrottled()
                         val backoffFactor = when {
+                            thermalThrottled -> Int.MAX_VALUE
                             ambientBackoff -> Int.MAX_VALUE
                             capture.consecutiveEmptyGateEvals >= GATE_EVAL_SKIP_THRESHOLD -> Int.MAX_VALUE
                             capture.consecutiveEmptyGateEvals >= GATE_EVAL_BACKOFF_THRESHOLD -> 2
                             else -> 1
                         }
-                        if (ambientBackoff &&
+                        if (thermalThrottled &&
+                            capture.capturedSamples >= minCheckSamples &&
+                            capture.lastGateCheckSample == 0
+                        ) {
+                            capture.lastGateCheckSample = capture.capturedSamples
+                            onGateEvalSkipped?.invoke("capture_throttled", 0L, 0L)
+                        } else if (ambientBackoff &&
                             capture.capturedSamples >= minCheckSamples &&
                             capture.lastGateCheckSample == 0
                         ) {
@@ -457,6 +455,30 @@ class ContextualAudioCaptureEngine(
 
     fun stop() {
         running = false
+    }
+
+    private fun createAudioRecord(sampleRateHz: Int, bufferSize: Int): AudioRecord? {
+        val sources = intArrayOf(
+            MediaRecorder.AudioSource.VOICE_RECOGNITION,
+            MediaRecorder.AudioSource.MIC
+        )
+        for (source in sources) {
+            val record = try {
+                @Suppress("MissingPermission")
+                AudioRecord(source, sampleRateHz, CHANNEL, ENCODING, bufferSize)
+            } catch (e: Exception) {
+                Log.w(TAG, "AudioRecord source=$source create failed", e)
+                continue
+            }
+            if (record.state == AudioRecord.STATE_INITIALIZED) {
+                Log.i(TAG, "AudioRecord initialized with source=$source")
+                return record
+            }
+            record.release()
+            Log.w(TAG, "AudioRecord source=$source not initialized, trying next")
+        }
+        Log.e(TAG, "Failed to create any AudioRecord")
+        return null
     }
 
     private fun sanitize(raw: ContextualCaptureConfig): ContextualCaptureConfig {

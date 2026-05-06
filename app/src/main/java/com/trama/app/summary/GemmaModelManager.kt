@@ -34,7 +34,7 @@ class GemmaModelManager(private val context: Context) {
         private const val KEY_MODEL_URL = "model_url"
         private const val KEY_HF_TOKEN = "hf_token"
 
-        const val DEFAULT_URL = "https://huggingface.co/litert-community/Gemma3-1B-IT/resolve/main/gemma3-1b-it-int4.task"
+        const val DEFAULT_URL = "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm"
 
         fun getPrefs(context: Context) =
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -54,7 +54,7 @@ class GemmaModelManager(private val context: Context) {
         fun setHfToken(context: Context, token: String) =
             getPrefs(context).edit().putString(KEY_HF_TOKEN, token.trim()).apply()
 
-        /** Extracts filename from the URL's last path segment (e.g. "gemma3-1b-it-int4.task"). */
+        /** Extracts filename from the URL's last path segment (e.g. "gemma-4-E2B-it.litertlm"). */
         fun filenameFromUrl(url: String): String {
             val lastSegment = url.trim().trimEnd('/').substringAfterLast('/').substringBefore('?')
             return if (lastSegment.isNotBlank() && lastSegment.contains('.')) lastSegment

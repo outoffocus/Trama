@@ -198,7 +198,10 @@ class SherpaWhisperAsrEngine(
             .setWhisper(whisperConfig)
             .setTokens(assetCache.ensureCopied(tokensAsset))
             .setModelType("whisper")
-            .setNumThreads(2)
+            // 1 thread instead of 2: ~30% slower decode but ~half the sustained
+            // CPU + heat. With the 20s window cap and ambient backoff, p95
+            // decode stays under the new budget while battery drops sharply.
+            .setNumThreads(1)
             .setDebug(false)
             .build()
 

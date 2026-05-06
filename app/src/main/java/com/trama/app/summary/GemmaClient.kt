@@ -28,7 +28,7 @@ import kotlinx.coroutines.withTimeout
 object GemmaClient {
 
     private const val TAG = "GemmaClient"
-    const val DEFAULT_FILENAME = "gemma3-1b-it-int4.task"
+    const val DEFAULT_FILENAME = "gemma-4-E2B-it.litertlm"
     private const val GENERATION_TIMEOUT_MS = 30_000L
     // Vision inference needs more time: cold model load (~20s for E4B) + image encoding + inference.
     private const val MULTIMODAL_TIMEOUT_MS = 120_000L

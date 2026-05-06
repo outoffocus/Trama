@@ -822,7 +822,7 @@ class ActionItemProcessor(private val context: Context) {
             .trim()
 
     private fun shouldAcceptAsTask(result: ProcessingResult): Boolean =
-        result.isActionable && result.confidence >= ACTIONABLE_CONFIDENCE_THRESHOLD
+        result.isActionable && result.confidence >= getActionableConfidenceThreshold(context)
 
     private suspend fun routeRejected(
         entryId: Long,
@@ -836,12 +836,19 @@ class ActionItemProcessor(private val context: Context) {
         }
     }
 
-    private fun rejectedStatus(result: ProcessingResult): String =
-        if (result.kind == KIND_TASK && result.isActionable) {
+    private fun rejectedStatus(result: ProcessingResult): String {
+        // Strong signal that the model saw a task but it didn't clear the bar.
+        val likelyTask = result.kind == KIND_TASK && result.isActionable
+        // Soft signal: confidence above the review floor — the model is not
+        // confident enough to accept, but not confident enough to discard.
+        // Surfacing these rescues the false negatives we saw in diagnostics.
+        val borderlineConfidence = result.confidence >= LOW_CONFIDENCE_REVIEW_FLOOR
+        return if (likelyTask || borderlineConfidence) {
             EntryStatus.SUGGESTED
         } else {
             EntryStatus.DISCARDED
         }
+    }
 
     private fun llmDecisionMeta(
         entryId: Long,
@@ -1091,8 +1098,30 @@ Reglas:
         private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
         private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
 
-        /** Minimum confidence for an LLM extraction to be accepted as a real task. */
-        private const val ACTIONABLE_CONFIDENCE_THRESHOLD = 0.45f
+        /** Default minimum confidence for an LLM extraction to be accepted as a real task. */
+        const val DEFAULT_ACTIONABLE_CONFIDENCE_THRESHOLD = 0.40f
+
+        /** Below this, an entry is fully discarded; between this and the user threshold it goes to SUGGESTED. */
+        const val LOW_CONFIDENCE_REVIEW_FLOOR = 0.30f
+
+        /** Allowed range for the user-tunable acceptance threshold. */
+        val ACTIONABLE_THRESHOLD_RANGE = 0.30f..0.70f
+
+        const val PREFS_NAME = "daily_summary"
+        const val KEY_ACTIONABLE_CONFIDENCE_THRESHOLD = "actionable_confidence_threshold"
+
+        fun getActionableConfidenceThreshold(context: Context): Float {
+            val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getFloat(KEY_ACTIONABLE_CONFIDENCE_THRESHOLD, DEFAULT_ACTIONABLE_CONFIDENCE_THRESHOLD)
+            return raw.coerceIn(ACTIONABLE_THRESHOLD_RANGE)
+        }
+
+        fun setActionableConfidenceThreshold(context: Context, value: Float) {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putFloat(KEY_ACTIONABLE_CONFIDENCE_THRESHOLD, value.coerceIn(ACTIONABLE_THRESHOLD_RANGE))
+                .apply()
+        }
         private const val USEFULNESS_THRESHOLD = 0.65f
         private const val ACTIONABILITY_THRESHOLD = 0.65f
 

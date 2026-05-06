@@ -14,18 +14,21 @@ Trama debe leerse como una memoria operativa local-first:
 
 El objetivo del producto es capturar con poca friccion, estructurar despues y permitir recuperar contexto sin convertir al usuario en editor permanente.
 
-## 2. Estado a 2026-05-04
+## 2. Estado a 2026-05-06
 
 ### Movil
 
 - Android app en Kotlin, Compose, Material 3 y Navigation Compose
 - Room compartido en `shared`, version 12
 - escucha continua con pipeline dedicado
+- captura con `AudioSource.VOICE_RECOGNITION` y fallback a `MIC` si el dispositivo lo rechaza
 - `VoskGateAsr` como gate ligero
-- `SherpaWhisperAsrEngine` como transcriptor final
+- `SherpaWhisperAsrEngine` como transcriptor final, 1 hilo y entrada capada a 20 s para mantener decode bajo presupuesto
 - sin fallback a `SpeechRecognizer` en movil; la captura exige ASR local/offline disponible
 - segmentacion de escucha continua en ventanas renovables, con cap de 30s para voz/ruido sin trigger
 - fallback incierto a Whisper con presupuesto por bateria/carga/cooldown
+- gate evals periodicos suspendidos cuando hay presion termica (`THERMAL_STATUS_MODERATE+`) o bateria <=30% sin cargador; final eval al cerrar segmento sigue corriendo
+- reinicio automatico de la captura tras crash con backoff exponencial (1s, 5s, 30s, 5min) y reset si la captura corre limpia >=60s; los crashes loguean stacktrace truncado para diagnostico
 - speaker verification offline integrada despues de Whisper
 - pausa por audio activo de otra app para evitar capturas de multimedia
 - tracking opcional de ubicacion con dwell detection
@@ -34,7 +37,7 @@ El objetivo del producto es capturar con poca friccion, estructurar despues y pe
 - pantalla `Agenda` para vencidas, esta/proxima semana, tareas futuras y tareas sin fecha
 - aviso semanal configurable por WorkManager con eventos de calendario y tareas con fecha
 - chat local sobre repositorio y contexto diario
-- Gemini cloud + Gemma local para procesamiento, resumen y extraccion
+- Gemini cloud + Gemma local para procesamiento, resumen y extraccion (default local: Gemma 4 E2B-it litertlm, configurable por URL)
 - aprendizaje opt-in desde eliminaciones marcadas como ruido o "no es para mi"; alimenta un gate pre-LLM y ejemplos `DISCARD`
 - WorkManager para resumen diario, procesado diferido y backups
 - diagnostico exportable del pipeline de captura
@@ -133,6 +136,7 @@ Propiedades:
 - fallback incierto a Whisper solo para gates vacios o muy pobres, con cooldown de 5 min en bateria y 2 min cargando
 - fallback incierto bloqueado bajo 20% de bateria cuando no esta cargando
 - ventanas bloqueadas si Android informa audio activo de otra app
+- la entrada a Whisper se capa a 20 s manteniendo la cola del segmento; recorta la cola larga de p95 sin perder la frase final
 - errores de ventana ASR se tratan como recuperables y rearman la captura
 - ASR local no disponible es un estado terminal visible/diagnosticable
 - trazas en `CaptureLog` para diagnostico
@@ -152,6 +156,7 @@ Eventos relevantes de diagnostico:
 - `ASR_GATE segment_finalized reason=silence_stop|unmatched_segment_cap|post_roll_cap`
 - `ASR_GATE uncertain_gate_fallback batteryPct charging windowMs cooldownMs`
 - `ASR_GATE uncertain_gate_fallback_blocked reason=battery_low|cooldown`
+- `ASR_GATE gate_eval_skipped reason=capture_throttled|ambient_backoff|insufficient_speech`
 - `ASR_GATE media_playback_gate_blocked`
 - `ASR_FINAL source=trigger|uncertain_fallback|no_gate decodeMs windowMs`
 - `ASR_FINAL media_playback_blocked_window`
@@ -202,6 +207,7 @@ Procesamiento de acciones:
 - `actions[]` es la lista canonica de tareas; `extraActions` queda como compatibilidad
 - extras solapadas con la accion primaria se descartan antes de persistir
 - `DuplicateHeuristics` compara una forma canonica de la accion, normalizando triggers y errores comunes antes de usar similitud
+- el umbral de aceptacion del LLM es configurable desde ajustes (default 0.40, rango 0.30-0.70); rejected con `confidence>=0.30` se enrutan a `SUGGESTED` en vez de `DISCARDED` para no perder posibles falsos negativos
 
 `DailyPage` persiste:
 

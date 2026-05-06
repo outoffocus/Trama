@@ -101,6 +101,7 @@ import com.trama.app.speech.speaker.SpeakerEnrollmentStep
 import com.trama.app.speech.speaker.VerificationDiagnostic
 import com.trama.app.service.ServiceController
 import com.trama.app.speech.IntentPattern
+import com.trama.app.summary.ActionItemProcessor
 import com.trama.app.summary.CalendarHelper
 import com.trama.app.summary.GemmaClient
 import com.trama.app.summary.GoogleCalendarSyncManager
@@ -227,6 +228,9 @@ fun SettingsScreen(
     val gemmaPrefs = remember { GemmaModelManager.getPrefs(context) }
     var modelUrl by remember { mutableStateOf(GemmaModelManager.getModelUrl(context)) }
     var hfToken by remember { mutableStateOf(GemmaModelManager.getHfToken(context)) }
+    var actionableThreshold by remember {
+        mutableStateOf(ActionItemProcessor.getActionableConfidenceThreshold(context))
+    }
     val modelFilename = remember(modelUrl) { GemmaModelManager.filenameFromUrl(modelUrl) }
     var showModelConfig by remember { mutableStateOf(false) }
 
@@ -1283,6 +1287,26 @@ fun SettingsScreen(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Text(
+                        "Umbral de aceptación: ${"%.0f".format(actionableThreshold * 100)}%",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        "Más bajo = más notas aceptadas (recall ↑, ruido ↑). Las que queden entre 30% y este umbral pasan a Sugeridas en vez de descartarse.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Slider(
+                        value = actionableThreshold,
+                        onValueChange = {
+                            actionableThreshold = it
+                            ActionItemProcessor.setActionableConfidenceThreshold(context, it)
+                        },
+                        valueRange = ActionItemProcessor.ACTIONABLE_THRESHOLD_RANGE,
+                        modifier = Modifier.fillMaxWidth()
                     )
 
                     Spacer(modifier = Modifier.height(16.dp))

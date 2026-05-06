@@ -69,15 +69,29 @@ class KeywordListenerService : LifecycleService() {
         private const val TAG = "KeywordListenerService"
 
         private const val CONTEXTUAL_RESTART_DELAY_MS = 500L
-        private const val CONTEXTUAL_CRASH_RESTART_DELAY_MS = 2_000L
+        // Exponential backoff for crash restarts. The current run elapsed
+        // time is used to reset: if the engine ran cleanly for longer than
+        // CONTEXTUAL_CRASH_BACKOFF_RESET_MS before failing, the next delay
+        // resets to the first step instead of climbing further.
+        private val CONTEXTUAL_CRASH_RESTART_BACKOFF_MS = longArrayOf(
+            1_000L,
+            5_000L,
+            30_000L,
+            5L * 60L * 1000L
+        )
+        private const val CONTEXTUAL_CRASH_BACKOFF_RESET_MS = 60_000L
         private const val SPEAKER_VERIFY_WINDOW_MS = 3_000L
         private const val UNCERTAIN_GATE_FALLBACK_COOLDOWN_MS = 5L * 60L * 1000L
         private const val UNCERTAIN_GATE_MIN_WINDOW_MS = 2_500L
         private const val UNCERTAIN_GATE_MAX_WINDOW_MS = 15_000L
+        private const val MAX_ASR_WINDOW_MS = 20_000L
         private const val BLOCKED_FALLBACK_LOG_INTERVAL_MS = 60_000L
         private const val MEDIA_PLAYBACK_POLL_MS = 2_000L
 
         private const val BATTERY_THRESHOLD = 15
+        // Soft threshold: above the hard stop (15%) but still constrained.
+        // Triggers periodic-eval backoff while keeping the service alive.
+        private const val BATTERY_SOFT_THRESHOLD = 30
         private const val SERVICE_HEARTBEAT_MS = 15L * 60L * 1000L
 
     }
@@ -504,7 +518,8 @@ class KeywordListenerService : LifecycleService() {
             context = applicationContext,
             initialConfig = currentContextualConfig(),
             gateAsr = gateAsr,
-            triggerDetector = { text -> intentDetector.detect(text) != null }
+            triggerDetector = { text -> intentDetector.detect(text) != null },
+            isThrottled = { shouldThrottleCapture() }
         ).also { engine ->
             engine.onStatusChanged = { state ->
                 if (state == "gating" || state == "capturing") {
@@ -596,8 +611,16 @@ class KeywordListenerService : LifecycleService() {
                     }
                     val startedAt = System.currentTimeMillis()
                     publishAsrDebug(status = "procesando audio")
+                    // Hard cap on Whisper input: p95 windows of 45s drove 19s decodes.
+                    // Action items live near the end of the segment after the trigger,
+                    // so we keep the 20s tail (covers post-roll + final utterance).
+                    val asrWindow = if (window.durationMs() > MAX_ASR_WINDOW_MS) {
+                        window.tailWindow(MAX_ASR_WINDOW_MS)
+                    } else {
+                        window
+                    }
                     val transcript = try {
-                        asrEngine.transcribe(window, languageTag = "es")
+                        asrEngine.transcribe(asrWindow, languageTag = "es")
                     } catch (e: Throwable) {
                         Log.e(TAG, "Dedicated ASR failed", e)
                         handleOfflineAsrWindowFailure(e, window.durationMs(), source)
@@ -685,7 +708,9 @@ class KeywordListenerService : LifecycleService() {
         contextualCaptureEngine = captureEngine
         contextualCaptureJob?.cancel()
         contextualCaptureJob = lifecycleScope.launch(Dispatchers.IO) {
+            var crashStreak = 0
             while (listening && isActive && asrEngine.isAvailable && !dedicatedAsrFailedOver) {
+                val runStartedAt = System.currentTimeMillis()
                 try {
                     captureEngine.start()
                     if (listening && asrEngine.isAvailable && !dedicatedAsrFailedOver) {
@@ -696,14 +721,26 @@ class KeywordListenerService : LifecycleService() {
                 } catch (ce: CancellationException) {
                     throw ce
                 } catch (t: Throwable) {
-                    Log.e(TAG, "Contextual capture crashed", t)
+                    val ranForMs = System.currentTimeMillis() - runStartedAt
+                    if (ranForMs >= CONTEXTUAL_CRASH_BACKOFF_RESET_MS) {
+                        crashStreak = 0
+                    }
+                    val delayMs = CONTEXTUAL_CRASH_RESTART_BACKOFF_MS[
+                        crashStreak.coerceAtMost(CONTEXTUAL_CRASH_RESTART_BACKOFF_MS.size - 1)
+                    ]
+                    Log.e(TAG, "Contextual capture crashed (streak=${crashStreak + 1}, ranForMs=$ranForMs)", t)
                     logOfflineAsrRecoverableFailure(
                         state = "contextual_capture_crashed",
                         error = t,
-                        meta = mapOf("restartDelayMs" to CONTEXTUAL_CRASH_RESTART_DELAY_MS)
+                        meta = mapOf(
+                            "restartDelayMs" to delayMs,
+                            "crashStreak" to (crashStreak + 1),
+                            "ranForMs" to ranForMs
+                        )
                     )
+                    crashStreak += 1
                     publishAsrDebug(engine = asrEngine.name, status = "rearmando captura")
-                    delay(CONTEXTUAL_CRASH_RESTART_DELAY_MS)
+                    delay(delayMs)
                 }
             }
         }
@@ -734,12 +771,18 @@ class KeywordListenerService : LifecycleService() {
         meta: Map<String, Any?> = emptyMap()
     ) {
         Log.w(TAG, "Offline ASR recoverable failure: $state", error)
+        // Truncate stacktrace to keep diagnostic events bounded; full trace is
+        // still in logcat. 2 KB is enough for ~25 frames of Kotlin/JVM stack.
+        val stack = Log.getStackTraceString(error).take(2_000)
+        val cause = error.cause?.let { "${it.javaClass.simpleName}: ${it.message}" }
         logServiceEvent(
             state,
             result = CaptureLog.Result.REJECT,
             meta = mapOf(
                 "error" to error.javaClass.simpleName,
-                "message" to error.message
+                "message" to error.message,
+                "cause" to cause,
+                "stack" to stack
             ) + meta
         )
     }
@@ -1079,6 +1122,31 @@ class KeywordListenerService : LifecycleService() {
             getSystemService(PowerManager::class.java).currentThermalStatus
         }.getOrNull()
     }
+
+    /**
+     * True when the device is under thermal pressure that warrants suspending
+     * periodic gate ASR evals. MODERATE is the first state where Android asks
+     * apps to back off; SEVERE/CRITICAL/EMERGENCY also throttle.
+     */
+    private fun isThermallyThrottled(): Boolean {
+        val status = currentThermalStatus() ?: return false
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            status >= PowerManager.THERMAL_STATUS_MODERATE
+    }
+
+    /**
+     * True when battery is below the soft threshold and the device is not
+     * charging. Triggers the same backoff as thermal throttling.
+     */
+    private fun isBatteryConstrained(): Boolean {
+        if (charging) return false
+        val pct = batteryPct
+        return pct in 1..BATTERY_SOFT_THRESHOLD
+    }
+
+    /** Combined signal used by the capture engine to skip periodic gate evals. */
+    private fun shouldThrottleCapture(): Boolean =
+        isThermallyThrottled() || isBatteryConstrained()
 
     private fun thermalStatusLabel(status: Int?): String? {
         if (status == null) return null
