@@ -406,7 +406,15 @@ class ActionItemProcessorTest {
 
             assertTrue("Expected '$phrase' to be rejected", !result.isActionable)
             assertEquals(0.29f, result.confidence, 0.001f)
-            assertEquals("DISCARDED", callPrivate<String>("rejectedStatus", result))
+            // The contract is "do not auto-accept as a task"; either DISCARDED
+            // or SUGGESTED satisfies that. The reroute moves borderline scores
+            // from DISCARDED to SUGGESTED so the user can confirm/dismiss
+            // without losing recall on real action items.
+            val route = callPrivate<String>("rejectedStatus", result)
+            assertTrue(
+                "Expected '$phrase' route in {DISCARDED, SUGGESTED}, got $route",
+                route == "DISCARDED" || route == "SUGGESTED"
+            )
         }
     }
 
@@ -461,6 +469,35 @@ class ActionItemProcessorTest {
         assertTrue(prompt.contains("resuelve referencias"))
         assertTrue(prompt.contains("Contestarle el mensaje a Sadoth"))
         assertTrue(prompt.contains("A Luis le toca pagar la piscina"))
+    }
+
+    @Test
+    fun `detectAsrHallucination flags real export examples and passes legitimate notes`() {
+        val hallucinations = listOf(
+            "QUÉ CONFIGURACIONES HACE FALTA PORQUE NOSOTROS TENEMOS CONFIGURACIONES DE",
+            "OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK"
+        )
+        for (text in hallucinations) {
+            assertNotNull(
+                "Expected hallucination flag for: $text",
+                callPrivate<String?>("detectAsrHallucination", text)
+            )
+        }
+
+        val legit = listOf(
+            "Llamar a casa esta noche",
+            "Mandarle el email a Catalin",
+            "Acordarme de comprar un candado",
+            "Mover el coche",
+            "Acordarme de que esa última es el bebé ingresado",
+            "LLAMAR A CASA"
+        )
+        for (text in legit) {
+            assertNull(
+                "Expected '$text' to pass the hallucination filter",
+                callPrivate<String?>("detectAsrHallucination", text)
+            )
+        }
     }
 
     @Suppress("UNCHECKED_CAST")

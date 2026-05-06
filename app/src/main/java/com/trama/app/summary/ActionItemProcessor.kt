@@ -38,6 +38,26 @@ class ActionItemProcessor(private val context: Context) {
         val normalizedInput = existingEntry?.correctedText?.takeIf { it.isNotBlank() } ?: text
         val processingText = normalizedInput.ifBlank { originalText }
 
+        // Level 0 — Whisper hallucination filter. Catches the two patterns we
+        // see in real exports: long all-caps strings (Whisper losing the locale)
+        // and trivial token repetition (e.g. "OK OK OK..."). Cheaper than the
+        // deletion-feedback gate and skips the LLM call entirely.
+        detectAsrHallucination(processingText)?.let { reason ->
+            repository.markDiscarded(entryId)
+            Log.i(TAG, "Pre-LLM block: entry $entryId looks like ASR hallucination ($reason)")
+            CaptureLog.event(
+                gate = CaptureLog.Gate.LLM,
+                result = CaptureLog.Result.REJECT,
+                text = processingText.take(120),
+                meta = mapOf(
+                    "id" to entryId,
+                    "decision" to "blocked_by_signal",
+                    "signalReason" to "asr_hallucination:$reason"
+                )
+            )
+            return false
+        }
+
         // Level 1 — pre-LLM noise gate from user feedback. If this entry's text
         // closely matches a pattern the user previously flagged as "ruido" or
         // "no es para mí", auto-discard without spending an LLM call.
@@ -824,6 +844,34 @@ class ActionItemProcessor(private val context: Context) {
     private fun shouldAcceptAsTask(result: ProcessingResult): Boolean =
         result.isActionable && result.confidence >= getActionableConfidenceThreshold(context)
 
+    /**
+     * Detect cheap ASR hallucination patterns observed in real diagnostics:
+     * long uppercase rants and trivial token repetition. Returns a short reason
+     * code or null if the text looks legitimate.
+     */
+    private fun detectAsrHallucination(text: String): String? {
+        val trimmed = text.trim()
+        if (trimmed.length < HALLUCINATION_MIN_TEXT_LENGTH) return null
+
+        val tokens = trimmed.split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (tokens.size < HALLUCINATION_MIN_TOKENS) return null
+
+        val lettered = tokens.filter { token -> token.any(Char::isLetter) }
+        if (lettered.size >= HALLUCINATION_MIN_TOKENS &&
+            lettered.all { it == it.uppercase(Locale.ROOT) }
+        ) {
+            return "all_caps"
+        }
+
+        val byCount = tokens.groupingBy { it.lowercase(Locale.ROOT) }.eachCount()
+        val mostFrequent = byCount.maxByOrNull { it.value } ?: return null
+        if (mostFrequent.value.toFloat() / tokens.size >= HALLUCINATION_REPETITION_RATIO) {
+            return "repetition:${mostFrequent.key.take(12)}"
+        }
+
+        return null
+    }
+
     private suspend fun routeRejected(
         entryId: Long,
         result: ProcessingResult,
@@ -839,11 +887,17 @@ class ActionItemProcessor(private val context: Context) {
     private fun rejectedStatus(result: ProcessingResult): String {
         // Strong signal that the model saw a task but it didn't clear the bar.
         val likelyTask = result.kind == KIND_TASK && result.isActionable
-        // Soft signal: confidence above the review floor — the model is not
-        // confident enough to accept, but not confident enough to discard.
-        // Surfacing these rescues the false negatives we saw in diagnostics.
-        val borderlineConfidence = result.confidence >= LOW_CONFIDENCE_REVIEW_FLOOR
-        return if (likelyTask || borderlineConfidence) {
+        // Diagnostic data showed Gemini clusters reject confidence in [0.20, 0.30),
+        // so a confidence-only floor barely fires. Mirror the same predicate that
+        // `qualityBucket` uses to mark "discarded_possible_false_negative" — if
+        // we'd flag it for review anyway, route it to SUGGESTED so the user can
+        // confirm/dismiss instead of losing it silently.
+        val borderlineByConfidence = result.confidence >= LOW_CONFIDENCE_REVIEW_FLOOR
+        val borderlineByActionability = result.actionabilityScore >= 0.55f
+        val borderlineByUsefulness = result.usefulnessScore >= 0.65f
+        val borderline =
+            borderlineByConfidence || borderlineByActionability || borderlineByUsefulness
+        return if (likelyTask || borderline) {
             EntryStatus.SUGGESTED
         } else {
             EntryStatus.DISCARDED
@@ -1103,6 +1157,12 @@ Reglas:
 
         /** Below this, an entry is fully discarded; between this and the user threshold it goes to SUGGESTED. */
         const val LOW_CONFIDENCE_REVIEW_FLOOR = 0.30f
+
+        // Hallucination filter tunables. Conservative defaults: skip very short
+        // texts so legitimate utterances like "Llamar a casa" pass through.
+        private const val HALLUCINATION_MIN_TEXT_LENGTH = 24
+        private const val HALLUCINATION_MIN_TOKENS = 5
+        private const val HALLUCINATION_REPETITION_RATIO = 0.5f
 
         /** Allowed range for the user-tunable acceptance threshold. */
         val ACTIONABLE_THRESHOLD_RANGE = 0.30f..0.70f
