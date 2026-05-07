@@ -15,6 +15,7 @@ import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.trama.app.audio.ContextualAudioCaptureEngine
 import com.trama.app.audio.SherpaWhisperAsrEngine
+import com.trama.app.audio.SileroVadFilter
 import com.trama.app.diagnostics.CaptureLog
 import com.trama.shared.audio.VoskGateAsr
 import com.trama.shared.audio.ContextualCaptureConfig
@@ -106,6 +107,8 @@ class KeywordListenerService : LifecycleService() {
     private lateinit var settingsSyncer: SettingsSyncer
     private lateinit var asrEngine: OnDeviceAsrEngine
     private lateinit var gateAsr: LightweightGateAsr
+    // Optional Silero VAD pre-filter — null when the asset is missing.
+    private var sileroVad: SileroVadFilter? = null
     private var contextualCaptureEngine: ContextualAudioCaptureEngine? = null
     private var contextualCaptureJob: Job? = null
     private var mediaPlaybackMonitorJob: Job? = null
@@ -208,6 +211,7 @@ class KeywordListenerService : LifecycleService() {
         settingsSyncer = SettingsSyncer(applicationContext)
         asrEngine = createAsrEngine()
         gateAsr = createGateAsr()
+        sileroVad = SileroVadFilter.tryCreate(applicationContext)
         observeSettings()
         registerScreenReceiver()
         registerBatteryReceiver()
@@ -280,6 +284,8 @@ class KeywordListenerService : LifecycleService() {
         // not here, because onDestroy also fires when watch pauses us (and we shouldn't
         // send RESUME back in that case).
 
+        sileroVad?.release()
+        sileroVad = null
         ServiceController.notifyStopped()
         super.onDestroy()
     }
@@ -618,6 +624,25 @@ class KeywordListenerService : LifecycleService() {
                         window.tailWindow(MAX_ASR_WINDOW_MS)
                     } else {
                         window
+                    }
+                    // Pre-Whisper Silero VAD gate: skip the decode entirely on
+                    // music/silence/non-speech. Diagnostics showed ~43% of
+                    // Whisper finals were bracket-only outputs ("[Música]",
+                    // "(Puerto)") — pure waste of CPU. The filter degrades to
+                    // a no-op when the model asset is missing.
+                    val sileroFilter = sileroVad
+                    if (sileroFilter != null && !sileroFilter.containsSpeech(asrWindow)) {
+                        CaptureLog.event(
+                            gate = CaptureLog.Gate.ASR_FINAL,
+                            result = CaptureLog.Result.REJECT,
+                            text = "silero_vad_no_speech",
+                            meta = mapOf(
+                                "source" to source,
+                                "windowMs" to asrWindow.durationMs()
+                            ) + powerSnapshot()
+                        )
+                        publishAsrDebug(status = "sin habla detectada", triggerReason = "silero_vad")
+                        return@launch
                     }
                     val transcript = try {
                         asrEngine.transcribe(asrWindow, languageTag = "es")

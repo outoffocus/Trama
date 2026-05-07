@@ -137,6 +137,7 @@ Propiedades:
 - fallback incierto bloqueado bajo 20% de bateria cuando no esta cargando
 - ventanas bloqueadas si Android informa audio activo de otra app
 - la entrada a Whisper se capa a 20 s manteniendo la cola del segmento; recorta la cola larga de p95 sin perder la frase final
+- filtro Silero VAD opcional pre-Whisper (`SileroVadFilter`): si el modelo `assets/asr/vad/silero_vad.onnx` esta presente, descarta ventanas sin habla (musica, silencio, ruido) antes de pagar el decode Whisper. Si el modelo falta, se degrada a no-op y la captura sigue funcionando.
 - errores de ventana ASR se tratan como recuperables y rearman la captura
 - ASR local no disponible es un estado terminal visible/diagnosticable
 - trazas en `CaptureLog` para diagnostico
@@ -160,6 +161,7 @@ Eventos relevantes de diagnostico:
 - `ASR_GATE media_playback_gate_blocked`
 - `ASR_FINAL source=trigger|uncertain_fallback|no_gate decodeMs windowMs`
 - `ASR_FINAL media_playback_blocked_window`
+- `ASR_FINAL silero_vad_no_speech` — Silero descarto la ventana antes de Whisper
 - `LLM decision=blocked_by_signal signalReason similarity`
 
 ## 6. Grabaciones
