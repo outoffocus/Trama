@@ -490,7 +490,13 @@ class ActionItemProcessorTest {
             "¿Te has acordado de comprar el pan?",
             // All-caps and repetition (existing patterns)
             "QUÉ CONFIGURACIONES HACE FALTA PORQUE NOSOTROS TENEMOS CONFIGURACIONES DE",
-            "OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK"
+            "OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK",
+            // Single-word fragments — verb stubs without object/target
+            "Recordar",
+            "Llamar",
+            "Comprar",
+            "Hacer",
+            "Recordar."
         )
         for (text in hallucinations) {
             assertNotNull(

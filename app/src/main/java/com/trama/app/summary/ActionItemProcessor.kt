@@ -880,9 +880,22 @@ class ActionItemProcessor(private val context: Context) {
             return "pure_question"
         }
 
-        // 4. Length-gated checks for the older hallucination patterns.
-        if (trimmed.length < HALLUCINATION_MIN_TEXT_LENGTH) return null
         val tokens = trimmed.split(Regex("\\s+")).filter { it.isNotBlank() }
+
+        // 4. Single-word fragment. There is no useful action you can express in
+        //    one word: "Recordar" without an object, "Llamar" without a target,
+        //    "Comprar" without a thing. These are stubs of the trigger verb
+        //    echoed back by Whisper / matched by the intent regex.
+        if (tokens.size == 1) {
+            val cleaned = tokens[0].trim { c ->
+                c == '.' || c == ',' || c == '!' || c == '?' ||
+                    c == '¡' || c == '¿' || c == ';' || c == ':'
+            }
+            return "single_word:${cleaned.lowercase(Locale.ROOT).take(20)}"
+        }
+
+        // 5. Length-gated checks for the older hallucination patterns.
+        if (trimmed.length < HALLUCINATION_MIN_TEXT_LENGTH) return null
         if (tokens.size < HALLUCINATION_MIN_TOKENS) return null
 
         val lettered = tokens.filter { token -> token.any(Char::isLetter) }
