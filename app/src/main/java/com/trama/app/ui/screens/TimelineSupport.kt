@@ -5,7 +5,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -57,6 +60,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -412,6 +416,9 @@ internal fun LazyListScope.timelineListContent(
                         } else {
                             { onEntryClick(event.entry.id) }
                         },
+                        // Circular glyph signals "closed/done" — distinct from the
+                        // rounded-square glyph used for live tasks and events.
+                        iconShape = CircleShape,
                         icon = {
                             Icon(
                                 Icons.Default.CheckCircle,
@@ -461,6 +468,9 @@ internal fun LazyListScope.timelineListContent(
                     body = "",
                     accent = accentConfig.calendar,
                     meta = null,
+                    // Sharp-cornered glyph reads as "scheduled slot" / document,
+                    // not a free-form note.
+                    iconShape = RoundedCornerShape(2.dp),
                     icon = {
                         Icon(
                             Icons.Default.CalendarMonth,
@@ -501,6 +511,7 @@ internal fun LazyListScope.timelineListContent(
                             onClick = if (isSelectionMode && onEventSelectionChange != null) {
                                 { onEventSelectionChange(event.event.id, !isSelected) }
                             } else null,
+                            iconShape = if (completed) CircleShape else RoundedCornerShape(2.dp),
                             icon = {
                                 Icon(
                                     Icons.Default.CalendarMonth,
@@ -524,38 +535,54 @@ internal fun LazyListScope.timelineListContent(
                 }
                 val accent = if (event.event.isHighlight) accentConfig.place
                              else accentConfig.place.copy(alpha = 0.82f)
-                TimelineStatusCard(
-                    modifier = itemModifier,
-                    eyebrow = when (event.event.type) {
-                        TimelineEventType.DWELL -> if (event.event.isHighlight) "Lugar nuevo" else "Lugar"
-                        else -> "Evento"
-                    },
-                    title = title,
-                    body = if (event.event.type == TimelineEventType.DWELL) {
-                        DwellDurationFormatter.formatHours(event.event.timestamp, event.event.endTimestamp)
-                    } else {
-                        event.event.subtitle ?: "Evento automático"
-                    },
-                    accent = accent,
-                    meta = null,
-                    isSelectionMode = isSelectionMode,
-                    isSelected = isSelected,
-                    onLongClick = if (onEnterEventSelectionMode != null && !isSelectionMode) {
-                        { onEnterEventSelectionMode(event.event.id) }
-                    } else null,
-                    onClick = if (isSelectionMode && onEventSelectionChange != null) {
-                        { onEventSelectionChange(event.event.id, !isSelected) }
-                    } else {
-                        event.event.placeId?.let { placeId -> { onPlaceClick(placeId) } }
-                    },
-                    icon = {
-                        Icon(
-                            Icons.Default.Place,
-                            contentDescription = null,
-                            tint = accentConfig.place
-                        )
-                    }
-                )
+                if (event.event.type == TimelineEventType.DWELL) {
+                    TimelinePlaceRow(
+                        modifier = itemModifier,
+                        title = title,
+                        duration = DwellDurationFormatter.formatHours(
+                            event.event.timestamp,
+                            event.event.endTimestamp
+                        ),
+                        eyebrow = if (event.event.isHighlight) "Lugar nuevo" else "Lugar",
+                        accent = accent,
+                        isSelectionMode = isSelectionMode,
+                        isSelected = isSelected,
+                        onLongClick = if (onEnterEventSelectionMode != null && !isSelectionMode) {
+                            { onEnterEventSelectionMode(event.event.id) }
+                        } else null,
+                        onClick = if (isSelectionMode && onEventSelectionChange != null) {
+                            { onEventSelectionChange(event.event.id, !isSelected) }
+                        } else {
+                            event.event.placeId?.let { placeId -> { onPlaceClick(placeId) } }
+                        }
+                    )
+                } else {
+                    TimelineStatusCard(
+                        modifier = itemModifier,
+                        eyebrow = "Evento",
+                        title = title,
+                        body = event.event.subtitle ?: "Evento automático",
+                        accent = accent,
+                        meta = null,
+                        isSelectionMode = isSelectionMode,
+                        isSelected = isSelected,
+                        onLongClick = if (onEnterEventSelectionMode != null && !isSelectionMode) {
+                            { onEnterEventSelectionMode(event.event.id) }
+                        } else null,
+                        onClick = if (isSelectionMode && onEventSelectionChange != null) {
+                            { onEventSelectionChange(event.event.id, !isSelected) }
+                        } else {
+                            event.event.placeId?.let { placeId -> { onPlaceClick(placeId) } }
+                        },
+                        icon = {
+                            Icon(
+                                Icons.Default.Place,
+                                contentDescription = null,
+                                tint = accentConfig.place
+                            )
+                        }
+                    )
+                }
             }
         }
     }
@@ -699,6 +726,7 @@ private fun TimelineStatusCard(
     onQuickActionClick: (() -> Unit)? = null,
     isSelectionMode: Boolean = false,
     isSelected: Boolean = false,
+    iconShape: Shape = RoundedCornerShape(8.dp),
     icon: @Composable () -> Unit
 ) {
     // Body and secondary eyebrow are deliberately dropped: detail information
@@ -725,7 +753,7 @@ private fun TimelineStatusCard(
                     )
                 )
             } else {
-                TimelineIconGlyph(accent = accent) {
+                TimelineIconGlyph(accent = accent, shape = iconShape) {
                     icon()
                 }
             }
@@ -752,14 +780,92 @@ private fun TimelineStatusCard(
     @Suppress("UNUSED_EXPRESSION") secondaryEyebrow
 }
 
+/**
+ * Compact single-line row for places (dwell). The layout breaks the
+ * card rhythm on purpose so places read as "waypoints" in the day, not
+ * as actionable cards mixed with tasks/events.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun TimelinePlaceRow(
+    title: String,
+    duration: String,
+    eyebrow: String,
+    accent: Color,
+    modifier: Modifier = Modifier,
+    isSelectionMode: Boolean = false,
+    isSelected: Boolean = false,
+    onClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null
+) {
+    val interaction = remember { MutableInteractionSource() }
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .then(
+                if (onClick != null || onLongClick != null) {
+                    Modifier.combinedClickable(
+                        interactionSource = interaction,
+                        indication = null,
+                        onClick = onClick ?: {},
+                        onLongClick = onLongClick
+                    )
+                } else Modifier
+            )
+            .padding(horizontal = 4.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (isSelectionMode) {
+            Checkbox(
+                checked = isSelected,
+                onCheckedChange = null,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(Modifier.width(10.dp))
+        }
+        Box(
+            modifier = Modifier
+                .size(10.dp)
+                .clip(CircleShape)
+                .background(accent.copy(alpha = if (isSelected) 1f else 0.85f))
+                .border(1.dp, accent.copy(alpha = 0.35f), CircleShape)
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = eyebrow.uppercase(),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = accent
+            )
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        if (duration.isNotBlank()) {
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = duration,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
 @Composable
 private fun TimelineIconGlyph(
     accent: Color,
+    shape: Shape = RoundedCornerShape(8.dp),
     content: @Composable () -> Unit
 ) {
     Surface(
         modifier = Modifier.size(34.dp),
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+        shape = shape,
         color = accent.copy(alpha = 0.13f)
     ) {
         Box(contentAlignment = Alignment.Center) {
