@@ -916,14 +916,17 @@ class ActionItemProcessor(private val context: Context) {
     private fun rejectedStatus(result: ProcessingResult): String {
         // Strong signal that the model saw a task but it didn't clear the bar.
         val likelyTask = result.kind == KIND_TASK && result.isActionable
-        // Diagnostic data showed Gemini clusters reject confidence in [0.20, 0.30),
-        // so a confidence-only floor barely fires. Mirror the same predicate that
-        // `qualityBucket` uses to mark "discarded_possible_false_negative" — if
-        // we'd flag it for review anyway, route it to SUGGESTED so the user can
-        // confirm/dismiss instead of losing it silently.
-        val borderlineByConfidence = result.confidence >= LOW_CONFIDENCE_REVIEW_FLOOR
-        val borderlineByActionability = result.actionabilityScore >= 0.55f
-        val borderlineByUsefulness = result.usefulnessScore >= 0.65f
+        // Soft signals reroute to SUGGESTED so the user can confirm/dismiss
+        // instead of losing the entry silently. The thresholds here are
+        // intentionally HIGHER than the predicate `qualityBucket` uses to flag
+        // "discarded_possible_false_negative": diagnostic samples showed that
+        // bar (0.55 / 0.65) lets through ~25 narration-style entries per day
+        // (e.g. "Voy a ir a poner...", "Hacer lo que te gusta..."). The
+        // tighter floors below keep noise out of SUGGESTED while still
+        // rescuing strong borderline tasks.
+        val borderlineByConfidence = result.confidence >= REROUTE_CONFIDENCE_FLOOR
+        val borderlineByActionability = result.actionabilityScore >= REROUTE_ACTIONABILITY_FLOOR
+        val borderlineByUsefulness = result.usefulnessScore >= REROUTE_USEFULNESS_FLOOR
         val borderline =
             borderlineByConfidence || borderlineByActionability || borderlineByUsefulness
         return if (likelyTask || borderline) {
@@ -1186,6 +1189,13 @@ Reglas:
 
         /** Below this, an entry is fully discarded; between this and the user threshold it goes to SUGGESTED. */
         const val LOW_CONFIDENCE_REVIEW_FLOOR = 0.30f
+
+        // Reroute-to-SUGGESTED thresholds — see `rejectedStatus`. Tighter than
+        // the `qualityBucket` "false negative" predicate to avoid swamping
+        // SUGGESTED with conversational narration.
+        private const val REROUTE_CONFIDENCE_FLOOR = LOW_CONFIDENCE_REVIEW_FLOOR
+        private const val REROUTE_ACTIONABILITY_FLOOR = 0.75f
+        private const val REROUTE_USEFULNESS_FLOOR = 0.80f
 
         // Hallucination filter tunables. Conservative defaults: skip very short
         // texts so legitimate utterances like "Llamar a casa" pass through.
