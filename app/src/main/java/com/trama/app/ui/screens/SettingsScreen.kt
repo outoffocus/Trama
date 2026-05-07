@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -238,7 +239,16 @@ fun SettingsScreen(
     var patternsExpanded by remember { mutableStateOf(false) }
     var promptsExpanded by remember { mutableStateOf(false) }
     var modelExpanded by remember { mutableStateOf(false) }
-    var speakerExpanded by remember { mutableStateOf(false) }
+    // Auto-expand the speaker section when no enrollment exists yet, so users
+    // who first reach Advanced see the call-to-action without an extra click.
+    // Diagnostics confirm 100% of finals pass through when the profile is
+    // empty — this is the single biggest precision lever the user can pull.
+    var speakerExpanded by remember {
+        mutableStateOf(
+            speakerVerificationManager.isBackendAvailable &&
+                !speakerVerificationManager.isConfigured
+        )
+    }
     var backupExpanded by remember { mutableStateOf(false) }
     var readableCalendars by remember { mutableStateOf(emptyList<CalendarHelper.ReadableCalendar>()) }
     var hasCalendarReadPermission by remember {
@@ -478,6 +488,46 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                }
+
+                if (speakerBackendAvailable && !speakerConfigured) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f),
+                        onClick = { onOpenSection(SettingsSection.ADVANCED) }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.Mic,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Enrola tu voz",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "Sin enrolar, las voces de otras personas se tratan como tuyas. Tres muestras bastan.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.85f)
+                                )
+                            }
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                        }
                     }
                 }
 
