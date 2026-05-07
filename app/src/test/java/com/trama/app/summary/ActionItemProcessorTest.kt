@@ -474,6 +474,21 @@ class ActionItemProcessorTest {
     @Test
     fun `detectAsrHallucination flags real export examples and passes legitimate notes`() {
         val hallucinations = listOf(
+            // Whisper non-speech bracket tokens
+            "[SILENCIO]",
+            "[Música]",
+            "(música)",
+            "(Puerto)",
+            "(portuguesa)",
+            "(Pasos de agua)",
+            // Multi-speaker dialogues from real exports
+            "- Ya, ya, ya. - Ya, tienes que tener algo. - Ya, ya, ya.",
+            "- ¿Qué digo? - Cambiar, para cambiar mucho las...",
+            "-¿Qué me dice? -Yo, para mí, lo que sería más útil",
+            // Pure questions
+            "¿Cómo lo hacemos?",
+            "¿Te has acordado de comprar el pan?",
+            // All-caps and repetition (existing patterns)
             "QUÉ CONFIGURACIONES HACE FALTA PORQUE NOSOTROS TENEMOS CONFIGURACIONES DE",
             "OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK OK"
         )
@@ -490,7 +505,9 @@ class ActionItemProcessorTest {
             "Acordarme de comprar un candado",
             "Mover el coche",
             "Acordarme de que esa última es el bebé ingresado",
-            "LLAMAR A CASA"
+            "LLAMAR A CASA",
+            "Tengo que llamar a mamá, ¿no?", // not a pure question
+            "Hablé con Sadot y mañana tengo que contestarle el mensaje"
         )
         for (text in legit) {
             assertNull(

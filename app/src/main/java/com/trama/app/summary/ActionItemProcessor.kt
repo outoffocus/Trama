@@ -845,14 +845,43 @@ class ActionItemProcessor(private val context: Context) {
         result.isActionable && result.confidence >= getActionableConfidenceThreshold(context)
 
     /**
-     * Detect cheap ASR hallucination patterns observed in real diagnostics:
-     * long uppercase rants and trivial token repetition. Returns a short reason
-     * code or null if the text looks legitimate.
+     * Detect cheap ASR hallucination + non-actionable speech patterns observed in
+     * real diagnostics. Returns a short reason code or null if the text looks
+     * legitimate. Categories:
+     *  - `bracket_token`: Whisper tagged the audio as music/silence/noise/etc.
+     *    (e.g. "[Música]", "(Puerto)"). Whole transcript is a single bracket.
+     *  - `multi_speaker_dialog`: 2+ lines starting with "- " — overheard
+     *    conversation, never the user's own action.
+     *  - `pure_question`: text starts with "¿" and ends with "?". Conversation,
+     *    not a task.
+     *  - `all_caps` / `repetition:<token>`: classic Whisper hallucination on
+     *    silence / degraded audio.
      */
     private fun detectAsrHallucination(text: String): String? {
         val trimmed = text.trim()
-        if (trimmed.length < HALLUCINATION_MIN_TEXT_LENGTH) return null
+        if (trimmed.isEmpty()) return null
 
+        // 1. Bracketed non-speech token. Cheap, runs even on short text.
+        if (BRACKET_ONLY_RE.matches(trimmed)) {
+            // Strip brackets for the reason code so logs read cleanly.
+            val tag = trimmed.trim('[', ']', '(', ')').lowercase(Locale.ROOT).take(20)
+            return "bracket_token:$tag"
+        }
+
+        // 2. Multi-speaker dialog. We see "- ¿qué digo? - cambiar..." patterns
+        //    where 2+ utterances are concatenated with a leading dash.
+        val dashLineStarts = DASH_LINE_START_RE.findAll(trimmed).count()
+        if (dashLineStarts >= 2) {
+            return "multi_speaker_dialog"
+        }
+
+        // 3. Pure question — text begins with "¿" and ends with "?".
+        if (trimmed.startsWith("¿") && trimmed.endsWith("?")) {
+            return "pure_question"
+        }
+
+        // 4. Length-gated checks for the older hallucination patterns.
+        if (trimmed.length < HALLUCINATION_MIN_TEXT_LENGTH) return null
         val tokens = trimmed.split(Regex("\\s+")).filter { it.isNotBlank() }
         if (tokens.size < HALLUCINATION_MIN_TOKENS) return null
 
@@ -1163,6 +1192,16 @@ Reglas:
         private const val HALLUCINATION_MIN_TEXT_LENGTH = 24
         private const val HALLUCINATION_MIN_TOKENS = 5
         private const val HALLUCINATION_REPETITION_RATIO = 0.5f
+
+        // Whole transcript is a single bracketed non-speech tag, e.g. "[Música]",
+        // "(Puerto)", "[silencio]", "(portuguesa)". Up to 40 chars inside.
+        private val BRACKET_ONLY_RE = Regex("""^\s*[\[(][^\]\)]{1,40}[\])]\s*$""")
+
+        // Dash followed by a letter or inverted question/exclamation — typical
+        // Whisper rendering of overheard dialog, e.g. "- ¿Qué digo? - Cambiar..."
+        // or "-¿Qué me dice? -Yo..." (without spaces around the dash).
+        private val DASH_LINE_START_RE =
+            Regex("""(?:^|[\s.!?])-\s*[¿¡\p{L}]""")
 
         /** Allowed range for the user-tunable acceptance threshold. */
         val ACTIONABLE_THRESHOLD_RANGE = 0.30f..0.70f
