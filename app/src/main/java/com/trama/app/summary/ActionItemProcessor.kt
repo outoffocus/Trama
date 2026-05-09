@@ -52,7 +52,27 @@ class ActionItemProcessor(private val context: Context) {
                 meta = mapOf(
                     "id" to entryId,
                     "decision" to "blocked_by_signal",
-                    "signalReason" to "asr_hallucination:$reason"
+                    "signalReason" to "asr_hallucination:$reason",
+                    "rejectStage" to "ActionQuality",
+                    "outcome" to CaptureLog.CaptureOutcome.ACTION_REJECTED
+                )
+            )
+            return false
+        }
+
+        detectAmbientNegative(processingText)?.let { reason ->
+            repository.markDiscarded(entryId)
+            Log.i(TAG, "Pre-LLM block: entry $entryId looks ambient/non-actionable ($reason)")
+            CaptureLog.event(
+                gate = CaptureLog.Gate.LLM,
+                result = CaptureLog.Result.REJECT,
+                text = processingText.take(160),
+                meta = mapOf(
+                    "id" to entryId,
+                    "decision" to "blocked_by_signal",
+                    "signalReason" to "ambient_negative:$reason",
+                    "rejectStage" to "ActionQuality",
+                    "outcome" to CaptureLog.CaptureOutcome.ACTION_REJECTED
                 )
             )
             return false
@@ -62,7 +82,10 @@ class ActionItemProcessor(private val context: Context) {
         // closely matches a pattern the user previously flagged as "ruido" or
         // "no es para mí", auto-discard without spending an LLM call.
         DeletionFeedbackStore.bestMatch(context, processingText)?.let { (signal, score) ->
-            if (score >= DeletionFeedbackStore.SIMILARITY_BLOCK_THRESHOLD) {
+            if (
+                score >= DeletionFeedbackStore.SIMILARITY_BLOCK_THRESHOLD &&
+                !shouldBypassFeedbackNoiseGate(processingText)
+            ) {
                 repository.markDiscarded(entryId)
                 Log.i(TAG, "Pre-LLM block: entry $entryId matches noise signal (score=$score)")
                 CaptureLog.event(
@@ -74,7 +97,9 @@ class ActionItemProcessor(private val context: Context) {
                         "decision" to "blocked_by_signal",
                         "signalText" to signal.text.take(120),
                         "signalReason" to signal.reason,
-                        "similarity" to "%.2f".format(score)
+                        "similarity" to "%.2f".format(score),
+                        "rejectStage" to "ActionQuality",
+                        "outcome" to CaptureLog.CaptureOutcome.ACTION_REJECTED
                     )
                 )
                 return false
@@ -138,7 +163,8 @@ class ActionItemProcessor(private val context: Context) {
                         "actionType" to result.actionType,
                         "confidence" to "%.2f".format(result.confidence),
                         "usefulness" to "%.2f".format(result.usefulnessScore),
-                        "actionability" to "%.2f".format(result.actionabilityScore)
+                        "actionability" to "%.2f".format(result.actionabilityScore),
+                        "outcome" to CaptureLog.CaptureOutcome.ACTION_ACCEPTED
                     )
                 )
                 acceptedForTimeline = true
@@ -177,7 +203,13 @@ class ActionItemProcessor(private val context: Context) {
                         "usefulness" to "%.2f".format(result.usefulnessScore),
                         "actionability" to "%.2f".format(result.actionabilityScore),
                         "discardReason" to result.discardReason,
-                        "route" to rejectedStatus(result)
+                        "route" to rejectedStatus(result),
+                        "rejectStage" to "UserSurface",
+                        "outcome" to if (rejectedStatus(result) == EntryStatus.SUGGESTED) {
+                            CaptureLog.CaptureOutcome.LOW_CONFIDENCE_SUGGESTED
+                        } else {
+                            CaptureLog.CaptureOutcome.ACTION_REJECTED
+                        }
                     )
                 )
                 return false
@@ -533,31 +565,11 @@ class ActionItemProcessor(private val context: Context) {
             // Try parsing as JSON (same format as Cloud)
             parseResult(responseText, 0.85f, normalizedInput)
         } catch (e: Exception) {
-            // Fallback: use response as clean text + keyword-based inference
-            Log.d(TAG, "Local model JSON parse failed, using text fallback", e)
-            val cleanText = JsonRepair.extractAndRepair(responseText).trim().removeSurrounding("\"")
-            val validatedCleanText = cleanText.takeIf { it.isNotBlank() } ?: return null
-            val truncated = withDisplayTrigger(
-                validatedCleanText.take(200),
-                ManualActionSuggestionExtractor.leadingDisplayTrigger(normalizedInput)
-            )
-            val inferredActionType = inferActionType(normalizedInput)
-            val passesGate = isActionableAfterValidation(
-                cleanText = truncated,
-                actionType = inferredActionType,
-                modelIsActionable = true
-            )
-            LLMOutcome(
-                primary = ProcessingResult(
-                    cleanText = truncated,
-                    actionType = inferredActionType,
-                    dueDate = null,
-                    priority = "NORMAL",
-                    confidence = if (passesGate) 0.7f else 0.25f,
-                    isActionable = passesGate
-                ),
-                extras = emptyList()
-            )
+            // Strict mode: local Gemma must behave like a structured classifier.
+            // Free-text fallback was too generous and could turn malformed model
+            // output into real tasks.
+            Log.d(TAG, "Local model JSON parse failed; rejecting local extraction", e)
+            null
         }
     }
 
@@ -587,6 +599,7 @@ class ActionItemProcessor(private val context: Context) {
         val tomorrowStr = dateFormat.format(tomorrow.time)
         val contextBlock = buildContextBlock(recentContext)
         val userNoiseExamples = buildUserNoiseExamplesBlock()
+        val weekdayDates = buildWeekdayDateContext()
         return PromptTemplateStore.render(
             context,
             PromptTemplateStore.ACTION_ITEM,
@@ -596,10 +609,30 @@ class ActionItemProcessor(private val context: Context) {
                 "normalizedInput" to normalizedInput,
                 "today" to today,
                 "tomorrow" to tomorrowStr,
+                "weekdayDates" to weekdayDates,
                 "recentContext" to contextBlock,
                 "userNoiseExamples" to userNoiseExamples
             )
         )
+    }
+
+    private fun buildWeekdayDateContext(): String {
+        val weekdays = listOf(
+            Calendar.MONDAY to "lunes",
+            Calendar.TUESDAY to "martes",
+            Calendar.WEDNESDAY to "miércoles",
+            Calendar.THURSDAY to "jueves",
+            Calendar.FRIDAY to "viernes",
+            Calendar.SATURDAY to "sábado",
+            Calendar.SUNDAY to "domingo"
+        )
+        return weekdays.joinToString(", ") { (day, label) ->
+            val cal = Calendar.getInstance()
+            while (cal.get(Calendar.DAY_OF_WEEK) != day) {
+                cal.add(Calendar.DAY_OF_YEAR, 1)
+            }
+            "$label=${dateFormat.format(cal.time)}"
+        }
     }
 
     /**
@@ -607,16 +640,50 @@ class ActionItemProcessor(private val context: Context) {
      * Returns "" when the store is empty so the placeholder collapses cleanly.
      */
     private fun buildUserNoiseExamplesBlock(): String {
-        val examples = DeletionFeedbackStore.recentNoiseExamples(context)
-        if (examples.isEmpty()) return ""
+        val examples = runCatching {
+            DeletionFeedbackStore.recentPromptExamples(context)
+        }.getOrDefault(emptyList())
+        val rules = runCatching {
+            DeletionFeedbackStore.learnedRules(context)
+        }.getOrDefault(emptyList())
+        val acceptedExamples = runCatching {
+            DeletionFeedbackStore.recentAcceptedExamples(context)
+        }.getOrDefault(emptyList())
+        val acceptedRules = runCatching {
+            DeletionFeedbackStore.learnedAcceptedRules(context)
+        }.getOrDefault(emptyList())
+        if (examples.isEmpty() && rules.isEmpty() && acceptedExamples.isEmpty() && acceptedRules.isEmpty()) return ""
         return buildString {
             appendLine()
-            appendLine("EJEMPLOS APRENDIDOS DE ESTE USUARIO (siempre DISCARD — el usuario los eliminó como ruido):")
-            examples.forEachIndexed { index, txt ->
-                appendLine("- \"${txt.replace('"', '\'').take(160)}\"")
-                if (index >= DeletionFeedbackStore.FEW_SHOT_LIMIT - 1) return@forEachIndexed
+            if (acceptedRules.isNotEmpty()) {
+                appendLine("REGLAS APRENDIDAS DE ACCIONES CONFIRMADAS POR EL USUARIO:")
+                acceptedRules.forEach { rule ->
+                    appendLine("- ${rule.instruction} (soporte=${rule.support})")
+                }
             }
-            appendLine("Si la nueva nota es muy similar a alguno de estos patrones, marca DISCARD.")
+            if (acceptedExamples.isNotEmpty()) {
+                appendLine("EJEMPLOS RECIENTES QUE EL USUARIO SI CONFIRMO COMO ACCIONABLES:")
+                acceptedExamples.forEachIndexed { index, txt ->
+                    appendLine("- ACTION. Texto: \"${txt.replace('"', '\'').take(160)}\"")
+                    if (index >= DeletionFeedbackStore.FEW_SHOT_LIMIT - 1) return@forEachIndexed
+                }
+            }
+            if (rules.isNotEmpty()) {
+                appendLine("REGLAS APRENDIDAS DE BORRADOS DEL USUARIO:")
+                rules.forEach { rule ->
+                    appendLine("- ${rule.instruction} (soporte=${rule.support})")
+                }
+            }
+            if (examples.isNotEmpty()) {
+                appendLine("EJEMPLOS RECIENTES ELIMINADOS POR EL USUARIO:")
+                examples.forEachIndexed { index, (txt, reason) ->
+                    appendLine("- Motivo: $reason. Texto: \"${txt.replace('"', '\'').take(160)}\"")
+                    if (index >= DeletionFeedbackStore.FEW_SHOT_LIMIT - 1) return@forEachIndexed
+                }
+            }
+            appendLine("Si la nueva nota es similar a ruido/no era para mi/mala transcripcion, marca DISCARD o UNCLEAR con confidence<=0.3.")
+            appendLine("Si es similar a duplicada/ya hecha, evita crear duplicados.")
+            appendLine("Si se parece a ejemplos confirmados y mantiene ownership, verbo accionable y objeto concreto, favorece ACTION.")
             appendLine()
         }
     }
@@ -842,7 +909,11 @@ class ActionItemProcessor(private val context: Context) {
             .trim()
 
     private fun shouldAcceptAsTask(result: ProcessingResult): Boolean =
-        result.isActionable && result.confidence >= getActionableConfidenceThreshold(context)
+        result.isActionable &&
+            result.confidence >= maxOf(
+                getActionableConfidenceThreshold(context),
+                PENDING_CONFIDENCE_FLOOR
+            )
 
     /**
      * Detect cheap ASR hallucination + non-actionable speech patterns observed in
@@ -858,60 +929,33 @@ class ActionItemProcessor(private val context: Context) {
      *    silence / degraded audio.
      */
     private fun detectAsrHallucination(text: String): String? {
-        val trimmed = text.trim()
-        if (trimmed.isEmpty()) return null
+        return AsrHallucinationDetector.detect(text)
+    }
 
-        // 1. Bracketed non-speech token. Cheap, runs even on short text.
-        if (BRACKET_ONLY_RE.matches(trimmed)) {
-            // Strip brackets for the reason code so logs read cleanly.
-            val tag = trimmed.trim('[', ']', '(', ')').lowercase(Locale.ROOT).take(20)
-            return "bracket_token:$tag"
+    private fun detectAmbientNegative(text: String): String? {
+        val normalized = normalizeForAmbientNegative(text)
+        if (normalized.isBlank()) return null
+        if (AMBIENT_NEGATIVE_PATTERNS.any { it.containsMatchIn(normalized) }) {
+            return "ambient_conversation"
         }
-
-        // 2. Multi-speaker dialog. We see "- ¿qué digo? - cambiar..." patterns
-        //    where 2+ utterances are concatenated with a leading dash.
-        val dashLineStarts = DASH_LINE_START_RE.findAll(trimmed).count()
-        if (dashLineStarts >= 2) {
-            return "multi_speaker_dialog"
-        }
-
-        // 3. Pure question — text begins with "¿" and ends with "?".
-        if (trimmed.startsWith("¿") && trimmed.endsWith("?")) {
-            return "pure_question"
-        }
-
-        val tokens = trimmed.split(Regex("\\s+")).filter { it.isNotBlank() }
-
-        // 4. Single-word fragment. There is no useful action you can express in
-        //    one word: "Recordar" without an object, "Llamar" without a target,
-        //    "Comprar" without a thing. These are stubs of the trigger verb
-        //    echoed back by Whisper / matched by the intent regex.
-        if (tokens.size == 1) {
-            val cleaned = tokens[0].trim { c ->
-                c == '.' || c == ',' || c == '!' || c == '?' ||
-                    c == '¡' || c == '¿' || c == ';' || c == ':'
-            }
-            return "single_word:${cleaned.lowercase(Locale.ROOT).take(20)}"
-        }
-
-        // 5. Length-gated checks for the older hallucination patterns.
-        if (trimmed.length < HALLUCINATION_MIN_TEXT_LENGTH) return null
-        if (tokens.size < HALLUCINATION_MIN_TOKENS) return null
-
-        val lettered = tokens.filter { token -> token.any(Char::isLetter) }
-        if (lettered.size >= HALLUCINATION_MIN_TOKENS &&
-            lettered.all { it == it.uppercase(Locale.ROOT) }
-        ) {
-            return "all_caps"
-        }
-
-        val byCount = tokens.groupingBy { it.lowercase(Locale.ROOT) }.eachCount()
-        val mostFrequent = byCount.maxByOrNull { it.value } ?: return null
-        if (mostFrequent.value.toFloat() / tokens.size >= HALLUCINATION_REPETITION_RATIO) {
-            return "repetition:${mostFrequent.key.take(12)}"
-        }
-
         return null
+    }
+
+    private fun normalizeForAmbientNegative(text: String): String =
+        Normalizer.normalize(text.lowercase(Locale.getDefault()), Normalizer.Form.NFD)
+            .replace("\\p{Mn}+".toRegex(), "")
+            .replace(Regex("[^\\p{L}\\p{N}\\s,.;:!?¿¡-]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+    private fun shouldBypassFeedbackNoiseGate(text: String): Boolean {
+        val normalized = normalizeForAmbientNegative(text)
+        if (normalized.isBlank()) return false
+        val hasConcreteTime = STRONG_ACTION_TIME_RE.containsMatchIn(normalized)
+        val hasConcreteObject = normalized.split(Regex("\\s+")).count { it.length >= 4 } >= 4
+        val isStrongPersonalAction = STRONG_PERSONAL_ACTION_RE.any { it.containsMatchIn(normalized) }
+        val isStrongReminder = normalized.startsWith("recordar ") || normalized.startsWith("recuerdame ")
+        return (isStrongPersonalAction || isStrongReminder) && (hasConcreteTime || hasConcreteObject)
     }
 
     private suspend fun routeRejected(
@@ -1200,6 +1244,9 @@ Reglas:
         /** Default minimum confidence for an LLM extraction to be accepted as a real task. */
         const val DEFAULT_ACTIONABLE_CONFIDENCE_THRESHOLD = 0.40f
 
+        /** PENDING is reserved for high-confidence actions; lower useful items go to SUGGESTED. */
+        private const val PENDING_CONFIDENCE_FLOOR = 0.65f
+
         /** Below this, an entry is fully discarded; between this and the user threshold it goes to SUGGESTED. */
         const val LOW_CONFIDENCE_REVIEW_FLOOR = 0.30f
 
@@ -1226,6 +1273,28 @@ Reglas:
         private val DASH_LINE_START_RE =
             Regex("""(?:^|[\s.!?])-\s*[¿¡\p{L}]""")
 
+        private val AMBIENT_NEGATIVE_PATTERNS = listOf(
+            Regex("""\bpor\s+ejemplo\b.*\b(?:funcion|crear|hacer|enviar|llamar)\b"""),
+            Regex("""\b(?:todos|todo\s+el\s+mundo)\s+(?:teneis|tenéis|tienen|tenemos)\s+que\b"""),
+            Regex("""\b(?:reunion|reunión|ticket|query|software|test|tests|arquitectura|formato)\b.*\b(?:tenemos|teneis|tienes|hay)\s+que\b"""),
+            Regex("""\b(?:mi\s+opinion|mi\s+opinión|no\s+es\s+mi\s+decision|no\s+es\s+mi\s+decisión)\b"""),
+            Regex("""\b(?:sabes|claro|bueno|vale|o\s+sea)\b.*\b(?:tenemos|tienes|hay)\s+que\b.*\b(?:sabes|claro|bueno|vale|o\s+sea)\b"""),
+            Regex("""\b(?:pablo|alex|jan|tony|miguel)\b.*\b(?:tienes|tiene|tienen)\s+que\b""")
+        )
+
+        private val STRONG_PERSONAL_ACTION_RE = listOf(
+            Regex("""\b(?:tengo|tenemos)\s+que\s+(?:llamar|comprar|enviar|mandar|escribir|recoger|pagar|reservar|pedir|revisar|buscar|llevar|traer|ir)\b"""),
+            Regex("""\b(?:tengo|tenemos)\s+cita\b"""),
+            Regex("""\b(?:tengo|tenemos)\s+(?:reunion|reunión)\b"""),
+            Regex("""\bme\s+tengo\s+que\s+acordar\b"""),
+            Regex("""\bnos\s+tenemos\s+que\s+acordar\b"""),
+            Regex("""\bacordarme\s+de\b"""),
+            Regex("""\bacordarnos\s+de\b""")
+        )
+
+        private val STRONG_ACTION_TIME_RE =
+            Regex("""\b(?:hoy|manana|mañana|pasado\s+manana|pasado\s+mañana|lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo|\d{1,2}/\d{1,2})\b""")
+
         /** Allowed range for the user-tunable acceptance threshold. */
         val ACTIONABLE_THRESHOLD_RANGE = 0.30f..0.70f
 
@@ -1244,8 +1313,8 @@ Reglas:
                 .putFloat(KEY_ACTIONABLE_CONFIDENCE_THRESHOLD, value.coerceIn(ACTIONABLE_THRESHOLD_RANGE))
                 .apply()
         }
-        private const val USEFULNESS_THRESHOLD = 0.65f
-        private const val ACTIONABILITY_THRESHOLD = 0.65f
+        private const val USEFULNESS_THRESHOLD = 0.72f
+        private const val ACTIONABILITY_THRESHOLD = 0.72f
 
         private const val KIND_TASK = "TASK"
         private const val KIND_NOTE = "NOTE"

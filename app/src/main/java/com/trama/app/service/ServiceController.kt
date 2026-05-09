@@ -39,6 +39,13 @@ object ServiceController {
 
     private const val START_DEBOUNCE_MS = 1_500L
 
+    data class WatchdogStartResult(
+        val started: Boolean,
+        val errorType: String? = null,
+        val message: String? = null,
+        val stack: String? = null
+    )
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val transitionLock = Any()
     private val modeRef = AtomicReference(ServiceMode.IDLE)
@@ -174,15 +181,54 @@ object ServiceController {
      */
     fun startRecording(context: Context) {
         synchronized(transitionLock) {
-            if (_isRunning.value) {
-                setSuspendReason(context, SuspendReason.RECORDING)
-                context.stopService(Intent(context, KeywordListenerService::class.java))
-                _isRunning.value = false
-            }
+            pauseListeningForRecordingLocked(context, source = "service_controller_start_recording")
             _isWatchActive.value = false
             modeRef.set(ServiceMode.RECORDING)
             RecordingState.startRecording(context)
         }
+    }
+
+    /**
+     * Pause the listener before taking the microphone for an offline recording.
+     *
+     * The persisted should_run flag is intentionally treated as authoritative here:
+     * after process recreation, _isRunning can be false while the user-facing
+     * listening mode is still expected to resume when recording finishes.
+     */
+    fun pauseListeningForRecording(context: Context, source: String = "recording_service_start") {
+        synchronized(transitionLock) {
+            pauseListeningForRecordingLocked(context, source)
+        }
+    }
+
+    private fun pauseListeningForRecordingLocked(context: Context, source: String) {
+        val shouldResumeListening = _isRunning.value || shouldBeRunning(context)
+        if (!shouldResumeListening) {
+            CaptureLog.event(
+                gate = CaptureLog.Gate.SERVICE,
+                result = CaptureLog.Result.OK,
+                text = "recording_started_without_listener_resume",
+                meta = mapOf(
+                    "source" to source,
+                    "isRunning" to _isRunning.value,
+                    "shouldBeRunning" to false
+                )
+            )
+            return
+        }
+
+        setSuspendReason(context, SuspendReason.RECORDING)
+        context.stopService(Intent(context, KeywordListenerService::class.java))
+        _isRunning.value = false
+        CaptureLog.event(
+            gate = CaptureLog.Gate.SERVICE,
+            result = CaptureLog.Result.OK,
+            text = "listener_paused_for_recording",
+            meta = mapOf(
+                "source" to source,
+                "shouldResumeListening" to true
+            )
+        )
     }
 
     /**
@@ -284,19 +330,32 @@ object ServiceController {
             .getOrDefault(SuspendReason.NONE)
     }
 
-    fun startFromWatchdog(context: Context, reason: String): Boolean {
+    fun startFromWatchdog(context: Context, reason: String): WatchdogStartResult {
         synchronized(transitionLock) {
-            if (!shouldBeRunning(context)) return false
-            if (suspendReason(context) != SuspendReason.NONE) return false
-            if (shouldSuppressStart("watchdog:$reason")) return true
-            return runCatching {
+            if (!shouldBeRunning(context)) {
+                return WatchdogStartResult(false, errorType = "should_not_run")
+            }
+            val suspendReason = suspendReason(context)
+            if (suspendReason != SuspendReason.NONE) {
+                return WatchdogStartResult(false, errorType = "suspended", message = suspendReason.name)
+            }
+            if (shouldSuppressStart("watchdog:$reason")) return WatchdogStartResult(started = true)
+            return try {
                 val intent = Intent(context, KeywordListenerService::class.java)
                     .putExtra("watchdogReason", reason)
                 ContextCompat.startForegroundService(context, intent)
                 _isRunning.value = true
                 _isWatchActive.value = false
                 modeRef.set(ServiceMode.LISTENING)
-            }.isSuccess
+                WatchdogStartResult(started = true)
+            } catch (t: Throwable) {
+                WatchdogStartResult(
+                    started = false,
+                    errorType = t.javaClass.simpleName,
+                    message = t.message,
+                    stack = android.util.Log.getStackTraceString(t).take(2_000)
+                )
+            }
         }
     }
 

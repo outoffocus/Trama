@@ -18,6 +18,7 @@ object ServiceWatchdogScheduler {
 
     fun schedule(context: Context, delayMs: Long = DEFAULT_DELAY_MS, reason: String) {
         val appContext = context.applicationContext
+        CaptureLog.init(appContext)
         val alarmManager = appContext.getSystemService(AlarmManager::class.java) ?: return
         val triggerAt = SystemClock.elapsedRealtime() + delayMs.coerceAtLeast(15_000L)
 
@@ -31,7 +32,7 @@ object ServiceWatchdogScheduler {
                 gate = CaptureLog.Gate.SERVICE,
                 result = CaptureLog.Result.OK,
                 text = "watchdog_scheduled",
-                meta = mapOf(
+                meta = ServiceRescueReceiver.watchdogServiceState(appContext) + mapOf(
                     "reason" to reason,
                     "delayMs" to delayMs
                 )
@@ -43,12 +44,14 @@ object ServiceWatchdogScheduler {
 
     fun cancel(context: Context) {
         val appContext = context.applicationContext
+        CaptureLog.init(appContext)
         val alarmManager = appContext.getSystemService(AlarmManager::class.java) ?: return
         alarmManager.cancel(pendingIntent(appContext))
         CaptureLog.event(
             gate = CaptureLog.Gate.SERVICE,
             result = CaptureLog.Result.OK,
-            text = "watchdog_cancelled"
+            text = "watchdog_cancelled",
+            meta = ServiceRescueReceiver.watchdogServiceState(appContext)
         )
     }
 

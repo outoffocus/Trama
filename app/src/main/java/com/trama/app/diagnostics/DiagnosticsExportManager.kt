@@ -51,6 +51,8 @@ object DiagnosticsExportManager {
         val llmRejected: Int,
         val discardedEntries: Int,
         val suggestedEntries: Int,
+        val suggestedEvents: Int,
+        val lowConfidenceSuggestedEvents: Int,
         val pendingEntries: Int,
         val qualityReviewNeeded: Int,
         val discardedPossibleFalseNegatives: Int,
@@ -169,6 +171,10 @@ object DiagnosticsExportManager {
             llmRejected = events.count { it.gate == "LLM" && it.result == "REJECT" },
             discardedEntries = entries.count { it.status == "DISCARDED" },
             suggestedEntries = entries.count { it.status == "SUGGESTED" },
+            suggestedEvents = events.count { it.gate == "LLM" && it.meta["route"] == "SUGGESTED" },
+            lowConfidenceSuggestedEvents = events.count {
+                it.meta["outcome"] == CaptureLog.CaptureOutcome.LOW_CONFIDENCE_SUGGESTED.name
+            },
             pendingEntries = entries.count { it.status == "PENDING" },
             qualityReviewNeeded = qualityDecisions.count { it.needsHumanReview },
             discardedPossibleFalseNegatives = qualityDecisions.count {

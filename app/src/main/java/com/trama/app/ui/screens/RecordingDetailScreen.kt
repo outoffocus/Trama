@@ -64,9 +64,11 @@ import androidx.compose.ui.unit.dp
 import com.trama.app.summary.ActionExecutor
 import com.trama.app.summary.ActionType
 import com.trama.app.summary.CalendarHelper
+import com.trama.app.summary.DeletionFeedbackStore
 import com.trama.app.summary.EntryActionBridge
 import com.trama.app.summary.RecordingProcessor
 import com.trama.app.summary.SuggestedAction
+import com.trama.app.ui.SettingsDataStore
 import com.trama.app.ui.components.CalendarActionDialog
 import com.trama.shared.data.DatabaseProvider
 import com.trama.shared.model.DiaryEntry
@@ -90,10 +92,12 @@ fun RecordingDetailScreen(
 ) {
     val context = LocalContext.current
     val repository = remember { DatabaseProvider.getRepository(context) }
+    val settings = remember { SettingsDataStore(context) }
     val scope = rememberCoroutineScope()
 
     val recording by repository.getRecordingById(recordingId).collectAsState(initial = null)
     val actions by repository.getByRecordingId(recordingId).collectAsState(initial = emptyList())
+    val learnFromDeletions by settings.learnFromDeletions.collectAsState(initial = false)
 
     // Resolve duplicate original entry texts
     val duplicateOriginals = remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
@@ -109,6 +113,19 @@ fun RecordingDetailScreen(
 
     val dateFormat = SimpleDateFormat("dd MMM yyyy · HH:mm", Locale("es"))
     val json = remember { Json { ignoreUnknownKeys = true } }
+
+    fun acceptSuggestedAction(action: DiaryEntry, source: String) {
+        scope.launch(Dispatchers.IO) {
+            repository.markPending(action.id)
+            if (learnFromDeletions) {
+                DeletionFeedbackStore.recordAccepted(
+                    context = context,
+                    text = action.displayText.ifBlank { action.text },
+                    source = source
+                )
+            }
+        }
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -272,7 +289,16 @@ fun RecordingDetailScreen(
                         if (suggested.isNotEmpty()) {
                             TextButton(onClick = {
                                 scope.launch(Dispatchers.IO) {
-                                    suggested.forEach { repository.markPending(it.id) }
+                                    suggested.forEach { action ->
+                                        repository.markPending(action.id)
+                                        if (learnFromDeletions) {
+                                            DeletionFeedbackStore.recordAccepted(
+                                                context = context,
+                                                text = action.displayText.ifBlank { action.text },
+                                                source = "recording_accept_all"
+                                            )
+                                        }
+                                    }
                                 }
                             }) {
                                 Text("Añadir todas", style = MaterialTheme.typography.labelMedium)
@@ -288,7 +314,7 @@ fun RecordingDetailScreen(
                             isSuggested = true,
                             duplicateOfText = action.duplicateOfId?.let { duplicateOriginals.value[it] },
                             onClick = { onActionClick(action.id) },
-                            onAccept = { scope.launch(Dispatchers.IO) { repository.markPending(action.id) } },
+                            onAccept = { acceptSuggestedAction(action, source = "recording_accept_suggested") },
                             onDismiss = { scope.launch(Dispatchers.IO) { repository.markDiscarded(action.id) } }
                         )
                     }

@@ -3,6 +3,7 @@ package com.trama.app.chat
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.trama.shared.model.EntryActionType
 import java.util.Calendar
 import java.util.TimeZone
 
@@ -112,5 +113,44 @@ class ChatQueryInterpreterTest {
 
         assertEquals(ChatIntent.DAY_SUMMARY, query.intent)
         assertEquals("Viernes 3 de mayo 2024", query.dateRange?.label)
+    }
+
+    @Test
+    fun `interprets country month presence without swallowing date`() {
+        val query = interpreter.interpret("¿Estuve en Portugal en abril?")
+
+        assertEquals(ChatIntent.PLACE_PRESENCE, query.intent)
+        assertEquals("Abril 2026", query.dateRange?.label)
+        assertEquals(listOf("Portugal"), query.placeTerms)
+    }
+
+    @Test
+    fun `interprets liked restaurants in country`() {
+        val query = interpreter.interpret("¿Qué restaurantes me gustaron en Portugal?")
+
+        assertEquals(ChatIntent.LIKED_PLACES, query.intent)
+        assertEquals(ChatPlaceCategory.RESTAURANT, query.placeCategory)
+        assertEquals(listOf("Portugal"), query.placeTerms)
+        assertTrue(query.likedOnly)
+    }
+
+    @Test
+    fun `interprets generic buy question for current month`() {
+        val query = interpreter.interpret("¿Qué cosas compré este mes?")
+
+        assertEquals(ChatIntent.GENERAL_FACT_SEARCH, query.intent)
+        assertEquals("Abril 2026", query.dateRange?.label)
+        assertEquals(EntryActionType.BUY, query.actionTypeFilter)
+        assertTrue(query.searchTerms.isEmpty())
+    }
+
+    @Test
+    fun `interprets arbitrary date lookup without special casing domain`() {
+        val query = interpreter.interpret("¿Qué día fui a lavar el coche en abril?")
+
+        assertEquals(ChatIntent.GENERAL_FACT_SEARCH, query.intent)
+        assertEquals("Abril 2026", query.dateRange?.label)
+        assertEquals(ChatAnswerMode.DATE_LIST, query.answerMode)
+        assertEquals(listOf("lavar", "coche"), query.searchTerms)
     }
 }

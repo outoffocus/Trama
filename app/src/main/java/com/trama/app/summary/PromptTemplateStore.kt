@@ -186,6 +186,8 @@ Reglas:
   - conviertela solo si la nota menciona una fecha o momento temporal claro y resoluble
   - hoy = {{today}}
   - mañana = {{tomorrow}}
+  - dias de la semana para este contexto: {{weekdayDates}}
+  - si la nota dice "el lunes", "para el viernes", "este domingo", etc., usa la proxima fecha de ese dia segun la tabla anterior; no lo trates como trigger por si solo
   - si no hay fecha clara o no se puede resolver con seguridad, devuelve null
   - la mencion literal debe ir en dateMentions aunque dueDate sea null
   - no inventes fechas
@@ -336,7 +338,7 @@ Reglas:
   - originalText: conserva el fragmento original o casi original que origina la accion
   - normalizedText: corrige transcripcion pero preserva entidades
   - actionType: CALL=llamar, BUY=comprar, SEND=enviar, EVENT=cita/reunión, REVIEW=revisar, TALK_TO=hablar con, GENERIC=otro
-  - dueDate: SOLO si mencionan una fecha o momento temporal claro y explicito (hoy, mañana, lunes, 5 de abril, etc.) y se puede resolver con seguridad. Hoy={{today}}, mañana={{tomorrow}}. Si no se puede resolver con certeza, devuelve null y conserva la mención literal en dateMentions
+  - dueDate: SOLO si mencionan una fecha o momento temporal claro y explicito (hoy, mañana, lunes, 5 de abril, etc.) y se puede resolver con seguridad. Hoy={{today}}, mañana={{tomorrow}}. Dias de la semana en este contexto: {{weekdayDates}}. Si no se puede resolver con certeza, devuelve null y conserva la mención literal en dateMentions
   - priority: URGENT si urgente/ya/ahora/cuanto antes. HIGH si importante. LOW si cuando pueda. NORMAL en el resto
   - no crees dos tareas si en realidad es la misma accion expresada dos veces
   - mejor menos acciones y fiables que muchas dudosas

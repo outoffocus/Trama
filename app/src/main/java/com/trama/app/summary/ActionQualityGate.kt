@@ -127,7 +127,12 @@ object ActionQualityGate {
         Regex("""\b(?:sale|salga)\s+(?:como|lo\s+que)\s+(?:sale|salga)\b"""),
         Regex("""\b(?:que|qué)\s+(?:barato|caro)\b"""),
         Regex("""\b(?:me|te|le)\s+asiste\b"""),
-        Regex("""^funci[oó]n\s+de\b""")
+        Regex("""^funci[oó]n\s+de\b"""),
+        Regex("""\bno\s+s[eé]\s+lo\s+que\s+(?:tengo|tenemos)\s+que\s+decir\b"""),
+        Regex("""\b(?:hay|tenemos|tengo)\s+que\s+hacer\b.*\b(?:hay|tenemos|tengo)\s+que\s+hacer\b"""),
+        Regex("""\b(?:s[ií]\s*){2,}\b.*\b(?:recordar|hay\s+que|tenemos\s+que|tengo\s+que)\b"""),
+        Regex("""\bno\s+importa[n]?\s+una\s+mierda\b"""),
+        Regex("""\bo\s+no\b$""")
     )
 
     private val TRAILING_INCOMPLETE_PATTERNS = listOf(

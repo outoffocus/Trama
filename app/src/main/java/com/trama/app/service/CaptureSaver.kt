@@ -38,7 +38,8 @@ class CaptureSaver(
         originalText: String,
         llmConfidence: Float,
         wasReviewed: Boolean,
-        confidence: Float
+        confidence: Float,
+        preferSuggested: Boolean = false
     ) {
         scope.launch(Dispatchers.IO) {
             val repo = repoProvider() ?: return@launch
@@ -72,7 +73,10 @@ class CaptureSaver(
                     gate = CaptureLog.Gate.DEDUP_SEM,
                     result = CaptureLog.Result.DUP,
                     text = text,
-                    meta = mapOf("intent" to intentId)
+                    meta = mapOf(
+                        "intent" to intentId,
+                        "outcome" to CaptureLog.CaptureOutcome.DUPLICATE
+                    )
                 )
                 return@launch
             }
@@ -85,7 +89,13 @@ class CaptureSaver(
                 gate = CaptureLog.Gate.SAVE,
                 result = CaptureLog.Result.OK,
                 text = text,
-                meta = mapOf("id" to entryId, "intent" to intentId, "label" to label)
+                meta = mapOf(
+                    "id" to entryId,
+                    "intent" to intentId,
+                    "label" to label,
+                    "preferSuggested" to preferSuggested,
+                    "outcome" to CaptureLog.CaptureOutcome.INTENT_CANDIDATE
+                )
             )
             EntryProcessingState.markProcessing(entryId)
             onStatus("entrada guardada")
@@ -99,12 +109,34 @@ class CaptureSaver(
             } finally {
                 EntryProcessingState.markFinished(entryId)
             }
+            if (preferSuggested && repo.isVisiblePendingEntry(entryId)) {
+                repo.markSuggested(entryId)
+                CaptureLog.event(
+                    gate = CaptureLog.Gate.LLM,
+                    result = CaptureLog.Result.OK,
+                    text = text,
+                    meta = mapOf(
+                        "entryId" to entryId,
+                        "decision" to "accepted_but_suggested",
+                        "route" to "SUGGESTED",
+                        "reason" to "speaker_profile_missing_or_degraded",
+                        "qualityBucket" to "ambiguous_suggested",
+                        "outcome" to CaptureLog.CaptureOutcome.LOW_CONFIDENCE_SUGGESTED
+                    )
+                )
+                acceptedForTimeline = false
+            }
             if (acceptedForTimeline) {
                 val acceptedEntry = repo.getByIdOnce(entryId) ?: entry
                 notifier.showNewEntry(acceptedEntry)
                 notifyTimelineActionAdded()
             }
         }
+    }
+
+    private suspend fun DiaryRepository.isVisiblePendingEntry(entryId: Long): Boolean {
+        val entry = getByIdOnce(entryId) ?: return false
+        return entry.status == "PENDING" && entry.duplicateOfId == null
     }
 
     private fun notifyTimelineActionAdded() {

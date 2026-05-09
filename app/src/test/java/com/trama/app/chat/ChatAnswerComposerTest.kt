@@ -2,6 +2,7 @@ package com.trama.app.chat
 
 import com.trama.shared.model.DailyPage
 import com.trama.shared.model.DiaryEntry
+import com.trama.shared.model.EntryActionType
 import com.trama.shared.model.Place
 import com.trama.shared.model.Recording
 import com.trama.shared.model.Source
@@ -229,6 +230,111 @@ class ChatAnswerComposerTest {
         assertTrue(answer!!.contains("Tareas completadas"))
         assertTrue(answer.contains("Enviar presupuesto"))
         assertTrue(answer.contains("Llamar a Marta"))
+    }
+
+    @Test
+    fun `composes liked restaurants answer with ratings`() {
+        val context = ChatRetrievedContext.PlaceCollection(
+            dateRange = ChatDateRange(0L, 1L, "Abril 2026"),
+            regionTerms = listOf("Portugal"),
+            category = ChatPlaceCategory.RESTAURANT,
+            likedOnly = true,
+            places = listOf(
+                PlaceResult(
+                    term = "Portugal",
+                    place = Place(
+                        id = 3L,
+                        name = "Casa Guedes",
+                        latitude = 0.0,
+                        longitude = 0.0,
+                        type = "restaurant",
+                        rating = 5,
+                        opinionSummary = "Sandwich excelente"
+                    ),
+                    visits = listOf(
+                        TimelineEvent(
+                            id = 3L,
+                            type = TimelineEventType.DWELL,
+                            timestamp = 1_000L,
+                            title = "Casa Guedes",
+                            placeId = 3L
+                        )
+                    )
+                )
+            )
+        )
+
+        val answer = composer.compose(
+            ChatQuery(
+                "¿Qué restaurantes me gustaron en Portugal?",
+                ChatIntent.LIKED_PLACES,
+                dateRange = ChatDateRange(0L, 1L, "Abril 2026"),
+                placeTerms = listOf("Portugal"),
+                placeCategory = ChatPlaceCategory.RESTAURANT,
+                likedOnly = true
+            ),
+            context
+        )
+
+        assertTrue(answer!!.contains("Casa Guedes"))
+        assertTrue(answer.contains("5/5"))
+        assertTrue(answer.contains("Portugal en abril 2026"))
+    }
+
+    @Test
+    fun `composes generic factual answer from entries`() {
+        val context = ChatRetrievedContext.GenericFacts(
+            dateRange = ChatDateRange(0L, 1L, "Abril 2026"),
+            searchTerms = emptyList(),
+            actionTypeFilter = EntryActionType.BUY,
+            answerMode = ChatAnswerMode.GENERAL,
+            entries = listOf(entry("Comprar calcetines").copy(actionType = EntryActionType.BUY)),
+            recordings = emptyList(),
+            timelineEvents = emptyList(),
+            placesById = emptyMap()
+        )
+
+        val answer = composer.compose(
+            ChatQuery(
+                "¿Qué cosas compré este mes?",
+                ChatIntent.GENERAL_FACT_SEARCH,
+                dateRange = ChatDateRange(0L, 1L, "Abril 2026"),
+                actionTypeFilter = EntryActionType.BUY
+            ),
+            context
+        )
+
+        assertTrue(answer!!.contains("Comprar calcetines"))
+        assertTrue(answer.contains("BUY"))
+        assertTrue(answer.contains("abril 2026"))
+    }
+
+    @Test
+    fun `composes date list for arbitrary factual lookup`() {
+        val context = ChatRetrievedContext.GenericFacts(
+            dateRange = ChatDateRange(0L, 2_000L, "Abril 2026"),
+            searchTerms = listOf("lavar", "coche"),
+            actionTypeFilter = null,
+            answerMode = ChatAnswerMode.DATE_LIST,
+            entries = listOf(entry("Lavar el coche").copy(createdAt = 1_000L)),
+            recordings = emptyList(),
+            timelineEvents = emptyList(),
+            placesById = emptyMap()
+        )
+
+        val answer = composer.compose(
+            ChatQuery(
+                "¿Qué día fui a lavar el coche en abril?",
+                ChatIntent.GENERAL_FACT_SEARCH,
+                dateRange = ChatDateRange(0L, 2_000L, "Abril 2026"),
+                searchTerms = listOf("lavar", "coche"),
+                answerMode = ChatAnswerMode.DATE_LIST
+            ),
+            context
+        )
+
+        assertTrue(answer!!.contains("Lavar el coche"))
+        assertTrue(answer.contains("Encontré estas fechas"))
     }
 
     @Test

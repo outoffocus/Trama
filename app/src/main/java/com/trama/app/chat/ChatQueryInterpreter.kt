@@ -1,6 +1,7 @@
 package com.trama.app.chat
 
 import com.trama.shared.util.DayRange
+import com.trama.shared.model.EntryActionType
 import java.text.Normalizer
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -15,8 +16,14 @@ class ChatQueryInterpreter(
         val normalized = normalize(question)
         val dateRange = resolveDateRange(normalized)
         val placeTerms = extractPlaceTerms(question)
+        val placeCategory = resolvePlaceCategory(normalized)
+        val likedOnly = looksLikeLikedPlacesQuestion(normalized)
+        val actionTypeFilter = resolveActionTypeFilter(normalized)
+        val searchTerms = extractSearchTerms(normalized)
+        val answerMode = resolveAnswerMode(normalized)
 
         val intent = when {
+            likedOnly -> ChatIntent.LIKED_PLACES
             dateRange != null && looksLikeDayPlacesQuestion(normalized) && !looksLikeDurationQuestion(normalized) ->
                 ChatIntent.DAY_PLACES
             dateRange != null && looksLikeCompletedTasksQuestion(normalized) -> ChatIntent.COMPLETED_TASKS
@@ -25,8 +32,13 @@ class ChatQueryInterpreter(
             placeTerms.isNotEmpty() && looksLikeAfterQuestion(normalized) -> ChatIntent.PLACE_AFTER
             placeTerms.size >= 2 && looksLikeOrderQuestion(normalized) -> ChatIntent.PLACE_ORDER
             placeTerms.isNotEmpty() && looksLikeDurationQuestion(normalized) -> ChatIntent.PLACE_DURATION
+            answerMode == ChatAnswerMode.DATE_LIST && looksLikeGenericFactQuestion(normalized) ->
+                ChatIntent.GENERAL_FACT_SEARCH
             placeTerms.isNotEmpty() && looksLikePlaceQuestion(normalized) -> ChatIntent.PLACE_PRESENCE
+            looksLikePlaceListQuestion(normalized) && (dateRange != null || placeTerms.isNotEmpty()) ->
+                ChatIntent.PLACE_LIST
             dateRange != null && looksLikeDayQuestion(normalized) -> ChatIntent.DAY_SUMMARY
+            looksLikeGenericFactQuestion(normalized) -> ChatIntent.GENERAL_FACT_SEARCH
             else -> ChatIntent.UNKNOWN
         }
 
@@ -34,9 +46,136 @@ class ChatQueryInterpreter(
             rawQuestion = question.trim(),
             intent = intent,
             dateRange = dateRange,
-            placeTerms = placeTerms
+            placeTerms = placeTerms,
+            placeCategory = placeCategory,
+            likedOnly = likedOnly,
+            searchTerms = searchTerms,
+            actionTypeFilter = actionTypeFilter,
+            answerMode = answerMode
         )
     }
+
+    private fun resolveAnswerMode(question: String): ChatAnswerMode =
+        if (
+            listOf(
+                "que dia",
+                "qué día",
+                "que dias",
+                "qué días",
+                "cuando",
+                "cuándo",
+                "en que fecha",
+                "en qué fecha"
+            ).any(question::contains)
+        ) {
+            ChatAnswerMode.DATE_LIST
+        } else {
+            ChatAnswerMode.GENERAL
+        }
+
+    private fun resolveActionTypeFilter(question: String): String? = when {
+        listOf("compre", "compré", "comprar", "comprado", "compras", "compra").any(question::contains) ->
+            EntryActionType.BUY
+        listOf("llame", "llamé", "llamar", "llamado", "llamadas", "llamada").any(question::contains) ->
+            EntryActionType.CALL
+        listOf("envie", "envié", "enviar", "enviado", "mandar", "mande", "mandé").any(question::contains) ->
+            EntryActionType.SEND
+        listOf("hable", "hablé", "hablar", "reunion", "reunión").any(question::contains) ->
+            EntryActionType.TALK_TO
+        listOf("revise", "revisé", "revisar", "buscar", "busque", "busqué").any(question::contains) ->
+            EntryActionType.REVIEW
+        else -> null
+    }
+
+    private fun looksLikeGenericFactQuestion(question: String): Boolean {
+        val interrogative = listOf(
+            "que ",
+            "qué ",
+            "cuales",
+            "cuáles",
+            "lista",
+            "dime",
+            "busca",
+            "recuerdas",
+            "recuerdame",
+            "recuérdame"
+        ).any(question::contains)
+        val factualTarget = listOf(
+            "cosas",
+            "tareas",
+            "notas",
+            "acciones",
+            "compre",
+            "compré",
+            "llame",
+            "llamé",
+            "envie",
+            "envié",
+            "hice",
+            "dije",
+            "registre",
+            "registré",
+            "apunte",
+            "apunté"
+        ).any(question::contains)
+        return interrogative && (factualTarget || extractSearchTerms(question).isNotEmpty())
+    }
+
+    private fun resolvePlaceCategory(question: String): ChatPlaceCategory =
+        if (
+            listOf(
+                "restaurante",
+                "restaurantes",
+                "bar",
+                "bares",
+                "cafeteria",
+                "cafetería"
+            ).any(question::contains)
+        ) {
+            ChatPlaceCategory.RESTAURANT
+        } else {
+            ChatPlaceCategory.ANY
+        }
+
+    private fun looksLikeLikedPlacesQuestion(question: String): Boolean {
+        val liked = listOf(
+            "me gustaron",
+            "me gusto",
+            "me gustó",
+            "favoritos",
+            "favoritas",
+            "mejores",
+            "5 estrellas",
+            "cinco estrellas",
+            "bien valorados",
+            "bien valoradas"
+        ).any(question::contains)
+        val placeish = listOf(
+            "restaurante",
+            "restaurantes",
+            "sitios",
+            "lugares",
+            "bares",
+            "cafeterias",
+            "cafeterías"
+        ).any(question::contains)
+        return liked && placeish
+    }
+
+    private fun looksLikePlaceListQuestion(question: String): Boolean =
+        listOf(
+            "en que ciudades",
+            "en qué ciudades",
+            "que ciudades",
+            "qué ciudades",
+            "ciudades",
+            "que sitios",
+            "qué sitios",
+            "que lugares",
+            "qué lugares",
+            "donde estuve",
+            "dónde estuve"
+        ).any(question::contains)
 
     private fun looksLikeDurationQuestion(question: String): Boolean =
         listOf(
@@ -134,6 +273,19 @@ class ChatQueryInterpreter(
             "qué completé"
         ).any(question::contains)
 
+    private fun extractSearchTerms(question: String): List<String> {
+        val cleaned = DATE_HINT_WORDS.fold(question) { acc, word ->
+            acc.replace(Regex("\\b${Regex.escape(word)}\\b"), " ")
+        }
+        return cleaned
+            .split(Regex("[^\\p{L}0-9]+"))
+            .map { it.trim() }
+            .filter { it.length >= 3 }
+            .filterNot { it in SEARCH_STOPWORDS }
+            .distinct()
+            .take(12)
+    }
+
     private fun extractPlaceTerms(question: String): List<String> {
         val lowered = question.lowercase(Locale("es"))
         val marker = listOf(
@@ -151,6 +303,9 @@ class ChatQueryInterpreter(
             val markerIndex = lowered.indexOf(marker)
             if (markerIndex < 0) return emptyList()
             question.substring(markerIndex + marker.length)
+        } else if (looksLikeLikedPlacesQuestion(normalize(question))) {
+            val match = Regex("\\ben\\s+([\\p{L}0-9 .'-]+)", RegexOption.IGNORE_CASE).find(question)
+            match?.groupValues?.getOrNull(1) ?: return emptyList()
         } else {
             val commaIndex = question.lastIndexOf(',')
             if (commaIndex >= 0 && commaIndex + 1 < question.length) {
@@ -168,6 +323,7 @@ class ChatQueryInterpreter(
         return tail
             .split(Regex("\\s+o\\s+", RegexOption.IGNORE_CASE))
             .map { it.trim() }
+            .map { it.trimEnd('?', '¿', '.', ',', ';', ':') }
             .map { it.substringAfterLast(",").trim() }
             .map { it.removePrefix("a ").trim() }
             .map { it.removePrefix("en ").trim() }
@@ -492,6 +648,112 @@ class ChatQueryInterpreter(
             "octubre" to Calendar.OCTOBER,
             "noviembre" to Calendar.NOVEMBER,
             "diciembre" to Calendar.DECEMBER
+        )
+
+        val DATE_HINT_WORDS = setOf(
+            "hoy",
+            "ayer",
+            "anteayer",
+            "esta",
+            "este",
+            "semana",
+            "mes",
+            "ano",
+            "año",
+            "lunes",
+            "martes",
+            "miercoles",
+            "miércoles",
+            "jueves",
+            "viernes",
+            "sabado",
+            "sábado",
+            "domingo"
+        ) + MONTHS.keys
+
+        val SEARCH_STOPWORDS = setOf(
+            "que",
+            "qué",
+            "cual",
+            "cuál",
+            "cuales",
+            "cuáles",
+            "cuando",
+            "cuándo",
+            "donde",
+            "dónde",
+            "como",
+            "cómo",
+            "cosas",
+            "cosa",
+            "este",
+            "esta",
+            "estos",
+            "estas",
+            "mes",
+            "semana",
+            "ano",
+            "año",
+            "del",
+            "con",
+            "para",
+            "por",
+            "los",
+            "las",
+            "una",
+            "uno",
+            "unos",
+            "unas",
+            "mis",
+            "tus",
+            "sus",
+            "me",
+            "te",
+            "se",
+            "hay",
+            "hice",
+            "dime",
+            "lista",
+            "recuerdas",
+            "recuerdame",
+            "recuérdame",
+            "dia",
+            "día",
+            "dias",
+            "días",
+            "compre",
+            "compré",
+            "comprar",
+            "comprado",
+            "compras",
+            "compra",
+            "llame",
+            "llamé",
+            "llamar",
+            "llamado",
+            "llamada",
+            "llamadas",
+            "envie",
+            "envié",
+            "enviar",
+            "enviado",
+            "mandar",
+            "mande",
+            "mandé",
+            "hable",
+            "hablé",
+            "hablar",
+            "reunion",
+            "reunión",
+            "fui",
+            "fue",
+            "ir",
+            "iba",
+            "ido",
+            "estuve",
+            "estar",
+            "hacer",
+            "hizo"
         )
     }
 }

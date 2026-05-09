@@ -9,6 +9,7 @@ import com.google.ai.client.generativeai.type.generationConfig
 import com.trama.app.GeminiConfig
 import com.trama.app.summary.GemmaClient
 import com.trama.shared.data.DiaryRepository
+import java.text.Normalizer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -48,6 +49,7 @@ class DiaryAssistant(
     // ── Gemma state (manual history for simulated multi-turn) ────────────────
     // Each entry is Pair(role, text): role is "Usuario" or "Asistente"
     private val localHistory = mutableListOf<Pair<String, String>>()
+    private var lastDeterministicQuery: ChatQuery? = null
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -87,16 +89,75 @@ class DiaryAssistant(
     fun clearHistory() {
         cloudSession = null
         localHistory.clear()
+        lastDeterministicQuery = null
         contextBuilder.invalidate()
     }
 
     private suspend fun tryDeterministicAnswer(userMessage: String): String? {
-        val query = queryInterpreter.interpret(userMessage)
+        val query = resolveFollowUpQuery(queryInterpreter.interpret(userMessage), userMessage)
         if (query.intent == ChatIntent.UNKNOWN) return null
+        rememberQueryScope(query)
 
         val retrieved = contextRetriever.retrieve(query) ?: return null
         val factualAnswer = answerComposer.compose(query, retrieved) ?: return null
+        lastDeterministicQuery = query
         return tryGroundedLocalAnswer(query, retrieved, factualAnswer) ?: factualAnswer
+    }
+
+    private fun rememberQueryScope(query: ChatQuery) {
+        if (query.dateRange != null || query.placeTerms.isNotEmpty()) {
+            lastDeterministicQuery = query
+        }
+    }
+
+    private fun resolveFollowUpQuery(query: ChatQuery, userMessage: String): ChatQuery {
+        val previous = lastDeterministicQuery ?: return query
+        val normalized = normalize(userMessage)
+
+        val hasExplicitScope = query.dateRange != null || query.placeTerms.isNotEmpty()
+        val inheritedDateRange = query.dateRange ?: previous.dateRange
+        val inheritedPlaceTerms = if (query.placeTerms.isNotEmpty()) query.placeTerms else previous.placeTerms
+
+        if (query.intent == ChatIntent.LIKED_PLACES && !hasExplicitScope) {
+            return query.copy(
+                dateRange = inheritedDateRange,
+                placeTerms = inheritedPlaceTerms
+            )
+        }
+
+        if (
+            query.intent == ChatIntent.UNKNOWN &&
+            listOf("ciudades", "lugares", "sitios", "donde", "dónde").any(normalized::contains) &&
+            (inheritedDateRange != null || inheritedPlaceTerms.isNotEmpty())
+        ) {
+            return ChatQuery(
+                rawQuestion = userMessage.trim(),
+                intent = ChatIntent.PLACE_LIST,
+                dateRange = inheritedDateRange,
+                placeTerms = inheritedPlaceTerms,
+                placeCategory = query.placeCategory
+            )
+        }
+
+        if (
+            query.intent == ChatIntent.UNKNOWN &&
+            listOf("restaurantes", "restaurante", "me gustaron", "favoritos", "5 estrellas").any(normalized::contains)
+        ) {
+            return ChatQuery(
+                rawQuestion = userMessage.trim(),
+                intent = ChatIntent.LIKED_PLACES,
+                dateRange = inheritedDateRange,
+                placeTerms = inheritedPlaceTerms,
+                placeCategory = if (normalized.contains("restaurante")) {
+                    ChatPlaceCategory.RESTAURANT
+                } else {
+                    ChatPlaceCategory.ANY
+                },
+                likedOnly = true
+            )
+        }
+
+        return query
     }
 
     private suspend fun tryGroundedLocalAnswer(
@@ -151,7 +212,7 @@ class DiaryAssistant(
         val diaryContext = contextBuilder.getContext()
         val today = todayString()
 
-        val systemPrompt = buildSystemPrompt(diaryContext, today)
+        val systemPrompt = buildCloudSystemPrompt(diaryContext, today)
 
         val model = GenerativeModel(
             modelName = GeminiConfig.MODEL_NAME,
@@ -176,7 +237,7 @@ class DiaryAssistant(
         // System instruction: diary context + persona.
         // Passed separately so GemmaClient can inject it as a proper system turn
         // (LiteRT-LM: ConversationConfig.systemInstruction; MediaPipe: <start_of_turn>system).
-        val systemInstruction = buildSystemPrompt(compactContext, today)
+        val systemInstruction = buildLocalSystemPrompt(compactContext, today)
 
         // Prompt: only conversation history + current question (no context duplication)
         val prompt = buildString {
@@ -206,7 +267,7 @@ class DiaryAssistant(
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private fun buildSystemPrompt(diaryContext: String, today: String) = buildString {
+    private fun buildCloudSystemPrompt(diaryContext: String, today: String) = buildString {
         appendLine("Eres el asistente personal del usuario de Trama, una app de diario personal y captura de voz.")
         appendLine("Tienes acceso a su historial completo de tareas, lugares visitados y resúmenes diarios.")
         appendLine("Responde siempre en español, de forma directa y concisa.")
@@ -216,10 +277,26 @@ class DiaryAssistant(
         append(diaryContext)
     }
 
+    private fun buildLocalSystemPrompt(diaryContext: String, today: String) = buildString {
+        appendLine("Eres el asistente personal local de Trama.")
+        appendLine("El contexto incluido es una vista compacta y puede estar truncado por límites del modelo on-device.")
+        appendLine("Para preguntas factuales, usa solo hechos presentes en el contexto o en los hechos recuperados por la app.")
+        appendLine("Si no tienes información suficiente, dilo con claridad; no inventes datos.")
+        appendLine("Responde siempre en español, de forma directa y concisa.")
+        appendLine("Fecha actual: $today.")
+        appendLine()
+        append(diaryContext)
+    }
+
     private fun todayString(): String =
         SimpleDateFormat("EEEE d 'de' MMMM yyyy", Locale("es"))
             .format(Date())
             .replaceFirstChar { it.uppercase() }
+
+    private fun normalize(value: String): String =
+        Normalizer.normalize(value, Normalizer.Form.NFD)
+            .replace("\\p{Mn}+".toRegex(), "")
+            .lowercase(Locale("es"))
 
     companion object {
         private const val TAG = "DiaryAssistant"

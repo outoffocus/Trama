@@ -47,6 +47,24 @@ class RecordingProcessor(private val context: Context) {
             repository.updateRecordingStatus(recordingId, RecordingStatus.FAILED)
             return
         }
+        AsrHallucinationDetector.detect(
+            recording.transcription,
+            singleWordIsHallucination = false
+        )?.let { reason ->
+            Log.w(TAG, "Recording $recordingId rejected as ASR hallucination: $reason")
+            repository.updateRecordingStatus(recordingId, RecordingStatus.FAILED)
+            CaptureLog.event(
+                gate = CaptureLog.Gate.RECORDING,
+                result = CaptureLog.Result.NO_MATCH,
+                text = "recording_asr_hallucination",
+                meta = mapOf(
+                    "id" to recordingId,
+                    "reason" to reason,
+                    "preview" to recording.transcription.take(120)
+                )
+            )
+            return
+        }
 
         repository.updateRecordingStatus(recordingId, RecordingStatus.PROCESSING)
 
@@ -75,9 +93,18 @@ class RecordingProcessor(private val context: Context) {
             if (ok) return
         }
 
-        // 4. No LLM available — stay PENDING for later retry
-        Log.w(TAG, "No LLM available for recording $recordingId, leaving as PENDING (apiKey blank=${apiKey.isNullOrBlank()}, model exists=${modelFile.exists()})")
-        repository.updateRecordingStatus(recordingId, RecordingStatus.PENDING)
+        // 4. Analysis unavailable/failed. Keep the transcription usable instead
+        // of leaving the recording trapped in PENDING forever.
+        Log.w(TAG, "No LLM analysis available for recording $recordingId; saving transcript-only result (apiKey blank=${apiKey.isNullOrBlank()}, model exists=${modelFile.exists()})")
+        saveResult(
+            recordingId = recordingId,
+            result = buildTranscriptOnlyAnalysis(recording.transcription),
+            transcription = recording.transcription,
+            source = recording.source,
+            processedBy = "TRANSCRIPT_ONLY",
+            confidence = 0.6f,
+            repository = repository
+        )
     }
 
     // ── Cloud ──
@@ -279,15 +306,37 @@ class RecordingProcessor(private val context: Context) {
             .format(Calendar.getInstance().time)
         val tomorrow = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
             .format(Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 1) }.time)
+        val weekdayDates = buildWeekdayDateContext()
         return PromptTemplateStore.render(
             context,
             PromptTemplateStore.RECORDING_ANALYSIS,
             mapOf(
                 "transcription" to transcription,
                 "today" to today,
-                "tomorrow" to tomorrow
+                "tomorrow" to tomorrow,
+                "weekdayDates" to weekdayDates
             )
         )
+    }
+
+    private fun buildWeekdayDateContext(): String {
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val weekdays = listOf(
+            Calendar.MONDAY to "lunes",
+            Calendar.TUESDAY to "martes",
+            Calendar.WEDNESDAY to "miércoles",
+            Calendar.THURSDAY to "jueves",
+            Calendar.FRIDAY to "viernes",
+            Calendar.SATURDAY to "sábado",
+            Calendar.SUNDAY to "domingo"
+        )
+        return weekdays.joinToString(", ") { (day, label) ->
+            val cal = Calendar.getInstance()
+            while (cal.get(Calendar.DAY_OF_WEEK) != day) {
+                cal.add(Calendar.DAY_OF_YEAR, 1)
+            }
+            "$label=${dateFormat.format(cal.time)}"
+        }
     }
 
 
@@ -304,6 +353,29 @@ class RecordingProcessor(private val context: Context) {
                 val text = action.text.trim()
                 if (text.isBlank()) null else action.copy(text = text)
             }
+        )
+    }
+
+    private fun buildTranscriptOnlyAnalysis(transcription: String): RecordingAnalysis {
+        val clean = transcription
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        val title = clean
+            .split(Regex("(?<=[.!?])\\s+"))
+            .firstOrNull()
+            ?.take(80)
+            ?.trim()
+            ?.ifBlank { null }
+            ?: "Grabación transcrita"
+        val summary = when {
+            clean.length <= 1_200 -> clean
+            else -> clean.take(1_200).trimEnd() + "..."
+        }
+        return RecordingAnalysis(
+            title = title,
+            summary = summary.ifBlank { "Transcripción guardada sin análisis automático." },
+            keyPoints = emptyList(),
+            actionItems = emptyList()
         )
     }
 

@@ -24,6 +24,11 @@ class SileroVadFilter private constructor(
     private val vad: Vad,
     private val sampleRateHz: Int
 ) {
+    data class Decision(
+        val containsSpeech: Boolean,
+        val reason: String,
+        val elapsedMs: Long
+    )
 
     /**
      * Run Silero on the merged PCM of [window] and decide whether it contains
@@ -32,17 +37,38 @@ class SileroVadFilter private constructor(
      */
     @Synchronized
     fun containsSpeech(window: CapturedAudioWindow): Boolean {
+        return evaluate(window).containsSpeech
+    }
+
+    @Synchronized
+    fun evaluate(window: CapturedAudioWindow): Decision {
+        val startedAt = System.currentTimeMillis()
         val pcm = window.mergedPcm()
-        if (pcm.isEmpty()) return true
+        if (pcm.isEmpty()) {
+            return Decision(
+                containsSpeech = true,
+                reason = "empty_pcm_allow",
+                elapsedMs = System.currentTimeMillis() - startedAt
+            )
+        }
         return try {
             val samples = FloatArray(pcm.size) { i -> pcm[i] / 32768f }
             vad.reset()
             vad.acceptWaveform(samples)
             vad.flush()
-            vad.isSpeechDetected() || !vad.empty()
+            val containsSpeech = vad.isSpeechDetected() || !vad.empty()
+            Decision(
+                containsSpeech = containsSpeech,
+                reason = if (containsSpeech) "silero_vad_speech" else "silero_vad_no_speech",
+                elapsedMs = System.currentTimeMillis() - startedAt
+            )
         } catch (t: Throwable) {
             Log.w(TAG, "Silero VAD failed, allowing window through", t)
-            true
+            Decision(
+                containsSpeech = true,
+                reason = "silero_vad_error_allow:${t.javaClass.simpleName}",
+                elapsedMs = System.currentTimeMillis() - startedAt
+            )
         }
     }
 

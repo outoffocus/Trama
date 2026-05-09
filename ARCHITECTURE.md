@@ -14,7 +14,7 @@ Trama debe leerse como una memoria operativa local-first:
 
 El objetivo del producto es capturar con poca friccion, estructurar despues y permitir recuperar contexto sin convertir al usuario en editor permanente.
 
-## 2. Estado a 2026-05-06
+## 2. Estado a 2026-05-09
 
 ### Movil
 
@@ -24,23 +24,27 @@ El objetivo del producto es capturar con poca friccion, estructurar despues y pe
 - captura con `AudioSource.VOICE_RECOGNITION` y fallback a `MIC` si el dispositivo lo rechaza
 - `VoskGateAsr` como gate ligero
 - `SherpaWhisperAsrEngine` como transcriptor final, 1 hilo y entrada capada a 20 s para mantener decode bajo presupuesto
+- Silero VAD bundleado como filtro acustico pre-Whisper para descartar silencio, musica y ruido antes del decode caro
 - sin fallback a `SpeechRecognizer` en movil; la captura exige ASR local/offline disponible
 - segmentacion de escucha continua en ventanas renovables, con cap de 30s para voz/ruido sin trigger
-- fallback incierto a Whisper con presupuesto por bateria/carga/cooldown
+- fallback incierto a Whisper con presupuesto por bateria/carga/cooldown; se bloquea durante bateria baja suave o presion termica
 - gate evals periodicos suspendidos cuando hay presion termica (`THERMAL_STATUS_MODERATE+`) o bateria <=30% sin cargador; final eval al cerrar segmento sigue corriendo
+- listener termico (`OnThermalStatusChangedListener`, API 29+) mantiene estado fresco para throttling y diagnostico
 - reinicio automatico de la captura tras crash con backoff exponencial (1s, 5s, 30s, 5min) y reset si la captura corre limpia >=60s; los crashes loguean stacktrace truncado para diagnostico
 - speaker verification offline integrada despues de Whisper
+- si no hay perfil de voz configurado o la verificacion queda degradada, las capturas accionables se enrutan a `SUGGESTED` en vez de notificar como `PENDING`
 - pausa por audio activo de otra app para evitar capturas de multimedia
-- tracking opcional de ubicacion con dwell detection
+- tracking opcional de ubicacion con dwell detection menos estricto para visitas cortas/interior
 - lugares persistidos, valoraciones, opiniones y apertura en mapas externos
 - importacion de calendarios seleccionados del sistema
 - pantalla `Agenda` para vencidas, esta/proxima semana, tareas futuras y tareas sin fecha
 - aviso semanal configurable por WorkManager con eventos de calendario y tareas con fecha
-- chat local sobre repositorio y contexto diario
+- chat local sobre repositorio y contexto diario; soporta consultas genericas sobre hechos, lugares, compras, fechas y follow-ups usando retrieval factual + contexto compacto
 - Gemini cloud + Gemma local para procesamiento, resumen y extraccion (default local: Gemma 4 E2B-it litertlm, configurable por URL)
 - aprendizaje opt-in desde eliminaciones marcadas como ruido o "no es para mi"; alimenta un gate pre-LLM y ejemplos `DISCARD`
+- importacion via share intent para enviar texto/links a Trama y procesarlos asincronamente
 - WorkManager para resumen diario, procesado diferido y backups
-- diagnostico exportable del pipeline de captura
+- diagnostico exportable del pipeline de captura con funnel por hora, outcomes cerrados, coste ASR y metricas de bateria
 
 ### Wear OS
 
@@ -118,12 +122,13 @@ Flujo:
 4. `SimpleVAD` detecta voz y segmenta ventanas.
 5. `VoskGateAsr` evalua si la ventana merece transcripcion completa.
 6. Se construye `CapturedAudioWindow`.
-7. `SherpaWhisperAsrEngine` genera texto final.
-8. Speaker verification opcional calcula embedding sobre la misma ventana.
-9. `IntentDetector` clasifica contra patrones configurables.
-10. `EntryValidatorHeuristics` y deduplicacion filtran ruido.
-11. `ActionItemProcessor` aplica aprendizaje de eliminaciones si esta activo, limpia, enriquece y persiste.
-12. Room, timeline, sync y UI reciben el resultado.
+7. `SileroVadFilter` descarta no-habla antes de Whisper cuando el asset esta disponible.
+8. `SherpaWhisperAsrEngine` genera texto final.
+9. Speaker verification opcional calcula embedding sobre la misma ventana.
+10. `IntentDetector` clasifica contra patrones configurables.
+11. `EntryValidatorHeuristics` y deduplicacion filtran ruido.
+12. `ActionItemProcessor` aplica aprendizaje de eliminaciones si esta activo, limpia, enriquece y persiste.
+13. Room, timeline, sync y UI reciben el resultado.
 
 Propiedades:
 
@@ -134,10 +139,10 @@ Propiedades:
 - segmentos sin trigger cerrados por cap de 30s para evitar acumulacion de audio viejo
 - si un trigger fue detectado durante el segmento, el cierre final no puede descartarlo por una reevaluacion posterior peor
 - fallback incierto a Whisper solo para gates vacios o muy pobres, con cooldown de 5 min en bateria y 2 min cargando
-- fallback incierto bloqueado bajo 20% de bateria cuando no esta cargando
+- fallback incierto bloqueado bajo 20% de bateria y tambien en modo ahorro suave (`battery_soft_low`) o presion termica cuando no esta cargando
 - ventanas bloqueadas si Android informa audio activo de otra app
 - la entrada a Whisper se capa a 20 s manteniendo la cola del segmento; recorta la cola larga de p95 sin perder la frase final
-- filtro Silero VAD opcional pre-Whisper (`SileroVadFilter`): si el modelo `assets/asr/vad/silero_vad.onnx` esta presente, descarta ventanas sin habla (musica, silencio, ruido) antes de pagar el decode Whisper. Si el modelo falta, se degrada a no-op y la captura sigue funcionando.
+- filtro Silero VAD pre-Whisper (`SileroVadFilter`): el modelo `assets/asr/vad/silero_vad.onnx` se bundlea como asset y registra cada decision en la etapa `ACOUSTIC_SPEECH` con `vadMs`, `windowMs` y outcome `NO_SPEECH` o `INTENT_CANDIDATE`. Si el modelo falta o falla, se degrada a no-op y queda diagnosticado.
 - errores de ventana ASR se tratan como recuperables y rearman la captura
 - ASR local no disponible es un estado terminal visible/diagnosticable
 - trazas en `CaptureLog` para diagnostico
@@ -154,14 +159,16 @@ Eventos relevantes de diagnostico:
 - `SERVICE offline_asr_window_failed`
 - `SERVICE contextual_capture_crashed`
 - `SERVICE media_playback_pause|media_playback_resume`
+- `SERVICE silero_vad_active|silero_vad_unavailable`
+- `SERVICE thermal_listener_registered|thermal_status_changed|thermal_listener_failed`
 - `ASR_GATE segment_finalized reason=silence_stop|unmatched_segment_cap|post_roll_cap`
 - `ASR_GATE uncertain_gate_fallback batteryPct charging windowMs cooldownMs`
-- `ASR_GATE uncertain_gate_fallback_blocked reason=battery_low|cooldown`
+- `ASR_GATE uncertain_gate_fallback_blocked reason=battery_low|battery_soft_low|thermal:*|cooldown`
 - `ASR_GATE gate_eval_skipped reason=capture_throttled|ambient_backoff|insufficient_speech`
 - `ASR_GATE media_playback_gate_blocked`
+- `ACOUSTIC_SPEECH silero_vad_speech|silero_vad_no_speech vadMs windowMs`
 - `ASR_FINAL source=trigger|uncertain_fallback|no_gate decodeMs windowMs`
 - `ASR_FINAL media_playback_blocked_window`
-- `ASR_FINAL silero_vad_no_speech` — Silero descarto la ventana antes de Whisper
 - `LLM decision=blocked_by_signal signalReason similarity`
 
 ## 6. Grabaciones
@@ -175,7 +182,7 @@ Archivos:
 - `app/summary/RecordingProcessor.kt`
 - `app/summary/RecordingProcessorWorker.kt`
 
-Las grabaciones manuales se guardan como `Recording`, se transcriben y pueden producir acciones sugeridas. El procesado intenta Gemini cloud, Gemma local y heuristicas/fallbacks segun disponibilidad.
+Las grabaciones manuales se guardan como `Recording`, se transcriben por chunks para evitar bloqueos largos de UI y pueden producir acciones sugeridas. El procesado intenta Gemini cloud, Gemma local y heuristicas/fallbacks segun disponibilidad. El estado de grabacion diferencia captura, parada, transcripcion y procesado para que la UI no muestre dobles indicadores de IA ni quede congelada al parar.
 
 ## 7. IA y memoria
 
@@ -197,6 +204,7 @@ Rutas:
 - heuristicas locales para reparacion JSON, duplicados y sugerencias manuales
 - prompt de acciones orientado a extraer la accion minima autosuficiente y rechazar ruido conversacional/no accionable
 - `DeletionFeedbackStore` persiste hasta 100 ejemplos locales de eliminaciones con razon de calidad, compara por similitud Jaccard y expone los 3 mas recientes como few-shot `DISCARD`
+- el aprendizaje separa ejemplos negativos y positivos: borrados alimentan reglas de no-accionabilidad/no-ownership, y aceptaciones de sugeridas refuerzan lo que si debe capturarse
 - `ActionQualityGate` conserva una barrera local post-LLM contra ruido, fragmentos incompletos, negaciones y errores ASR frecuentes
 - la suite `ActionQualityGateProductTest` combina ejemplos curados y corpus sintetico masivo para medir riesgo de falsos positivos/negativos
 
@@ -210,6 +218,9 @@ Procesamiento de acciones:
 - extras solapadas con la accion primaria se descartan antes de persistir
 - `DuplicateHeuristics` compara una forma canonica de la accion, normalizando triggers y errores comunes antes de usar similitud
 - el umbral de aceptacion del LLM es configurable desde ajustes (default 0.40, rango 0.30-0.70); rejected con `confidence>=0.30` se enrutan a `SUGGESTED` en vez de `DISCARDED` para no perder posibles falsos negativos
+- `PENDING` queda reservado para acciones de confianza alta (`>=0.65` y por encima del ajuste del usuario); acciones utiles por debajo de ese suelo van a `SUGGESTED`
+- `CaptureLog.CaptureOutcome` normaliza estados de salida del pipeline (`NO_SPEECH`, `NOT_OWNER`, `NO_INTENT`, `LOW_CONFIDENCE_SUGGESTED`, `ACTION_ACCEPTED`, `SERVICE_UNAVAILABLE`, etc.) y el export agrupa outcomes/reject stages por hora
+- el export incluye coste de bateria/ASR: `finalAsrDecodeCount`, `finalAsrDecodeTotalMs`, `finalAsrAudioTotalMs`, `uncertainFallbackDecodeCount`, `uncertainFallbackAudioTotalMs`, `acousticSpeechRejected` y `captureThrottledEvents`
 
 `DailyPage` persiste:
 
@@ -233,7 +244,7 @@ Archivos:
 - `app/chat/ChatAnswerComposer.kt`
 - `app/chat/DiaryContextBuilder.kt`
 
-El chat interpreta preguntas sobre dias, lugares, duraciones, orden de visitas y tareas completadas. Recupera contexto desde el repositorio y compone respuestas con informacion local. Es una superficie de memoria, no un buscador generico.
+El chat interpreta preguntas sobre dias, lugares, duraciones, orden de visitas, tareas completadas y hechos genericos dentro de la memoria. Recupera contexto desde entradas, grabaciones, timeline y lugares, compone respuestas deterministas cuando puede y conserva la ultima consulta factual para follow-ups como "en que ciudades". Es una superficie de memoria, no un buscador generico.
 
 ## 9. Persistencia
 
@@ -376,6 +387,9 @@ Diagnostico:
 - `DiagnosticsExportManager`
 - `DiagnosticsAnalyzer`
 - exportacion de eventos recientes y estadisticas del pipeline
+- funnel por hora con minutos de servicio vivo, suspendido, media playback y watchdog fallando
+- outcomes y reject stages agregados por hora para distinguir no-habla, no-owner, no-intent, servicio caido y acciones aceptadas/sugeridas
+- metricas de coste ASR y bateria para separar recall caro de utilidad real
 - `Modo diagnostico ASR` muestra motor, gate, transcripcion, ventana y decode en ajustes
 - `Estado tecnico en inicio`, apagado por defecto, sustituye la etiqueta normal de Home por el estado real de escucha para pruebas
 - los usuarios normales mantienen etiquetas simples como `Escuchando`, `Grabando` o `En el reloj`

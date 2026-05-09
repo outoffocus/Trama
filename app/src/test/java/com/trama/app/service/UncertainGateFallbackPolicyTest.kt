@@ -46,6 +46,35 @@ class UncertainGateFallbackPolicyTest {
     }
 
     @Test
+    fun `blocks uncertain fallback in battery soft saving mode`() {
+        val decision = decide(
+            gateTranscript = "",
+            nowMs = 10 * MINUTE_MS,
+            lastAllowedAtMs = 0,
+            batteryPct = 28,
+            charging = false,
+            powerSaveReason = "battery_soft_low"
+        )
+
+        assertFalse(decision.allowed)
+        assertEquals("battery_soft_low", decision.blockedReason)
+    }
+
+    @Test
+    fun `allows uncertain fallback in power saving mode while charging`() {
+        val decision = decide(
+            gateTranscript = "",
+            nowMs = 10 * MINUTE_MS,
+            lastAllowedAtMs = 0,
+            batteryPct = 28,
+            charging = true,
+            powerSaveReason = "battery_soft_low"
+        )
+
+        assertTrue(decision.allowed)
+    }
+
+    @Test
     fun `uses shorter cooldown while charging`() {
         val decision = decide(
             gateTranscript = "",
@@ -64,7 +93,8 @@ class UncertainGateFallbackPolicyTest {
         nowMs: Long,
         lastAllowedAtMs: Long,
         batteryPct: Int = 100,
-        charging: Boolean = false
+        charging: Boolean = false,
+        powerSaveReason: String? = null
     ) = UncertainGateFallbackPolicy.decide(
         windowMs = 10_000L,
         gateTranscript = gateTranscript,
@@ -72,6 +102,7 @@ class UncertainGateFallbackPolicyTest {
         lastAllowedAtMs = lastAllowedAtMs,
         batteryPct = batteryPct,
         charging = charging,
+        powerSaveReason = powerSaveReason,
         normalCooldownMs = 5 * MINUTE_MS,
         minWindowMs = 2_500L,
         maxWindowMs = 15_000L

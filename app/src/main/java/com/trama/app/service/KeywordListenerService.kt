@@ -94,6 +94,12 @@ class KeywordListenerService : LifecycleService() {
         // Triggers periodic-eval backoff while keeping the service alive.
         private const val BATTERY_SOFT_THRESHOLD = 30
         private const val SERVICE_HEARTBEAT_MS = 15L * 60L * 1000L
+        private val WEAK_OWNERSHIP_PREFIXES = listOf(
+            "hay que",
+            "tenemos que",
+            "tienes que",
+            "necesitamos"
+        )
 
     }
 
@@ -140,11 +146,14 @@ class KeywordListenerService : LifecycleService() {
     @Volatile
     private var batteryVoltageMv: Int? = null
     @Volatile
+    private var latestThermalStatus: Int? = null
+    @Volatile
     private var mediaPlaybackActive = false
     @Volatile
     private var lastBlockedUncertainGateFallbackLogAt = 0L
     @Volatile
     private var batteryLowNoticeShown = false
+    private var thermalListener: PowerManager.OnThermalStatusChangedListener? = null
 
     private val dedup = DeduplicationManager()
     private val notifier by lazy { ServiceNotifier(this) }
@@ -212,9 +221,11 @@ class KeywordListenerService : LifecycleService() {
         asrEngine = createAsrEngine()
         gateAsr = createGateAsr()
         sileroVad = SileroVadFilter.tryCreate(applicationContext)
+        logSileroVadStatus()
         observeSettings()
         registerScreenReceiver()
         registerBatteryReceiver()
+        registerThermalListener()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -274,6 +285,7 @@ class KeywordListenerService : LifecycleService() {
         try {
             unregisterReceiver(batteryReceiver)
         } catch (_: Exception) {}
+        unregisterThermalListener()
         startupJob?.cancel()
         startupJob = null
         mediaPlaybackMonitorJob?.cancel()
@@ -320,6 +332,71 @@ class KeywordListenerService : LifecycleService() {
 
         val sticky = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         updateBatterySnapshot(sticky)
+    }
+
+    private fun registerThermalListener() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        val powerManager = getSystemService(PowerManager::class.java)
+        latestThermalStatus = runCatching { powerManager.currentThermalStatus }.getOrNull()
+        val listener = PowerManager.OnThermalStatusChangedListener { status ->
+            latestThermalStatus = status
+            logServiceEvent(
+                "thermal_status_changed",
+                meta = mapOf(
+                    "thermalStatus" to status,
+                    "thermalStatusLabel" to thermalStatusLabel(status),
+                    "outcome" to if (status >= PowerManager.THERMAL_STATUS_MODERATE) {
+                        CaptureLog.CaptureOutcome.CAPTURE_THROTTLED
+                    } else {
+                        CaptureLog.CaptureOutcome.SERVICE_AVAILABLE
+                    }
+                )
+            )
+        }
+        runCatching {
+            powerManager.addThermalStatusListener(mainExecutor, listener)
+            thermalListener = listener
+            logServiceEvent(
+                "thermal_listener_registered",
+                meta = mapOf(
+                    "thermalStatus" to latestThermalStatus,
+                    "thermalStatusLabel" to thermalStatusLabel(latestThermalStatus)
+                )
+            )
+        }.onFailure { error ->
+            logServiceEvent(
+                "thermal_listener_failed",
+                result = CaptureLog.Result.REJECT,
+                meta = mapOf(
+                    "error" to error.javaClass.simpleName,
+                    "message" to error.message
+                )
+            )
+        }
+    }
+
+    private fun unregisterThermalListener() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        val listener = thermalListener ?: return
+        runCatching {
+            getSystemService(PowerManager::class.java).removeThermalStatusListener(listener)
+        }
+        thermalListener = null
+    }
+
+    private fun logSileroVadStatus() {
+        logServiceEvent(
+            if (sileroVad != null) "silero_vad_active" else "silero_vad_unavailable",
+            result = if (sileroVad != null) CaptureLog.Result.OK else CaptureLog.Result.REJECT,
+            meta = mapOf(
+                "reason" to if (sileroVad != null) "model_loaded" else "missing_or_init_failed",
+                "outcome" to if (sileroVad != null) {
+                    CaptureLog.CaptureOutcome.SERVICE_AVAILABLE
+                } else {
+                    CaptureLog.CaptureOutcome.UNKNOWN
+                }
+            )
+        )
     }
 
     private suspend fun loadInitialSettings() {
@@ -497,7 +574,10 @@ class KeywordListenerService : LifecycleService() {
             gate = CaptureLog.Gate.SERVICE,
             result = CaptureLog.Result.REJECT,
             text = "media_playback_pause",
-            meta = mapOf("reason" to reason)
+            meta = mapOf(
+                "reason" to reason,
+                "outcome" to CaptureLog.CaptureOutcome.MEDIA_PLAYBACK
+            )
         )
         publishAsrDebug(status = "pausado por audio de otra app", triggerReason = "media_playback")
         notifier.updateForegroundIfChanged("Pausado por audio externo")
@@ -596,8 +676,14 @@ class KeywordListenerService : LifecycleService() {
                     meta = mapOf(
                         "reason" to reason,
                         "speechMs" to speechMs,
-                        "thresholdMs" to thresholdMs
-                    )
+                        "thresholdMs" to thresholdMs,
+                        "throttleReason" to throttleReason(),
+                        "outcome" to when (reason) {
+                            "capture_throttled" -> CaptureLog.CaptureOutcome.CAPTURE_THROTTLED
+                            "ambient_backoff", "insufficient_speech" -> CaptureLog.CaptureOutcome.NO_SPEECH
+                            else -> CaptureLog.CaptureOutcome.UNKNOWN
+                        }
+                    ) + powerSnapshot()
                 )
             }
             engine.onWindowCaptured = { window, source ->
@@ -609,7 +695,8 @@ class KeywordListenerService : LifecycleService() {
                             text = "media_playback_blocked_window",
                             meta = mapOf(
                                 "source" to source,
-                                "windowMs" to window.durationMs()
+                                "windowMs" to window.durationMs(),
+                                "outcome" to CaptureLog.CaptureOutcome.MEDIA_PLAYBACK
                             ) + powerSnapshot()
                         )
                         publishAsrDebug(status = "audio externo ignorado", triggerReason = "media_playback")
@@ -631,16 +718,29 @@ class KeywordListenerService : LifecycleService() {
                     // "(Puerto)") — pure waste of CPU. The filter degrades to
                     // a no-op when the model asset is missing.
                     val sileroFilter = sileroVad
-                    if (sileroFilter != null && !sileroFilter.containsSpeech(asrWindow)) {
+                    val sileroDecision = sileroFilter?.evaluate(asrWindow)
+                    if (sileroDecision != null) {
                         CaptureLog.event(
-                            gate = CaptureLog.Gate.ASR_FINAL,
-                            result = CaptureLog.Result.REJECT,
-                            text = "silero_vad_no_speech",
+                            gate = CaptureLog.Gate.ACOUSTIC_SPEECH,
+                            result = if (sileroDecision.containsSpeech) {
+                                CaptureLog.Result.OK
+                            } else {
+                                CaptureLog.Result.REJECT
+                            },
+                            text = sileroDecision.reason,
                             meta = mapOf(
                                 "source" to source,
-                                "windowMs" to asrWindow.durationMs()
+                                "windowMs" to asrWindow.durationMs(),
+                                "vadMs" to sileroDecision.elapsedMs,
+                                "outcome" to if (sileroDecision.containsSpeech) {
+                                    CaptureLog.CaptureOutcome.INTENT_CANDIDATE
+                                } else {
+                                    CaptureLog.CaptureOutcome.NO_SPEECH
+                                }
                             ) + powerSnapshot()
                         )
+                    }
+                    if (sileroDecision != null && !sileroDecision.containsSpeech) {
                         publishAsrDebug(status = "sin habla detectada", triggerReason = "silero_vad")
                         return@launch
                     }
@@ -689,7 +789,10 @@ class KeywordListenerService : LifecycleService() {
                                 text = text,
                                 meta = mapOf(
                                     "sim" to "%.2f".format(speakerVerification.similarity),
-                                    "threshold" to "%.2f".format(speakerThreshold)
+                                    "threshold" to "%.2f".format(speakerThreshold),
+                                    "speakerReason" to speakerVerification.reason,
+                                    "rejectStage" to "SpeakerOwnership",
+                                    "outcome" to CaptureLog.CaptureOutcome.NOT_OWNER
                                 )
                             )
                             return@launch
@@ -697,7 +800,12 @@ class KeywordListenerService : LifecycleService() {
                         CaptureLog.event(
                             gate = CaptureLog.Gate.SPEAKER,
                             result = CaptureLog.Result.OK,
-                            meta = mapOf("sim" to "%.2f".format(speakerVerification.similarity))
+                            meta = mapOf(
+                                "sim" to "%.2f".format(speakerVerification.similarity),
+                                "speakerReason" to speakerVerification.reason,
+                                "speakerConfigured" to speakerVerificationManager.isConfigured,
+                                "speakerEnabled" to speakerVerificationManager.isEnabled
+                            )
                         )
                         publishAsrDebug(
                             engine = asrEngine.name,
@@ -712,9 +820,18 @@ class KeywordListenerService : LifecycleService() {
                             "ASR[${asrEngine.name}] heard (${window.durationMs()}ms window, " +
                                 "${elapsedMs}ms decode): '$text'"
                         )
-                        val saved = processText(text)
+                        val ownerIsStrong = speakerVerificationManager.isConfigured &&
+                            speakerVerificationManager.isEnabled &&
+                            speakerVerification.reason !in setOf(
+                                "disabled",
+                                "no_profile",
+                                "backend_unavailable",
+                                "too_short",
+                                "embedding_failed"
+                            )
+                        val saved = processText(text, preferSuggested = !ownerIsStrong)
                         val rescued = if (!saved) {
-                            processPendingGateResult(text)
+                            processPendingGateResult(text, preferSuggested = !ownerIsStrong)
                         } else {
                             false
                         }
@@ -722,7 +839,12 @@ class KeywordListenerService : LifecycleService() {
                             CaptureLog.event(
                                 gate = CaptureLog.Gate.INTENT,
                                 result = CaptureLog.Result.NO_MATCH,
-                                text = text
+                                text = text,
+                                meta = mapOf(
+                                    "rejectStage" to "IntentCandidate",
+                                    "intentReason" to "no_final_intent",
+                                    "outcome" to CaptureLog.CaptureOutcome.NO_INTENT
+                                )
                             )
                         }
                     }
@@ -851,6 +973,7 @@ class KeywordListenerService : LifecycleService() {
             return false
         }
         val now = System.currentTimeMillis()
+        val powerSaveReason = throttleReason().takeIf { it != "none" }
         val decision = UncertainGateFallbackPolicy.decide(
             windowMs = windowMs,
             gateTranscript = gateTranscript,
@@ -858,6 +981,7 @@ class KeywordListenerService : LifecycleService() {
             lastAllowedAtMs = lastUncertainGateFallbackAt,
             batteryPct = batteryPct,
             charging = charging,
+            powerSaveReason = powerSaveReason,
             normalCooldownMs = UNCERTAIN_GATE_FALLBACK_COOLDOWN_MS,
             minWindowMs = UNCERTAIN_GATE_MIN_WINDOW_MS,
             maxWindowMs = UNCERTAIN_GATE_MAX_WINDOW_MS
@@ -884,7 +1008,11 @@ class KeywordListenerService : LifecycleService() {
                 gateText = debugSummary.ifBlank { "gate incierto" },
                 triggerReason = "gate incierto -> whisper"
             )
-        } else if (decision.blockedReason == "battery_low" || decision.blockedReason == "cooldown") {
+        } else if (decision.blockedReason == "battery_low" ||
+            decision.blockedReason == "cooldown" ||
+            decision.blockedReason?.startsWith("thermal:") == true ||
+            decision.blockedReason == "battery_soft_low"
+        ) {
             logBlockedUncertainGateFallback(
                 reason = decision.blockedReason,
                 windowMs = windowMs,
@@ -941,7 +1069,7 @@ class KeywordListenerService : LifecycleService() {
      * Uses regex patterns for flexible matching of natural speech variations.
      * Now includes speaker verification and LLM validation.
      */
-    private fun processText(text: String): Boolean {
+    private fun processText(text: String, preferSuggested: Boolean): Boolean {
         val result = intentDetector.detect(text) ?: return false
         publishAsrDebug(
             gateText = text,
@@ -949,11 +1077,12 @@ class KeywordListenerService : LifecycleService() {
         )
         return processDetectedResult(
             result = result,
-            text = text
+            text = text,
+            preferSuggested = preferSuggested
         )
     }
 
-    private fun processPendingGateResult(finalText: String): Boolean {
+    private fun processPendingGateResult(finalText: String, preferSuggested: Boolean): Boolean {
         val result = detectionState.pendingGateDetection ?: return false
         Log.i(TAG, "Using pending gate detection to preserve recognized reminder")
         publishAsrDebug(
@@ -962,21 +1091,26 @@ class KeywordListenerService : LifecycleService() {
         )
         return processDetectedResult(
             result = result.copy(capturedText = finalText, label = result.label),
-            text = finalText
+            text = finalText,
+            preferSuggested = preferSuggested
         )
     }
 
     private fun processDetectedResult(
         result: DetectionResult,
-        text: String
+        text: String,
+        preferSuggested: Boolean = false
     ): Boolean {
+        val routeToSuggested = preferSuggested || result.shouldRouteToSuggested()
         CaptureLog.event(
             gate = CaptureLog.Gate.INTENT,
             result = CaptureLog.Result.OK,
             text = text,
             meta = mapOf(
                 "label" to result.label,
-                "pattern" to (result.pattern?.id ?: "custom")
+                "pattern" to (result.pattern?.id ?: "custom"),
+                "preferSuggested" to routeToSuggested,
+                "outcome" to CaptureLog.CaptureOutcome.INTENT_CANDIDATE
             )
         )
         when (dedup.tryReserve(result, text)) {
@@ -986,7 +1120,8 @@ class KeywordListenerService : LifecycleService() {
                 CaptureLog.event(
                     gate = CaptureLog.Gate.DEDUP_MEM,
                     result = CaptureLog.Result.DUP,
-                    text = text
+                    text = text,
+                    meta = mapOf("outcome" to CaptureLog.CaptureOutcome.DUPLICATE)
                 )
                 return false
             }
@@ -1027,11 +1162,20 @@ class KeywordListenerService : LifecycleService() {
                 originalText = result.capturedText,
                 llmConfidence = validation?.confidence ?: 0.9f,
                 wasReviewed = validation?.correctedText != null || validation?.reason?.contains("IA") == true,
-                confidence = 0.9f
+                confidence = 0.9f,
+                preferSuggested = routeToSuggested
             )
         }
 
         return true
+    }
+
+    private fun DetectionResult.shouldRouteToSuggested(): Boolean {
+        val normalized = capturedText.lowercase(Locale.getDefault())
+        if (pattern?.id == "tareas" && WEAK_OWNERSHIP_PREFIXES.any { normalized.contains(it) }) {
+            return true
+        }
+        return false
     }
 
     private fun publishAsrDebug(
@@ -1108,7 +1252,8 @@ class KeywordListenerService : LifecycleService() {
                 "contextualJobActive" to (contextualCaptureJob?.isActive == true),
                 "batteryPct" to batteryPct,
                 "charging" to charging,
-                "dedicatedAsrFailedOver" to dedicatedAsrFailedOver
+                "dedicatedAsrFailedOver" to dedicatedAsrFailedOver,
+                "throttleReason" to throttleReason()
             ) + powerSnapshot() + meta
         )
     }
@@ -1143,9 +1288,10 @@ class KeywordListenerService : LifecycleService() {
 
     private fun currentThermalStatus(): Int? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+        latestThermalStatus?.let { return it }
         return runCatching {
             getSystemService(PowerManager::class.java).currentThermalStatus
-        }.getOrNull()
+        }.getOrNull()?.also { latestThermalStatus = it }
     }
 
     /**
@@ -1172,6 +1318,18 @@ class KeywordListenerService : LifecycleService() {
     /** Combined signal used by the capture engine to skip periodic gate evals. */
     private fun shouldThrottleCapture(): Boolean =
         isThermallyThrottled() || isBatteryConstrained()
+
+    private fun throttleReason(): String {
+        val thermalStatus = currentThermalStatus()
+        return when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                thermalStatus != null &&
+                thermalStatus >= PowerManager.THERMAL_STATUS_MODERATE ->
+                "thermal:${thermalStatusLabel(thermalStatus)}"
+            isBatteryConstrained() -> "battery_soft_low"
+            else -> "none"
+        }
+    }
 
     private fun thermalStatusLabel(status: Int?): String? {
         if (status == null) return null

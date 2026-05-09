@@ -17,6 +17,8 @@ import com.trama.app.MainActivity
 import com.trama.app.audio.OfflineDictationCapture
 import com.trama.app.audio.SherpaWhisperAsrEngine
 import com.trama.app.diagnostics.CaptureLog
+import com.trama.app.summary.AsrHallucinationDetector
+import com.trama.shared.audio.CapturedAudioWindow
 import com.trama.shared.data.DatabaseProvider
 import com.trama.shared.model.Recording
 import com.trama.shared.model.Source
@@ -25,6 +27,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.sqrt
 
 /**
  * Foreground service for continuous voice recording + transcription.
@@ -41,6 +45,8 @@ class RecordingService : LifecycleService() {
         private const val NOTIFICATION_ID = NotificationConfig.ID_RECORDING
         const val ACTION_START = "com.trama.RECORD_START"
         const val ACTION_STOP = "com.trama.RECORD_STOP"
+        private const val ASR_CHUNK_MS = 25_000L
+        private const val MIN_CHUNK_MS = 700L
     }
 
     private var fullText = ""
@@ -106,11 +112,11 @@ class RecordingService : LifecycleService() {
 
         RecordingState.update(true, 0, "", currentPartial)
 
-        // Pause keyword listener to avoid mic conflict (native crash)
-        if (ServiceController.isRunning.value) {
-            Log.i(TAG, "Pausing KeywordListenerService for recording")
-            ServiceController.stopByWatch(this)  // stops without clearing user pref
-        }
+        // Pause keyword listener to avoid mic conflict (native crash).
+        // ServiceController also checks the persisted user intent, because this
+        // service can be started after the in-memory StateFlow was recreated.
+        Log.i(TAG, "Pausing KeywordListenerService for recording if needed")
+        ServiceController.pauseListeningForRecording(this)
 
         // Start timer
         timerJob = lifecycleScope.launch {
@@ -155,10 +161,11 @@ class RecordingService : LifecycleService() {
         timerJob?.cancel()
         currentPartial = "Transcribiendo offline..."
         RecordingState.update(
-            recording = true,
+            recording = false,
             elapsed = ((System.currentTimeMillis() - startTimeMs) / 1000),
             text = fullText,
-            partial = currentPartial
+            partial = currentPartial,
+            processing = true
         )
         capture?.requestStop()
     }
@@ -176,32 +183,54 @@ class RecordingService : LifecycleService() {
 
     private suspend fun persistCapturedRecording(
         asrEngine: SherpaWhisperAsrEngine,
-        window: com.trama.shared.audio.CapturedAudioWindow,
+        window: CapturedAudioWindow,
         elapsed: Int
     ) {
         try {
-            val startedAt = System.currentTimeMillis()
-            val transcript = asrEngine.transcribe(window, languageTag = "es")?.text?.trim().orEmpty()
-            val decodeMs = System.currentTimeMillis() - startedAt
+            val result = transcribeInChunks(asrEngine, window)
+            val transcript = result.text
             CaptureLog.event(
                 gate = CaptureLog.Gate.RECORDING,
-                result = if (transcript.isNotBlank()) CaptureLog.Result.OK else CaptureLog.Result.NO_MATCH,
-                text = transcript.ifBlank { "empty_offline_transcript" },
+                result = if (transcript.isNotBlank() && result.rejectReason == null) {
+                    CaptureLog.Result.OK
+                } else {
+                    CaptureLog.Result.NO_MATCH
+                },
+                text = when {
+                    transcript.isBlank() -> "empty_offline_transcript"
+                    result.rejectReason != null -> "offline_asr_hallucination"
+                    else -> transcript
+                },
                 meta = mapOf(
                     "engine" to asrEngine.name,
                     "windowMs" to window.durationMs(),
-                    "decodeMs" to decodeMs,
-                    "offline" to true
+                    "decodeMs" to result.totalDecodeMs,
+                    "offline" to true,
+                    "transcriptPreview" to transcript.take(120),
+                    "rejectReason" to (result.rejectReason ?: ""),
+                    "chunks" to result.chunkCount,
+                    "acceptedChunks" to result.acceptedChunks,
+                    "rejectedChunks" to result.rejectedChunks
                 )
             )
             if (transcript.isBlank()) {
                 RecordingState.notifyError("La transcripción local salió vacía")
                 return
             }
+            if (result.rejectReason != null) {
+                RecordingState.notifyError("No he detectado voz útil en la grabación")
+                return
+            }
 
             fullText = transcript
             currentPartial = ""
-            RecordingState.update(false, elapsed.toLong(), transcript, "")
+            RecordingState.update(
+                recording = false,
+                elapsed = elapsed.toLong(),
+                text = transcript,
+                partial = "",
+                processing = false
+            )
 
             val repository = DatabaseProvider.getRepository(applicationContext)
             val recordingId = repository.insertRecording(
@@ -215,7 +244,11 @@ class RecordingService : LifecycleService() {
             )
 
             RecordingState.notifySaved(recordingId)
-            Log.i(TAG, "Offline recording saved (id=$recordingId, ${elapsed}s, decode=${decodeMs}ms)")
+            Log.i(
+                TAG,
+                "Offline recording saved (id=$recordingId, ${elapsed}s, " +
+                    "chunks=${result.acceptedChunks}/${result.chunkCount}, decode=${result.totalDecodeMs}ms)"
+            )
 
             com.trama.app.summary.RecordingProcessorWorker.enqueue(applicationContext, recordingId)
         } catch (e: Exception) {
@@ -224,6 +257,143 @@ class RecordingService : LifecycleService() {
         } finally {
             finishAfterStop()
         }
+    }
+
+    private data class RecordingTranscriptionResult(
+        val text: String,
+        val totalDecodeMs: Long,
+        val chunkCount: Int,
+        val acceptedChunks: Int,
+        val rejectedChunks: Int,
+        val rejectReason: String?
+    )
+
+    private suspend fun transcribeInChunks(
+        asrEngine: SherpaWhisperAsrEngine,
+        window: CapturedAudioWindow
+    ): RecordingTranscriptionResult {
+        val chunks = splitWindow(window, ASR_CHUNK_MS)
+        var totalDecodeMs = 0L
+        var acceptedChunks = 0
+        var rejectedChunks = 0
+        val acceptedText = mutableListOf<String>()
+        val rejectReasons = mutableListOf<String>()
+
+        chunks.forEachIndexed { index, chunk ->
+            RecordingState.update(
+                recording = false,
+                elapsed = ((System.currentTimeMillis() - startTimeMs) / 1000),
+                text = acceptedText.joinToString(" "),
+                partial = "Transcribiendo ${index + 1}/${chunks.size}",
+                processing = true
+            )
+
+            val stats = audioStats(chunk.mergedPcm())
+            val startedAt = System.currentTimeMillis()
+            val text = asrEngine.transcribe(chunk, languageTag = "es")?.text?.trim().orEmpty()
+            val decodeMs = System.currentTimeMillis() - startedAt
+            totalDecodeMs += decodeMs
+
+            val hallucinationReason = AsrHallucinationDetector.detect(
+                text,
+                singleWordIsHallucination = false
+            )
+            val rejectReason = when {
+                text.isBlank() -> "blank"
+                hallucinationReason != null -> hallucinationReason
+                else -> null
+            }
+
+            if (rejectReason == null) {
+                acceptedChunks += 1
+                acceptedText += text
+            } else {
+                rejectedChunks += 1
+                rejectReasons += rejectReason
+            }
+
+            CaptureLog.event(
+                gate = CaptureLog.Gate.RECORDING,
+                result = if (rejectReason == null) CaptureLog.Result.OK else CaptureLog.Result.NO_MATCH,
+                text = if (rejectReason == null) text else "offline_asr_chunk_rejected",
+                meta = mapOf(
+                    "engine" to asrEngine.name,
+                    "chunkIndex" to index,
+                    "chunkCount" to chunks.size,
+                    "windowMs" to chunk.durationMs(),
+                    "decodeMs" to decodeMs,
+                    "transcriptPreview" to text.take(120),
+                    "rejectReason" to (rejectReason ?: ""),
+                    "rms" to "%.1f".format(stats.rms),
+                    "peak" to stats.peak,
+                    "nonZeroRatio" to "%.3f".format(stats.nonZeroRatio)
+                )
+            )
+        }
+
+        val text = acceptedText.joinToString(" ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        return RecordingTranscriptionResult(
+            text = text,
+            totalDecodeMs = totalDecodeMs,
+            chunkCount = chunks.size,
+            acceptedChunks = acceptedChunks,
+            rejectedChunks = rejectedChunks,
+            rejectReason = if (text.isBlank()) {
+                rejectReasons.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: "no_chunks"
+            } else {
+                null
+            }
+        )
+    }
+
+    private fun splitWindow(window: CapturedAudioWindow, chunkMs: Long): List<CapturedAudioWindow> {
+        val pcm = window.mergedPcm()
+        if (pcm.isEmpty() || window.sampleRateHz <= 0) return emptyList()
+        val chunkSamples = ((chunkMs * window.sampleRateHz) / 1000L).toInt().coerceAtLeast(1)
+        val minSamples = ((MIN_CHUNK_MS * window.sampleRateHz) / 1000L).toInt().coerceAtLeast(1)
+        return buildList {
+            var start = 0
+            while (start < pcm.size) {
+                val end = minOf(start + chunkSamples, pcm.size)
+                if (end - start >= minSamples || isEmpty()) {
+                    add(
+                        CapturedAudioWindow(
+                            preRollPcm = shortArrayOf(),
+                            livePcm = pcm.copyOfRange(start, end),
+                            sampleRateHz = window.sampleRateHz
+                        )
+                    )
+                }
+                start = end
+            }
+        }
+    }
+
+    private data class AudioStats(
+        val rms: Double,
+        val peak: Int,
+        val nonZeroRatio: Double
+    )
+
+    private fun audioStats(pcm: ShortArray): AudioStats {
+        if (pcm.isEmpty()) return AudioStats(rms = 0.0, peak = 0, nonZeroRatio = 0.0)
+        var sumSquares = 0.0
+        var peak = 0
+        var nonZero = 0
+        pcm.forEach { sample ->
+            val value = sample.toInt()
+            val magnitude = abs(value)
+            if (magnitude > peak) peak = magnitude
+            if (value != 0) nonZero += 1
+            sumSquares += value.toDouble() * value.toDouble()
+        }
+        return AudioStats(
+            rms = sqrt(sumSquares / pcm.size),
+            peak = peak,
+            nonZeroRatio = nonZero.toDouble() / pcm.size
+        )
     }
 
     private fun finishAfterStop() {

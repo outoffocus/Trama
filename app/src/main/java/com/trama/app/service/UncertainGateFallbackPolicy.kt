@@ -17,6 +17,7 @@ internal object UncertainGateFallbackPolicy {
         lastAllowedAtMs: Long,
         batteryPct: Int,
         charging: Boolean,
+        powerSaveReason: String?,
         normalCooldownMs: Long,
         minWindowMs: Long,
         maxWindowMs: Long
@@ -28,6 +29,7 @@ internal object UncertainGateFallbackPolicy {
         val blockedReason = when {
             !gateLooksUnreliable -> "gate_transcript_not_uncertain"
             !windowLooksUseful -> "window_not_useful"
+            !charging && !powerSaveReason.isNullOrBlank() && powerSaveReason != "none" -> powerSaveReason
             !charging && batteryPct in 1 until MIN_BATTERY_PCT -> "battery_low"
             nowMs - lastAllowedAtMs < cooldownMs -> "cooldown"
             else -> null

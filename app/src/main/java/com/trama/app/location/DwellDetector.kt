@@ -22,6 +22,13 @@ data class DwellDetectorConfig(
     val entryRadiusMeters: Float = 80f,
     val exitRadiusMeters: Float = 200f,
     val dwellThresholdMillis: Long = 15 * 60 * 1000L,
+    /** Max accuracy accepted for dwell detection. Indoor GPS often reports
+     *  100-160m; ignoring all of those samples makes large buildings invisible. */
+    val maxAccuracyMeters: Float = 160f,
+    /** Larger candidate radius used before a dwell becomes active. This handles
+     *  malls, offices, hospitals, stations, and indoor drift where the user is
+     *  present in one place but not stationary inside an 80m circle. */
+    val candidateClusterRadiusMeters: Float = 220f,
     /**
      * A dwell is not closed on the first sample outside the exit radius. That
      * first sample is treated as a pending exit and must remain outside long
@@ -50,7 +57,7 @@ class DwellDetector(
         val state = currentState ?: DwellDetectionState()
         val updatedAt = sample.timestamp
 
-        if (sample.accuracyMeters > 100f) {
+        if (sample.accuracyMeters > config.maxAccuracyMeters) {
             return DwellDetectorResult(
                 nextState = state.copy(updatedAt = updatedAt)
             )
@@ -106,14 +113,25 @@ class DwellDetector(
                 sample.longitude
             )
 
-            if (distanceFromCandidate <= config.entryRadiusMeters) {
+            if (distanceFromCandidate <= config.candidateClusterRadiusMeters) {
                 val startedAt = state.candidateStartedAt ?: sample.timestamp
                 val elapsed = sample.timestamp - startedAt
                 return if (elapsed >= config.dwellThresholdMillis) {
+                    val useCurrentSampleAsAnchor = distanceFromCandidate > config.entryRadiusMeters
+                    val anchorLat = if (useCurrentSampleAsAnchor) {
+                        ((state.candidateLat ?: sample.latitude) + sample.latitude) / 2.0
+                    } else {
+                        state.candidateLat
+                    }
+                    val anchorLon = if (useCurrentSampleAsAnchor) {
+                        ((state.candidateLon ?: sample.longitude) + sample.longitude) / 2.0
+                    } else {
+                        state.candidateLon
+                    }
                     DwellDetectorResult(
                         nextState = state.copy(
-                            anchorLat = state.candidateLat,
-                            anchorLon = state.candidateLon,
+                            anchorLat = anchorLat,
+                            anchorLon = anchorLon,
                             dwellStartedAt = startedAt,
                             active = true,
                             candidateLat = null,

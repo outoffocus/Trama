@@ -16,6 +16,9 @@ object RecordingState {
     private val _isRecording = MutableStateFlow(false)
     val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
 
+    private val _isProcessing = MutableStateFlow(false)
+    val isProcessing: StateFlow<Boolean> = _isProcessing.asStateFlow()
+
     private val _elapsedSeconds = MutableStateFlow(0L)
     val elapsedSeconds: StateFlow<Long> = _elapsedSeconds.asStateFlow()
 
@@ -34,22 +37,49 @@ object RecordingState {
     val lastError: StateFlow<String?> = _lastError.asStateFlow()
 
     fun startRecording(context: Context) {
+        _isRecording.value = true
+        _isProcessing.value = false
+        _elapsedSeconds.value = 0
+        _transcription.value = ""
+        _currentPartial.value = "Iniciando grabación..."
         val intent = Intent(context, RecordingService::class.java).apply {
             action = RecordingService.ACTION_START
         }
-        ContextCompat.startForegroundService(context, intent)
+        runCatching {
+            ContextCompat.startForegroundService(context, intent)
+        }.onFailure { error ->
+            reset()
+            notifyError(error.message ?: "No se pudo iniciar la grabación")
+        }
     }
 
     fun stopRecording(context: Context) {
+        if (_isRecording.value) {
+            _isRecording.value = false
+            _isProcessing.value = true
+            _currentPartial.value = "Transcribiendo..."
+        }
         val intent = Intent(context, RecordingService::class.java).apply {
             action = RecordingService.ACTION_STOP
         }
-        context.startService(intent)
+        runCatching {
+            context.startService(intent)
+        }.onFailure { error ->
+            reset()
+            notifyError(error.message ?: "No se pudo parar la grabación")
+        }
     }
 
     // Called by the service — do not call from UI
-    internal fun update(recording: Boolean, elapsed: Long, text: String, partial: String) {
+    internal fun update(
+        recording: Boolean,
+        elapsed: Long,
+        text: String,
+        partial: String,
+        processing: Boolean = false
+    ) {
         _isRecording.value = recording
+        _isProcessing.value = processing
         _elapsedSeconds.value = elapsed
         _transcription.value = text
         _currentPartial.value = partial
@@ -73,6 +103,7 @@ object RecordingState {
 
     internal fun reset() {
         _isRecording.value = false
+        _isProcessing.value = false
         _elapsedSeconds.value = 0
         _transcription.value = ""
         _currentPartial.value = ""

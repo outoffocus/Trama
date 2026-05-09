@@ -20,12 +20,27 @@ class DiagnosticsAnalyzerTest {
             event("SERVICE", "OK", "service_stop_requested", mapOf("reason" to "home_primary_stop")),
             event("SERVICE", "REJECT", "media_playback_pause", mapOf("reason" to "poll")),
             event("ASR_FINAL", "REJECT", "media_playback_blocked_window", mapOf("windowMs" to "8000")),
+            event(
+                "SERVICE",
+                "REJECT",
+                "watchdog_start_failed",
+                mapOf(
+                    "serviceStartError" to "ForegroundServiceStartNotAllowedException",
+                    "outcome" to "SERVICE_UNAVAILABLE"
+                )
+            ),
             event("SERVICE", "REJECT", "onDestroy"),
             event("ASR_FINAL", "OK", "recuerdame comprar leche", mapOf("engine" to "vosk -> whisper", "decodeMs" to "900", "windowMs" to "5000")),
-            event("SPEAKER", "REJECT", "anuncio de television", mapOf("sim" to "0.31")),
+            event("ACOUSTIC_SPEECH", "REJECT", "silero_vad_no_speech", mapOf("windowMs" to "7000", "outcome" to "NO_SPEECH")),
+            event("SPEAKER", "REJECT", "anuncio de television", mapOf("sim" to "0.31", "rejectStage" to "SpeakerOwnership", "outcome" to "NOT_OWNER")),
             event("SPEAKER", "REJECT", "noticias de la television", mapOf("sim" to "0.28")),
             event("SPEAKER", "REJECT", "publicidad del programa", mapOf("sim" to "0.22")),
-            event("ASR_FINAL", "OK", "recuerdame llamar a maria", mapOf("engine" to "vosk -> whisper", "decodeMs" to "1200", "windowMs" to "6000")),
+            event(
+                "ASR_FINAL",
+                "OK",
+                "recuerdame llamar a maria",
+                mapOf("engine" to "vosk -> whisper", "decodeMs" to "1200", "windowMs" to "6000", "source" to "uncertain_fallback")
+            ),
             event("SPEAKER", "OK", meta = mapOf("sim" to "0.82")),
             event("INTENT", "OK", "recuerdame llamar a maria"),
             event("SAVE", "OK", "llamar a maria"),
@@ -52,6 +67,15 @@ class DiagnosticsAnalyzerTest {
         assertEquals(0, analysis.quality.unexpectedServiceStops)
         assertTrue(analysis.engines.any { it.value == "whisper" && it.count == 2 })
         assertTrue(analysis.rejectReasons.any { it.value == "missing_object" })
+        assertTrue(analysis.rejectStages.any { it.value == "SpeakerOwnership" })
+        assertTrue(analysis.outcomes.any { it.value == "SERVICE_UNAVAILABLE" })
+        assertTrue(analysis.hourly.any { it.watchdogFailMinutes == 5 })
+        assertEquals(2, analysis.power.finalAsrDecodeCount)
+        assertEquals(2100L, analysis.power.finalAsrDecodeTotalMs)
+        assertEquals(11000L, analysis.power.finalAsrAudioTotalMs)
+        assertEquals(1, analysis.power.uncertainFallbackDecodeCount)
+        assertEquals(6000L, analysis.power.uncertainFallbackAudioTotalMs)
+        assertEquals(1, analysis.power.acousticSpeechRejected)
         assertTrue(analysis.frequentPhrases.any { it.value.contains("llamar") })
         assertTrue(analysis.recommendations.any { it.contains("Speaker verification") })
     }
@@ -74,6 +98,24 @@ class DiagnosticsAnalyzerTest {
 
         assertEquals(1, analysis.funnel.recordingWithoutActions)
         assertEquals(1, analysis.examples.recordingsWithoutActions.size)
+    }
+
+    @Test
+    fun `watchdog failures without metadata are called out`() {
+        val events = listOf(
+            event(
+                "SERVICE",
+                "REJECT",
+                "watchdog_start_failed",
+                mapOf("outcome" to "SERVICE_UNAVAILABLE")
+            )
+        )
+
+        val analysis = DiagnosticsAnalyzer.analyze(events, emptyList(), emptyList())
+
+        assertTrue(
+            analysis.recommendations.any { it.contains("fallos de watchdog sin causa exportada") }
+        )
     }
 
     private fun event(

@@ -14,6 +14,8 @@ class ChatFactsFormatter {
     fun format(query: ChatQuery, context: ChatRetrievedContext): String = when (context) {
         is ChatRetrievedContext.Day -> formatDayFacts(query, context)
         is ChatRetrievedContext.PlaceLookup -> formatPlaceFacts(query, context)
+        is ChatRetrievedContext.PlaceCollection -> formatPlaceCollectionFacts(query, context)
+        is ChatRetrievedContext.GenericFacts -> formatGenericFacts(query, context)
     }
 
     private fun formatDayFacts(query: ChatQuery, context: ChatRetrievedContext.Day): String = buildString {
@@ -61,6 +63,69 @@ class ChatFactsFormatter {
                 result.visits.forEach { event ->
                     appendLine(formatPlaceEvent(result.place, event))
                 }
+            }
+        }
+    }
+
+    private fun formatPlaceCollectionFacts(
+        query: ChatQuery,
+        context: ChatRetrievedContext.PlaceCollection
+    ): String = buildString {
+        appendLine("QUESTION: ${query.rawQuestion}")
+        appendLine("RANGE: ${context.dateRange?.label ?: "todo el historial"}")
+        appendLine("REGION_TERMS: ${context.regionTerms.joinToString(", ").ifBlank { "NONE" }}")
+        appendLine("CATEGORY: ${context.category}")
+        appendLine("LIKED_ONLY: ${context.likedOnly}")
+        if (context.places.isNotEmpty()) {
+            appendLine("PLACES:")
+            context.places.forEach { result ->
+                appendLine("- ${result.place.name}")
+                appendLine("  TYPE: ${result.place.type ?: "NONE"}")
+                appendLine("  RATING: ${result.place.rating?.toString() ?: "NONE"}")
+                appendLine("  OPINION_SUMMARY: ${result.place.opinionSummary ?: "NONE"}")
+                appendLine("  VISITS_COUNT: ${result.visits.size}")
+                appendLine("  TOTAL_MINUTES: ${result.visits.sumOf { visitMinutes(it) }}")
+                result.visits.take(5).forEach { event ->
+                    appendLine("  VISIT: ${formatPlaceEvent(result.place, event)}")
+                }
+            }
+        }
+    }
+
+    private fun formatGenericFacts(query: ChatQuery, context: ChatRetrievedContext.GenericFacts): String = buildString {
+        appendLine("QUESTION: ${query.rawQuestion}")
+        appendLine("RANGE: ${context.dateRange?.label ?: "todo el historial"}")
+        appendLine("SEARCH_TERMS: ${context.searchTerms.joinToString(", ").ifBlank { "NONE" }}")
+        appendLine("ACTION_TYPE_FILTER: ${context.actionTypeFilter ?: "NONE"}")
+        appendLine("ANSWER_MODE: ${context.answerMode}")
+
+        if (context.entries.isNotEmpty()) {
+            appendLine("ENTRIES:")
+            context.entries.forEach { entry ->
+                appendLine(
+                    "- created=${dateTimeFormat.format(Date(entry.createdAt))} " +
+                        "status=${entry.status} actionType=${entry.actionType} " +
+                        "completed=${entry.completedAt?.let { dateTimeFormat.format(Date(it)) } ?: "NONE"} " +
+                        "text=${entry.displayText}"
+                )
+            }
+        }
+
+        if (context.recordings.isNotEmpty()) {
+            appendLine("RECORDINGS:")
+            context.recordings.forEach { recording ->
+                appendLine(
+                    "- created=${dateTimeFormat.format(Date(recording.createdAt))} " +
+                        "title=${recording.title ?: "NONE"} summary=${recording.summary ?: "NONE"}"
+                )
+            }
+        }
+
+        if (context.timelineEvents.isNotEmpty()) {
+            appendLine("TIMELINE_EVENTS:")
+            context.timelineEvents.forEach { event ->
+                val place = event.placeId?.let { context.placesById[it] }
+                appendLine(formatPlaceEvent(place, event))
             }
         }
     }

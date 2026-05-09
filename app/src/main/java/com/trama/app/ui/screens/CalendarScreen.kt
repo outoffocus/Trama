@@ -115,9 +115,14 @@ import androidx.core.content.ContextCompat
 import com.trama.app.service.EntryProcessingState
 import com.trama.app.service.RecordingState
 import com.trama.app.service.ServiceController
+import com.trama.app.summary.ActionExecutor
+import com.trama.app.summary.ActionType
 import com.trama.app.summary.CalendarHelper
+import com.trama.app.summary.EntryActionBridge
 import com.trama.app.summary.GoogleCalendarSyncManager
+import com.trama.app.summary.SuggestedAction
 import com.trama.app.ui.SettingsDataStore
+import com.trama.app.ui.components.CalendarActionDialog
 import com.trama.app.ui.components.EntryCard
 import com.trama.app.ui.components.StatusPill
 import com.trama.app.ui.components.SwipeableReminderCard
@@ -221,6 +226,7 @@ fun CalendarScreen(
     val processingBackends by EntryProcessingState.processingBackends.collectAsState()
     val serviceRunning by ServiceController.isRunning.collectAsState()
     val isRecording by RecordingState.isRecording.collectAsState()
+    val isRecordingProcessing by RecordingState.isProcessing.collectAsState()
     val recordingElapsed by RecordingState.elapsedSeconds.collectAsState()
     val watchActive by ServiceController.isWatchActive.collectAsState()
     val locationRunning by ServiceController.isLocationRunning.collectAsState()
@@ -446,7 +452,7 @@ fun CalendarScreen(
                             learningEnabled = learnFromDeletions,
                             extra = mapOf("batchSize" to entryIds.size)
                         )
-                        if (learnFromDeletions && reason != null && reason.isQualitySignal) {
+                        if (learnFromDeletions && reason != null) {
                             com.trama.app.summary.DeletionFeedbackStore.record(context, text, reason)
                         }
                     }
@@ -496,6 +502,22 @@ fun CalendarScreen(
 
     fun markEntryCompleted(entry: DiaryEntry) {
         scope.launch {
+            if (entry.status == EntryStatus.SUGGESTED) {
+                repository.markPending(entry.id)
+                if (learnFromDeletions) {
+                    val text = entry.displayText.ifBlank { entry.text }
+                    com.trama.app.summary.DeletionFeedbackStore.recordAccepted(
+                        context = context,
+                        text = text,
+                        source = "suggested_accept_calendar"
+                    )
+                }
+                snackbarHostState.showSnackbar(
+                    message = "Añadida a pendientes",
+                    duration = SnackbarDuration.Short
+                )
+                return@launch
+            }
             repository.markCompleted(entry.id)
             val result = snackbarHostState.showSnackbar(
                 message = "Marcada como hecha",
@@ -504,6 +526,13 @@ fun CalendarScreen(
             )
             if (result == SnackbarResult.ActionPerformed) {
                 repository.markPending(entry.id)
+            } else if (learnFromDeletions) {
+                val text = entry.displayText.ifBlank { entry.text }
+                com.trama.app.summary.DeletionFeedbackStore.recordAccepted(
+                    context = context,
+                    text = text,
+                    source = "marked_completed"
+                )
             }
         }
     }
@@ -604,6 +633,7 @@ fun CalendarScreen(
 
     fun handleMicClick() {
         when {
+            isRecordingProcessing -> Unit
             isRecording -> RecordingState.stopRecording(context)
             watchActive -> {
                 micActionsVisible = false
@@ -618,6 +648,7 @@ fun CalendarScreen(
     }
 
     fun startContinuousRecording() {
+        if (isRecording || isRecordingProcessing) return
         val hasPermission = ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.RECORD_AUDIO
@@ -725,7 +756,7 @@ fun CalendarScreen(
                     }
                 }
                 val headerStatus = when {
-                    isRecording -> TramaStatus.Recording
+                    isRecording || isRecordingProcessing -> TramaStatus.Recording
                     watchActive -> TramaStatus.Watch
                     showListeningStatusOnHome && serviceRunning && asrStatus.isListeningErrorStatus() ->
                         TramaStatus.Error
@@ -734,6 +765,7 @@ fun CalendarScreen(
                 }
                 val headerStatusLabel = when {
                     isRecording -> formatRecordingElapsed(recordingElapsed)
+                    isRecordingProcessing -> "Transcribiendo..."
                     showListeningStatusOnHome -> listeningStatusLabel(
                         isRecording = isRecording,
                         watchActive = watchActive,
@@ -779,6 +811,7 @@ fun CalendarScreen(
                 FloatingMicButton(
                     serviceRunning = serviceRunning,
                     isRecording = isRecording,
+                    isRecordingProcessing = isRecordingProcessing,
                     watchActive = watchActive,
                     actionsVisible = micActionsVisible,
                     onActionsVisibleChange = { micActionsVisible = it },
@@ -1128,6 +1161,62 @@ private fun PendingEntryCard(
     onComplete: (DiaryEntry) -> Unit,
     onPostpone: (DiaryEntry, Long) -> Unit
 ) {
+    val context = LocalContext.current
+    val quickAction = remember(
+        entry.id,
+        entry.actionType,
+        entry.displayText,
+        entry.dueDate,
+        entry.status
+    ) {
+        EntryActionBridge.build(entry)
+    }
+    var editingCalendarAction by remember(entry.id) { mutableStateOf<SuggestedAction?>(null) }
+    var pendingCalendarAction by remember(entry.id) { mutableStateOf<SuggestedAction?>(null) }
+    val calendarPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        val granted = result[Manifest.permission.READ_CALENDAR] == true &&
+            result[Manifest.permission.WRITE_CALENDAR] == true
+        if (granted) {
+            editingCalendarAction = pendingCalendarAction
+        }
+        pendingCalendarAction = null
+    }
+
+    editingCalendarAction?.let { action ->
+        val isReminder = action.type == ActionType.REMINDER
+        CalendarActionDialog(
+            action = action,
+            dialogTitle = if (isReminder) "Crear recordatorio" else "Añadir al calendario",
+            confirmLabel = if (isReminder) "Crear" else "Añadir",
+            onDismiss = { editingCalendarAction = null },
+            onConfirm = { title, description, date, time, calendarId ->
+                val datetime = "${date}T${time}"
+                val updatedAction = action.copy(title = title, description = description, datetime = datetime)
+                val startMillis = try {
+                    SimpleDateFormat("yyyy-MM-dd'T'HH:mm", Locale.getDefault()).parse(datetime)?.time
+                } catch (_: Exception) {
+                    null
+                }
+
+                if (startMillis != null && calendarId != null) {
+                    CalendarHelper.insertEventInCalendar(
+                        context = context,
+                        calendarId = calendarId,
+                        title = title,
+                        description = description.ifBlank { null },
+                        startMillis = startMillis,
+                        reminderMinutes = if (isReminder) 15 else 0
+                    )
+                } else {
+                    CalendarHelper.insertEventFromAction(context, updatedAction, isReminder = isReminder)
+                }
+                editingCalendarAction = null
+            }
+        )
+    }
+
     SwipeableReminderCard(
         entry = entry,
         enabled = entry.status != EntryStatus.COMPLETED &&
@@ -1139,6 +1228,29 @@ private fun PendingEntryCard(
         EntryCard(
             entry = entry,
             accentColor = accentColor,
+            quickActionLabel = quickAction?.label,
+            quickActionIcon = quickAction?.icon,
+            onQuickActionClick = if (!selectionMode) {
+                quickAction?.let { action ->
+                    {
+                        if (action.action.type == ActionType.CALENDAR_EVENT || action.action.type == ActionType.REMINDER) {
+                            if (CalendarHelper.hasWriteCalendarPermission(context)) {
+                                editingCalendarAction = action.action
+                            } else {
+                                pendingCalendarAction = action.action
+                                calendarPermissionLauncher.launch(
+                                    arrayOf(
+                                        Manifest.permission.READ_CALENDAR,
+                                        Manifest.permission.WRITE_CALENDAR
+                                    )
+                                )
+                            }
+                        } else {
+                            ActionExecutor.execute(context, action.action)
+                        }
+                    }
+                }
+            } else null,
             onClick = {
                 if (selectionMode) {
                     onToggleSelection(entry.id, entry.id !in selectedEntryIds)
@@ -1149,7 +1261,10 @@ private fun PendingEntryCard(
             onLongClick = if (!selectionMode) {
                 { onEnterSelection(entry.id) }
             } else null,
-            onToggleComplete = if (!selectionMode && entry.status == EntryStatus.PENDING) {
+            onToggleComplete = if (
+                !selectionMode &&
+                (entry.status == EntryStatus.PENDING || entry.status == EntryStatus.SUGGESTED)
+            ) {
                 { onComplete(entry) }
             } else null,
             isSelectionMode = selectionMode,
@@ -1422,6 +1537,7 @@ private fun MonthPickerSheet(
 private fun FloatingMicButton(
     serviceRunning: Boolean,
     isRecording: Boolean,
+    isRecordingProcessing: Boolean,
     watchActive: Boolean,
     actionsVisible: Boolean,
     onActionsVisibleChange: (Boolean) -> Unit,
@@ -1439,7 +1555,7 @@ private fun FloatingMicButton(
         verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.Bottom)
     ) {
         AnimatedVisibility(
-            visible = actionsVisible && !isRecording && !watchActive,
+            visible = actionsVisible && !isRecording && !isRecordingProcessing && !watchActive,
             enter = androidx.compose.animation.fadeIn() +
                 androidx.compose.animation.expandVertically(expandFrom = Alignment.Bottom),
             exit = androidx.compose.animation.fadeOut() +
@@ -1474,7 +1590,7 @@ private fun FloatingMicButton(
                 indication = null,
                 onClick = onClick,
                 onLongClick = {
-                    if (!isRecording && !watchActive) {
+                    if (!isRecording && !isRecordingProcessing && !watchActive) {
                         onActionsVisibleChange(!actionsVisible)
                     }
                 }
@@ -1482,6 +1598,7 @@ private fun FloatingMicButton(
             shape = CircleShape,
             color = when {
                 isRecording -> t.red
+                isRecordingProcessing -> MaterialTheme.colorScheme.secondary
                 watchActive -> t.watch
                 serviceRunning -> t.amber
                 else -> t.dimText
@@ -1493,22 +1610,30 @@ private fun FloatingMicButton(
                 modifier = Modifier.size(58.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = when {
-                        isRecording -> Icons.Default.Stop
-                        watchActive -> Icons.Default.Watch
-                        serviceRunning -> Icons.Default.Mic
-                        else -> Icons.Default.MicOff
-                    },
-                    contentDescription = when {
-                        isRecording -> "Parar grabación"
-                        watchActive -> "Recuperar control del reloj"
-                        serviceRunning -> "Desactivar escucha"
-                        else -> "Activar escucha"
-                    },
-                    tint = Color.White,
-                    modifier = Modifier.size(25.dp)
-                )
+                if (isRecordingProcessing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        color = Color.White,
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Icon(
+                        imageVector = when {
+                            isRecording -> Icons.Default.Stop
+                            watchActive -> Icons.Default.Watch
+                            serviceRunning -> Icons.Default.Mic
+                            else -> Icons.Default.MicOff
+                        },
+                        contentDescription = when {
+                            isRecording -> "Parar grabación"
+                            watchActive -> "Recuperar control del reloj"
+                            serviceRunning -> "Desactivar escucha"
+                            else -> "Activar escucha"
+                        },
+                        tint = Color.White,
+                        modifier = Modifier.size(25.dp)
+                    )
+                }
             }
         }
     }

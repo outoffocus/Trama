@@ -268,6 +268,7 @@ private class FakeTimelineEventDao : TimelineEventDao {
     override suspend fun insert(event: TimelineEvent): Long = 1L
     override suspend fun insertAll(events: List<TimelineEvent>) {}
     override suspend fun update(event: TimelineEvent) {}
+    override suspend fun updateCompletedAt(id: Long, completedAt: Long?) {}
     override suspend fun updateTitleForPlace(placeId: Long, title: String) {}
     override suspend fun deleteById(id: Long) {}
     override suspend fun deleteByIds(ids: List<Long>) {}

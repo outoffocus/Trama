@@ -114,4 +114,55 @@ class DwellDetectorHysteresisTest {
         assertTrue(state?.active == true)
         assertEquals(1000.0, state?.anchorLat)
     }
+
+    @Test
+    fun largeIndoorPlace_opensDwellDespiteMovementWithinCluster() {
+        val detector = DwellDetector(
+            config = DwellDetectorConfig(
+                entryRadiusMeters = 80f,
+                exitRadiusMeters = 200f,
+                dwellThresholdMillis = 15 * minute,
+                maxAccuracyMeters = 160f,
+                candidateClusterRadiusMeters = 220f
+            ),
+            distance = planarDistance
+        )
+
+        val samples = listOf(
+            sample(0.0, 0.0, 0L, acc = 90f),
+            sample(120.0, 0.0, 5 * minute, acc = 120f),
+            sample(180.0, 20.0, 10 * minute, acc = 130f),
+            sample(150.0, -30.0, 15 * minute, acc = 140f)
+        )
+
+        var state: DwellDetectionState? = null
+        samples.forEach { s ->
+            state = detector.process(state, s).nextState
+        }
+
+        assertTrue("Large indoor cluster should become an active dwell", state?.active == true)
+        assertEquals(0L, state?.dwellStartedAt)
+    }
+
+    @Test
+    fun veryPoorAccuracy_isIgnoredWithoutResettingCandidate() {
+        val detector = DwellDetector(
+            config = DwellDetectorConfig(
+                entryRadiusMeters = 80f,
+                exitRadiusMeters = 200f,
+                dwellThresholdMillis = 15 * minute,
+                maxAccuracyMeters = 160f,
+                candidateClusterRadiusMeters = 220f
+            ),
+            distance = planarDistance
+        )
+
+        var state: DwellDetectionState? = null
+        state = detector.process(state, sample(0.0, 0.0, 0L, acc = 50f)).nextState
+        state = detector.process(state, sample(800.0, 0.0, 5 * minute, acc = 250f)).nextState
+        state = detector.process(state, sample(30.0, 0.0, 15 * minute, acc = 60f)).nextState
+
+        assertTrue("Bad GPS samples should not destroy a valid candidate", state?.active == true)
+        assertEquals(0L, state?.dwellStartedAt)
+    }
 }

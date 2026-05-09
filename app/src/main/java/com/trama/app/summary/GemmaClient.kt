@@ -112,7 +112,11 @@ object GemmaClient {
         val config = com.google.ai.edge.litertlm.EngineConfig(
             modelPath = modelPath,
             backend = com.google.ai.edge.litertlm.Backend.CPU(),
-            visionBackend = com.google.ai.edge.litertlm.Backend.GPU(),
+            // Text generation must not initialize the vision encoder. Some
+            // text-oriented .litertlm bundles expose auxiliary vision
+            // signatures, and LiteRT-LM rejects them at engine creation with
+            // "Vision Encoder model must have exactly one signature".
+            visionBackend = null,
             audioBackend = null,
             maxNumTokens = 4096, // keep very conservative; large values trigger SIGSEGV even at 8192
             cacheDir = context.cacheDir.absolutePath

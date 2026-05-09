@@ -67,8 +67,8 @@ class SettingsDataStore(private val context: Context) {
         const val DEFAULT_CONTEXT_PRE_ROLL = 2  // Continuous listening pre-roll in SECONDS
         const val DEFAULT_CONTEXT_POST_ROLL = 8  // Continuous listening post-roll in SECONDS
         const val GATE_ENGINE_VOSK = "vosk"
-        const val DEFAULT_LOCATION_INTERVAL_MINUTES = 5
-        const val DEFAULT_LOCATION_DWELL_MINUTES = 15
+        const val DEFAULT_LOCATION_INTERVAL_MINUTES = 3
+        const val DEFAULT_LOCATION_DWELL_MINUTES = 10
         const val DEFAULT_LOCATION_ENTRY_RADIUS_METERS = 80
         const val DEFAULT_LOCATION_EXIT_RADIUS_METERS = 200
         const val DEFAULT_TIMELINE_COLOR_PENDING = 0
@@ -238,7 +238,7 @@ class SettingsDataStore(private val context: Context) {
     }
 
     val learnFromDeletions: Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[LEARN_FROM_DELETIONS] ?: false
+        prefs[LEARN_FROM_DELETIONS] ?: true
     }
 
     suspend fun setLearnFromDeletions(enabled: Boolean) {

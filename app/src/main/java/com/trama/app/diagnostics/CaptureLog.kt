@@ -29,6 +29,7 @@ object CaptureLog {
     /** Pipeline stage that emitted the event. */
     enum class Gate {
         ASR_GATE,        // Lightweight gate ASR heard speech and checked triggers
+        ACOUSTIC_SPEECH, // Acoustic speech gate before expensive ASR
         ASR_FINAL,       // Whisper produced a final transcript (always OK)
         SPEAKER,         // Speaker verification
         INTENT,          // Trigger / keyword match
@@ -43,6 +44,24 @@ object CaptureLog {
 
     /** Outcome for the given gate. */
     enum class Result { OK, REJECT, DUP, NO_MATCH }
+
+    /** Stable end-state labels for capture pipeline and service-health diagnostics. */
+    enum class CaptureOutcome {
+        SERVICE_AVAILABLE,
+        SERVICE_UNAVAILABLE,
+        SERVICE_SUSPENDED,
+        MEDIA_PLAYBACK,
+        NO_SPEECH,
+        NO_INTENT,
+        NOT_OWNER,
+        INTENT_CANDIDATE,
+        LOW_CONFIDENCE_SUGGESTED,
+        ACTION_ACCEPTED,
+        ACTION_REJECTED,
+        DUPLICATE,
+        CAPTURE_THROTTLED,
+        UNKNOWN
+    }
 
     @Serializable
     data class Event(
@@ -72,7 +91,20 @@ object CaptureLog {
         meta: Map<String, Any?> = emptyMap()
     ) {
         val ts = System.currentTimeMillis()
-        val metaStr = meta
+        val guardedMeta = if (
+            gate == Gate.SERVICE &&
+            text == "watchdog_start_failed" &&
+            meta.isEmpty()
+        ) {
+            mapOf(
+                "serviceStartError" to "meta_missing_at_source",
+                "outcome" to CaptureOutcome.SERVICE_UNAVAILABLE,
+                "diagnosticWarning" to "watchdog_start_failed_logged_without_meta"
+            )
+        } else {
+            meta
+        }
+        val metaStr = guardedMeta
             .filterValues { it != null }
             .mapValues { (_, v) -> v.toString() }
 

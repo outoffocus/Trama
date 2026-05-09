@@ -36,10 +36,9 @@ class IntentDetectorTest {
     }
 
     @Test
-    fun `detects reminders intent with small asr typo`() {
+    fun `rejects fuzzy single word reminder typo`() {
         val result = detector.detect("recorda llamar al dentista")
-        assertNotNull(result)
-        assertEquals("recordatorios", result!!.pattern?.id)
+        assertNull(result)
     }
 
     @Test
@@ -137,10 +136,17 @@ class IntentDetectorTest {
     }
 
     @Test
-    fun `detects explicit actionable hay que forms`() {
+    fun `detects explicit actionable forms and rejects weak ownership`() {
         assertEquals("tareas", detector.detect("hay que llamar a Elena mañana")?.pattern?.id)
         assertEquals("tareas", detector.detect("hay que ir a la oficina")?.pattern?.id)
         assertEquals("tareas", detector.detect("hay que comprar pan")?.pattern?.id)
+        assertEquals("tareas", detector.detect("tengo que comprar calcetines")?.pattern?.id)
+        assertEquals("tareas", detector.detect("tenemos que comprar jabón")?.pattern?.id)
+        assertEquals("tareas", detector.detect("tenemos que ir a Ourense mañana")?.pattern?.id)
+        assertEquals("comunicacion", detector.detect("tenemos que hablar con Tony")?.pattern?.id)
+        assertNull(detector.detect("tenemos que sacar el mismo formato"))
+        assertNull(detector.detect("tienes que pedir el test"))
+        assertNull(detector.detect("hay que hacerlo"))
     }
 
     @Test

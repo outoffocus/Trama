@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.BatteryManager
+import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.trama.app.diagnostics.CaptureLog
@@ -22,40 +23,78 @@ class ServiceRescueReceiver : BroadcastReceiver() {
 
         if (!ServiceController.shouldBeRunning(context)) {
             ServiceWatchdogScheduler.cancel(context)
-            log("watchdog_skip_disabled")
+            log(
+                "watchdog_skip_disabled",
+                meta = serviceState(context) + mapOf("outcome" to CaptureLog.CaptureOutcome.SERVICE_SUSPENDED)
+            )
             return
         }
 
         val suspendReason = ServiceController.suspendReason(context)
         if (suspendReason != ServiceController.SuspendReason.NONE) {
-            log("watchdog_skip_suspended", mapOf("suspendReason" to suspendReason.name))
+            log(
+                "watchdog_skip_suspended",
+                meta = serviceState(context) + mapOf(
+                    "suspendReason" to suspendReason.name,
+                    "outcome" to CaptureLog.CaptureOutcome.SERVICE_SUSPENDED
+                )
+            )
             ServiceWatchdogScheduler.schedule(context, reason = "suspended_${suspendReason.name.lowercase()}")
             return
         }
 
         if (ServiceController.isRunning.value) {
-            log("watchdog_service_alive")
+            log(
+                "watchdog_service_alive",
+                meta = serviceState(context) + mapOf("outcome" to CaptureLog.CaptureOutcome.SERVICE_AVAILABLE)
+            )
             ServiceWatchdogScheduler.schedule(context, reason = "service_alive")
             return
         }
 
         if (!hasAudioPermission(context)) {
-            log("watchdog_skip_no_permission", result = CaptureLog.Result.REJECT)
+            log(
+                "watchdog_skip_no_permission",
+                result = CaptureLog.Result.REJECT,
+                meta = serviceState(context) + mapOf(
+                    "serviceStartError" to "missing_record_audio_permission",
+                    "outcome" to CaptureLog.CaptureOutcome.SERVICE_UNAVAILABLE
+                )
+            )
             ServiceWatchdogScheduler.schedule(context, reason = "no_permission")
             return
         }
 
         if (isBatteryLow(context)) {
-            log("watchdog_skip_low_battery", result = CaptureLog.Result.REJECT)
+            log(
+                "watchdog_skip_low_battery",
+                result = CaptureLog.Result.REJECT,
+                meta = serviceState(context) + mapOf(
+                    "serviceStartError" to "battery_low",
+                    "outcome" to CaptureLog.CaptureOutcome.SERVICE_UNAVAILABLE
+                )
+            )
             ServiceWatchdogScheduler.schedule(context, reason = "low_battery")
             return
         }
 
-        val started = ServiceController.startFromWatchdog(context, reason = intent.action.orEmpty())
-        if (started) {
-            log("watchdog_started_service")
+        val startResult = ServiceController.startFromWatchdog(context, reason = intent.action.orEmpty())
+        if (startResult.started) {
+            log(
+                "watchdog_started_service",
+                meta = serviceState(context) + mapOf("outcome" to CaptureLog.CaptureOutcome.SERVICE_AVAILABLE)
+            )
         } else {
-            log("watchdog_start_failed", result = CaptureLog.Result.REJECT)
+            log(
+                "watchdog_start_failed",
+                result = CaptureLog.Result.REJECT,
+                meta = serviceState(context) + mapOf(
+                    "serviceStartError" to (startResult.errorType ?: "unknown_start_failure"),
+                    "message" to startResult.message,
+                    "stack" to startResult.stack,
+                    "outcome" to CaptureLog.CaptureOutcome.SERVICE_UNAVAILABLE
+                )
+            )
             ServiceWatchdogScheduler.schedule(context, reason = "start_failed")
         }
     }
@@ -68,6 +107,22 @@ class ServiceRescueReceiver : BroadcastReceiver() {
         val bm = context.getSystemService(BatteryManager::class.java) ?: return false
         val level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         return level in 1 until 15
+    }
+
+    private fun serviceState(context: Context): Map<String, Any?> {
+        val bm = context.getSystemService(BatteryManager::class.java)
+        return watchdogServiceState(context) + mapOf(
+            "batteryPct" to bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY),
+            "sdk" to Build.VERSION.SDK_INT
+        )
+    }
+
+    companion object {
+        fun watchdogServiceState(context: Context): Map<String, Any?> = mapOf(
+            "shouldBeRunning" to ServiceController.shouldBeRunning(context),
+            "isRunning" to ServiceController.isRunning.value,
+            "suspendReason" to ServiceController.suspendReason(context).name
+        )
     }
 
     private fun log(

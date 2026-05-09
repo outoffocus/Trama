@@ -403,7 +403,7 @@ fun EntryDetailScreen(
                 reason = reason?.storageKey,
                 learningEnabled = learnFromDeletions
             )
-            if (learnFromDeletions && reason != null && reason.isQualitySignal) {
+            if (learnFromDeletions && reason != null) {
                 com.trama.app.summary.DeletionFeedbackStore.record(context, text, reason)
             }
             repository.deleteById(entryId)

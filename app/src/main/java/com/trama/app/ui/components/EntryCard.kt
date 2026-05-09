@@ -429,18 +429,10 @@ private fun ProcessingBadgeIcons(badge: ProcessingBadge) {
         Icon(
             imageVector = badge.icon,
             contentDescription = badge.contentDescription,
-            modifier = Modifier.size(14.dp),
+            modifier = Modifier
+                .size(14.dp)
+                .alpha(sparkleAlpha),
             tint = badge.tint
         )
-        if (badge.showSparkle) {
-            Icon(
-                imageVector = Icons.Default.AutoAwesome,
-                contentDescription = null,
-                modifier = Modifier
-                    .size(13.dp)
-                    .alpha(sparkleAlpha),
-                tint = LocalTramaColors.current.amber.copy(alpha = 0.85f)
-            )
-        }
     }
 }

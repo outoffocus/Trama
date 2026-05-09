@@ -170,7 +170,13 @@ class LocationForegroundService : LifecycleService() {
                 DwellDetectorConfig(
                     entryRadiusMeters = currentEntryRadiusMeters,
                     exitRadiusMeters = currentExitRadiusMeters,
-                    dwellThresholdMillis = currentDwellThresholdMs
+                    dwellThresholdMillis = currentDwellThresholdMs,
+                    maxAccuracyMeters = maxOf(160f, currentEntryRadiusMeters * 2f),
+                    candidateClusterRadiusMeters = maxOf(
+                        currentExitRadiusMeters,
+                        currentEntryRadiusMeters * 2.75f,
+                        220f
+                    )
                 )
             )
             val result = detector.process(detectorState, sample)

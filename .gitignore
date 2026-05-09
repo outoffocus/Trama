@@ -18,6 +18,7 @@ build/
 
 # Gradle files
 .gradle/
+.kotlin/
 local.properties
 
 # Android Studio
@@ -56,3 +57,6 @@ wear/src/main/assets/model-es/
 # sherpa-onnx / Whisper assets (keep local, do not commit large binaries)
 app/src/main/assets/asr/whisper/*.onnx
 app/src/main/assets/asr/moonshine/*.ort
+
+# Local diagnostic exports
+trama-diagnostics-*.json

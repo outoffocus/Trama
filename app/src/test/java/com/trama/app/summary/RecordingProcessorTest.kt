@@ -80,6 +80,18 @@ class RecordingProcessorTest {
         assertTrue(prompt.contains("\"actionItems\""))
     }
 
+    @Test
+    fun `transcript only analysis keeps long recordings readable`() {
+        val longTranscript = "Hablamos de producto y soporte. ".repeat(120)
+
+        val analysis = callPrivate<Any>("buildTranscriptOnlyAnalysis", longTranscript)
+
+        assertTrue((readField(analysis, "title") as String).isNotBlank())
+        assertTrue((readField(analysis, "summary") as String).isNotBlank())
+        assertTrue((readField(analysis, "summary") as String).length <= 1_203)
+        assertTrue((readField(analysis, "actionItems") as List<*>).isEmpty())
+    }
+
     private fun diaryEntry(id: Long, text: String) = DiaryEntry(
         id = id,
         text = text,

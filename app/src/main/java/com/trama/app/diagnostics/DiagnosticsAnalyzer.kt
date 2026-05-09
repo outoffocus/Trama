@@ -3,7 +3,10 @@ package com.trama.app.diagnostics
 import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.Recording
 import kotlinx.serialization.Serializable
+import java.text.SimpleDateFormat
 import java.text.Normalizer
+import java.util.Date
+import java.util.Locale
 import kotlin.math.roundToInt
 
 object DiagnosticsAnalyzer {
@@ -16,6 +19,9 @@ object DiagnosticsAnalyzer {
         val power: Power,
         val engines: List<CountStat>,
         val rejectReasons: List<CountStat>,
+        val rejectStages: List<CountStat>,
+        val outcomes: List<CountStat>,
+        val hourly: List<HourlyHealth>,
         val qualityBuckets: List<CountStat>,
         val frequentPhrases: List<CountStat>,
         val examples: Examples,
@@ -79,13 +85,36 @@ object DiagnosticsAnalyzer {
         val thermalStatusCounts: List<CountStat>,
         val worstThermalStatus: String?,
         val observedBatteryDropPct: Int?,
-        val observedBatteryDropPerHourPct: Float?
+        val observedBatteryDropPerHourPct: Float?,
+        val finalAsrDecodeCount: Int,
+        val finalAsrDecodeTotalMs: Long,
+        val finalAsrAudioTotalMs: Long,
+        val uncertainFallbackDecodeCount: Int,
+        val uncertainFallbackAudioTotalMs: Long,
+        val acousticSpeechRejected: Int,
+        val captureThrottledEvents: Int
     )
 
     @Serializable
     data class CountStat(
         val value: String,
         val count: Int
+    )
+
+    @Serializable
+    data class HourlyHealth(
+        val hour: String,
+        val serviceAliveMinutes: Int,
+        val suspendedMinutes: Int,
+        val mediaPlaybackMinutes: Int,
+        val watchdogFailMinutes: Int,
+        val finalTranscripts: Int,
+        val acceptedActions: Int,
+        val suggestedActions: Int,
+        val userDeletes: Int,
+        val usefulAcceptedPerFinalTranscriptPct: Int,
+        val topOutcomes: List<CountStat>,
+        val topRejectStages: List<CountStat>
     )
 
     @Serializable
@@ -193,6 +222,13 @@ object DiagnosticsAnalyzer {
                     .mapNotNull { it.meta["reason"] ?: it.meta["discardReason"] ?: it.text }
                     .map { normalizeReason(it) }
             ),
+            rejectStages = topCounts(
+                events.mapNotNull { it.meta["rejectStage"] }
+            ),
+            outcomes = topCounts(
+                events.mapNotNull { it.meta["outcome"] }
+            ),
+            hourly = buildHourlyHealth(events),
             qualityBuckets = topCounts(
                 events
                     .filter { it.gate == "LLM" }
@@ -235,12 +271,12 @@ object DiagnosticsAnalyzer {
 
     private fun buildPower(events: List<CaptureLog.Event>): Power {
         val temps = events.mapNotNull { it.meta["batteryTempC"]?.toFloatOrNull() }
-        val heartbeats = events
-            .filter { it.gate == "SERVICE" && it.text == "heartbeat" }
+        val batterySamples = events
             .mapNotNull { event ->
                 event.meta["batteryPct"]?.toIntOrNull()?.let { pct -> event.ts to pct }
             }
             .sortedBy { it.first }
+            .distinctBy { it.first }
         val dischargeSamples = mutableListOf<Pair<Long, Int>>()
         var bestDrop: Pair<Int, Float>? = null
         fun finishDischargeSession() {
@@ -253,7 +289,7 @@ object DiagnosticsAnalyzer {
                 bestDrop = drop to (drop / hours)
             }
         }
-        for ((ts, pct) in heartbeats) {
+        for ((ts, pct) in batterySamples) {
             val previous = dischargeSamples.lastOrNull()
             if (previous == null || pct <= previous.second) {
                 dischargeSamples += ts to pct
@@ -275,13 +311,28 @@ object DiagnosticsAnalyzer {
             }
             .maxByOrNull { it.first }
             ?.second
+        val finalAsrEvents = events.filter { it.gate == "ASR_FINAL" && it.result == "OK" }
+        val uncertainFallbackAsrEvents = finalAsrEvents.filter { it.meta["source"] == "uncertain_fallback" }
         return Power(
             avgBatteryTempC = temps.averageFloatOrNull(),
             maxBatteryTempC = temps.maxOrNull(),
             thermalStatusCounts = thermalCounts,
             worstThermalStatus = worstThermal,
             observedBatteryDropPct = bestDrop?.first,
-            observedBatteryDropPerHourPct = bestDrop?.second
+            observedBatteryDropPerHourPct = bestDrop?.second,
+            finalAsrDecodeCount = finalAsrEvents.count { it.meta["decodeMs"] != null },
+            finalAsrDecodeTotalMs = finalAsrEvents.sumOf { it.meta["decodeMs"]?.toLongOrNull() ?: 0L },
+            finalAsrAudioTotalMs = finalAsrEvents.sumOf { it.meta["windowMs"]?.toLongOrNull() ?: 0L },
+            uncertainFallbackDecodeCount = uncertainFallbackAsrEvents.count { it.meta["decodeMs"] != null },
+            uncertainFallbackAudioTotalMs = uncertainFallbackAsrEvents.sumOf {
+                it.meta["windowMs"]?.toLongOrNull() ?: 0L
+            },
+            acousticSpeechRejected = events.count {
+                it.gate == "ACOUSTIC_SPEECH" && it.result == "REJECT"
+            },
+            captureThrottledEvents = events.count {
+                it.meta["outcome"] == CaptureLog.CaptureOutcome.CAPTURE_THROTTLED.name
+            }
         )
     }
 
@@ -300,6 +351,48 @@ object DiagnosticsAnalyzer {
             recordingProcessed = events.count { it.gate == "RECORDING" && it.result == "OK" },
             recordingWithoutActions = events.count { it.gate == "RECORDING" && it.result == "NO_MATCH" }
         )
+
+    private fun buildHourlyHealth(events: List<CaptureLog.Event>): List<HourlyHealth> =
+        events
+            .groupBy { hourKey(it.ts) }
+            .toSortedMap()
+            .map { (hour, hourEvents) ->
+                val serviceAliveBuckets = mutableSetOf<Long>()
+                val suspendedBuckets = mutableSetOf<Long>()
+                val mediaBuckets = mutableSetOf<Long>()
+                val watchdogFailBuckets = mutableSetOf<Long>()
+                hourEvents.forEach { event ->
+                    val bucket = event.ts / FIVE_MIN_MS
+                    when {
+                        event.gate == "SERVICE" && event.text in SERVICE_ALIVE_EVENTS -> serviceAliveBuckets += bucket
+                        event.gate == "SERVICE" && event.text in SERVICE_SUSPENDED_EVENTS -> suspendedBuckets += bucket
+                        event.gate == "SERVICE" && event.text == "media_playback_pause" -> mediaBuckets += bucket
+                        event.gate == "SERVICE" && event.text == "watchdog_start_failed" -> watchdogFailBuckets += bucket
+                    }
+                }
+                val finalTranscripts = hourEvents.count { it.gate == "ASR_FINAL" && it.result == "OK" }
+                val acceptedActions = hourEvents.count {
+                    it.gate == "LLM" && it.result == "OK" && it.meta["route"] == "PENDING"
+                }
+                val suggestedActions = hourEvents.count {
+                    it.meta["route"] == "SUGGESTED" ||
+                        it.meta["outcome"] == CaptureLog.CaptureOutcome.LOW_CONFIDENCE_SUGGESTED.name
+                }
+                HourlyHealth(
+                    hour = hour,
+                    serviceAliveMinutes = serviceAliveBuckets.size * 5,
+                    suspendedMinutes = suspendedBuckets.size * 5,
+                    mediaPlaybackMinutes = mediaBuckets.size * 5,
+                    watchdogFailMinutes = watchdogFailBuckets.size * 5,
+                    finalTranscripts = finalTranscripts,
+                    acceptedActions = acceptedActions,
+                    suggestedActions = suggestedActions,
+                    userDeletes = hourEvents.count { it.gate == "USER_DELETE" },
+                    usefulAcceptedPerFinalTranscriptPct = pct(acceptedActions, finalTranscripts),
+                    topOutcomes = topCounts(hourEvents.mapNotNull { it.meta["outcome"] }, limit = 5),
+                    topRejectStages = topCounts(hourEvents.mapNotNull { it.meta["rejectStage"] }, limit = 5)
+                )
+            }
 
     private fun CaptureLog.Event.isAsrGateDecision(): Boolean =
         gate == "ASR_GATE" &&
@@ -382,6 +475,15 @@ object DiagnosticsAnalyzer {
         if (analysis.latency.p95DecodeMs != null && analysis.latency.p95DecodeMs > 8_000L) {
             add("ASR lento en p95: considerar modelo Whisper menor, menos ventana de audio o descarga de modelo por SoC.")
         }
+        if (analysis.power.uncertainFallbackDecodeCount >= 5) {
+            add("El fallback incierto está consumiendo Whisper: revisar analysis.power.uncertainFallbackDecodeCount/audioTotalMs y mantenerlo bloqueado en batería/térmica.")
+        }
+        if (analysis.power.finalAsrDecodeTotalMs >= 60_000L) {
+            add("Whisper acumuló más de un minuto de decode en el periodo exportado: priorizar Silero activo, reducir ventanas y limitar fallbacks antes de cambiar a modelos mayores.")
+        }
+        if (analysis.power.acousticSpeechRejected >= 10) {
+            add("Silero está rechazando muchas ventanas antes de Whisper: esto debería bajar batería; validar manualmente que no eran voz útil.")
+        }
         if (analysis.power.maxBatteryTempC != null && analysis.power.maxBatteryTempC >= 40f) {
             add("Temperatura de batería alta durante la escucha: correlacionar batteryTempC/thermalStatus con ASR_FINAL y ASR_GATE para localizar picos de CPU.")
         }
@@ -389,6 +491,12 @@ object DiagnosticsAnalyzer {
             analysis.power.worstThermalStatus !in setOf("none", "0")
         ) {
             add("Android reportó presión térmica: revisar analysis.power.thermalStatusCounts y reducir ventanas/modelo si coincide con decodes largos.")
+        }
+        if (analysis.rejectReasons.any { it.value == "silero_vad_unavailable" || it.value == "missing_or_init_failed" }) {
+            add("Silero VAD no está activo: bundlear/verificar asr/vad/silero_vad.onnx para evitar decodes de música, silencio y ruido antes de Whisper.")
+        }
+        if (analysis.outcomes.any { it.value == CaptureLog.CaptureOutcome.NO_SPEECH.name && it.count >= 10 }) {
+            add("Muchas ventanas acaban como NO_SPEECH: si coinciden con transcripciones tipo [Música], Silero está ahorrando CPU; si eran voz real, bajar umbral o revisar ganancia/audio source.")
         }
         if (analysis.quality.fallbackEvents > 0) {
             add("Hay eventos de fallback: separar métricas de SpeechRecognizer frente a ASR local para saber si la promesa local-first se está cumpliendo.")
@@ -401,6 +509,11 @@ object DiagnosticsAnalyzer {
         }
         if (analysis.quality.unexpectedServiceStops > 0) {
             add("Hay destrucciones del servicio sin parada explícita cercana: revisar watchdog, permisos de segundo plano y restricciones del fabricante.")
+        }
+        if (analysis.outcomes.any { it.value == CaptureLog.CaptureOutcome.SERVICE_UNAVAILABLE.name } &&
+            analysis.rejectReasons.any { it.value == "watchdog_start_failed" }
+        ) {
+            add("Hay fallos de watchdog sin causa exportada: genera un nuevo diagnóstico con la instrumentación actual para ver serviceStartError/estado del servicio.")
         }
         if (analysis.quality.mediaPlaybackPauses > 0 || analysis.quality.mediaPlaybackBlockedWindows > 0) {
             add("La escucha se pauso por audio de otra app: revisar si coincide con YouTube/Spotify y confirmar que no se guardan eventos de media externa.")
@@ -446,6 +559,9 @@ object DiagnosticsAnalyzer {
         }
     }
 
+    private fun hourKey(ts: Long): String =
+        SimpleDateFormat("yyyy-MM-dd HH:00", Locale.getDefault()).format(Date(ts))
+
     private fun List<Long>.averageOrNull(): Long? =
         if (isEmpty()) null else average().roundToInt().toLong()
 
@@ -480,6 +596,23 @@ object DiagnosticsAnalyzer {
             ?.take(max)
 
     private const val EXAMPLE_LIMIT = 8
+    private const val FIVE_MIN_MS = 5L * 60L * 1000L
+    private val SERVICE_ALIVE_EVENTS = setOf(
+        "onCreate",
+        "onStartCommand",
+        "heartbeat",
+        "watchdog_service_alive",
+        "watchdog_started_service",
+        "service_start_requested",
+        "service_rearm_requested"
+    )
+    private val SERVICE_SUSPENDED_EVENTS = setOf(
+        "watchdog_skip_suspended",
+        "watchdog_skip_disabled",
+        "watchdog_skip_low_battery",
+        "service_stop_requested",
+        "stop_low_battery"
+    )
 
     private val ACTION_HINTS = setOf(
         "recuerdame", "recordar", "llamar", "comprar", "enviar", "hacer", "pedir",

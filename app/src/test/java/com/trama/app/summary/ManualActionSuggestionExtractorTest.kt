@@ -37,6 +37,18 @@ class ManualActionSuggestionExtractorTest {
     }
 
     @Test
+    fun `extract detects weekday at beginning of action`() {
+        val suggestions = ManualActionSuggestionExtractor.extract(
+            "El jueves comprar café"
+        )
+
+        assertEquals(1, suggestions.size)
+        assertEquals(EntryActionType.BUY, suggestions[0].actionType)
+        val cal = Calendar.getInstance().apply { timeInMillis = suggestions[0].dueDate!! }
+        assertEquals(Calendar.THURSDAY, cal.get(Calendar.DAY_OF_WEEK))
+    }
+
+    @Test
     fun `extract splits comma separated actions automatically`() {
         val suggestions = ManualActionSuggestionExtractor.extract(
             "Recordar llamar al dentista, comprar leche y pagar el recibo"

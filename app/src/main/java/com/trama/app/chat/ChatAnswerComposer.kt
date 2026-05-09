@@ -22,6 +22,12 @@ class ChatAnswerComposer {
                 composeDayPlaces(context)
             query.intent == ChatIntent.COMPLETED_TASKS && context is ChatRetrievedContext.Day ->
                 composeCompletedTasks(context)
+            query.intent == ChatIntent.GENERAL_FACT_SEARCH && context is ChatRetrievedContext.GenericFacts ->
+                composeGenericFacts(context)
+            query.intent == ChatIntent.PLACE_LIST && context is ChatRetrievedContext.PlaceCollection ->
+                composePlaceList(context)
+            query.intent == ChatIntent.LIKED_PLACES && context is ChatRetrievedContext.PlaceCollection ->
+                composeLikedPlaces(context)
             query.intent == ChatIntent.FIRST_PLACE && context is ChatRetrievedContext.Day ->
                 composeFirstPlace(context)
             query.intent == ChatIntent.LAST_PLACE && context is ChatRetrievedContext.Day ->
@@ -124,6 +130,111 @@ class ChatAnswerComposer {
         return buildString {
             appendLine(prefix)
             lines.forEach { appendLine(it) }
+        }.trim()
+    }
+
+    private fun composeGenericFacts(context: ChatRetrievedContext.GenericFacts): String {
+        val scope = contextScope(context.dateRange, emptyList())
+        val total = context.entries.size + context.recordings.size + context.timelineEvents.size
+        if (total == 0) {
+            val terms = context.searchTerms.takeIf { it.isNotEmpty() }?.joinToString(", ")
+            val target = when {
+                context.actionTypeFilter != null && terms != null -> "$terms (${context.actionTypeFilter})"
+                context.actionTypeFilter != null -> context.actionTypeFilter
+                terms != null -> terms
+                else -> "esa consulta"
+            }
+            return "No encontré hechos registrados sobre $target en $scope."
+        }
+
+        if (context.answerMode == ChatAnswerMode.DATE_LIST) {
+            val dates = buildList {
+                addAll(context.entries.map { it.createdAt to it.displayText })
+                addAll(context.recordings.map { it.createdAt to (it.title ?: it.summary ?: it.transcription.take(80)) })
+                addAll(context.timelineEvents.map { it.timestamp to it.title })
+            }
+                .sortedBy { it.first }
+                .distinctBy { shortCalendarDate(it.first) to it.second }
+
+            return buildString {
+                appendLine("Encontré estas fechas en $scope:")
+                dates.take(20).forEach { (timestamp, text) ->
+                    appendLine("- ${longDateFormat.format(Date(timestamp))}: $text")
+                }
+            }.trim()
+        }
+
+        return buildString {
+            appendLine("Encontré esto en $scope:")
+            if (context.entries.isNotEmpty()) {
+                appendLine("Acciones/notas:")
+                context.entries.take(20).forEach { entry ->
+                    val date = shortDateTimeFormat.format(Date(entry.createdAt))
+                    val completed = entry.completedAt?.let {
+                        " · completada ${shortDateTimeFormat.format(Date(it))}"
+                    }.orEmpty()
+                    appendLine("- [$date] ${entry.displayText} · ${entry.status} · ${entry.actionType}$completed")
+                }
+            }
+            if (context.recordings.isNotEmpty()) {
+                appendLine("Grabaciones relacionadas:")
+                context.recordings.take(5).forEach { recording ->
+                    val date = shortDateTimeFormat.format(Date(recording.createdAt))
+                    val title = recording.title ?: recording.summary ?: recording.transcription.take(80)
+                    appendLine("- [$date] $title")
+                }
+            }
+            if (context.timelineEvents.isNotEmpty()) {
+                appendLine("Eventos/lugares relacionados:")
+                context.timelineEvents.take(8).forEach { event ->
+                    val date = shortDateTimeFormat.format(Date(event.timestamp))
+                    val place = event.placeId?.let { context.placesById[it]?.name }
+                    val suffix = place?.let { " · $it" }.orEmpty()
+                    appendLine("- [$date] ${event.title}$suffix")
+                }
+            }
+        }.trim()
+    }
+
+    private fun composePlaceList(context: ChatRetrievedContext.PlaceCollection): String {
+        val scope = contextScope(context.dateRange, context.regionTerms)
+        if (context.places.isEmpty()) {
+            return "No encontré lugares registrados para $scope."
+        }
+
+        val places = context.places
+            .distinctBy { it.place.id }
+            .sortedBy { it.visits.firstOrNull()?.timestamp ?: Long.MAX_VALUE }
+            .map { result ->
+                val firstVisit = result.visits.firstOrNull()
+                val time = firstVisit?.let { " (${shortDateTimeFormat.format(Date(it.timestamp))})" }.orEmpty()
+                "${result.place.name}$time"
+            }
+
+        return "Para $scope encontré estos lugares: ${places.joinToString(", ")}."
+    }
+
+    private fun composeLikedPlaces(context: ChatRetrievedContext.PlaceCollection): String {
+        val scope = contextScope(context.dateRange, context.regionTerms)
+        if (context.places.isEmpty()) {
+            val kind = if (context.category == ChatPlaceCategory.RESTAURANT) "restaurantes" else "lugares"
+            return "No encontré $kind valorados positivamente para $scope."
+        }
+
+        val kind = if (context.category == ChatPlaceCategory.RESTAURANT) "restaurantes" else "lugares"
+        return buildString {
+            appendLine("Estos son los $kind que parecen haberte gustado en $scope:")
+            context.places.distinctBy { it.place.id }.take(12).forEach { result ->
+                val rating = result.place.rating?.let { " · $it/5" }.orEmpty()
+                val opinion = result.place.opinionSummary
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { " · $it" }
+                    .orEmpty()
+                val lastVisit = result.visits.maxByOrNull { it.timestamp }
+                    ?.let { " · última visita ${shortDateTimeFormat.format(Date(it.timestamp))}" }
+                    .orEmpty()
+                appendLine("- ${result.place.name}$rating$opinion$lastVisit")
+            }
         }.trim()
     }
 
@@ -288,8 +399,22 @@ class ChatAnswerComposer {
         }.trim()
     }
 
+    private fun contextScope(dateRange: ChatDateRange?, terms: List<String>): String {
+        val date = dateRange?.label?.lowercase(Locale("es"))
+        val region = terms.takeIf { it.isNotEmpty() }?.joinToString(", ")
+        return when {
+            date != null && region != null -> "$region en $date"
+            date != null -> date
+            region != null -> region
+            else -> "todo el historial"
+        }
+    }
+
     private fun shortTime(epochMs: Long): String =
         SimpleDateFormat("HH:mm", Locale("es")).format(Date(epochMs))
+
+    private fun shortCalendarDate(epochMs: Long): String =
+        SimpleDateFormat("yyyy-MM-dd", Locale("es")).format(Date(epochMs))
 
     private fun summarizePlaces(
         events: List<TimelineEvent>,

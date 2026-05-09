@@ -108,17 +108,17 @@ class ActionItemProcessorTest {
             "GENERIC",
             null,
             "NORMAL",
-            0.68f,
+            0.75f,
             true,
             "TASK",
-            0.68f,
-            0.68f,
+            0.75f,
+            0.75f,
             null,
             null
         )
 
         assertTrue(result.isActionable)
-        assertEquals(0.68f, result.confidence, 0.001f)
+        assertEquals(0.75f, result.confidence, 0.001f)
     }
 
     @Test
@@ -440,6 +440,34 @@ class ActionItemProcessorTest {
 
             assertTrue("Expected '$phrase' to pass", result.isActionable)
         }
+    }
+
+    @Test
+    fun `strong explicit actions bypass deletion feedback noise gate`() {
+        assertTrue(
+            callPrivate<Boolean>(
+                "shouldBypassFeedbackNoiseGate",
+                "Recordar que el lunes tengo que ir a Zeta."
+            )
+        )
+        assertTrue(
+            callPrivate<Boolean>(
+                "shouldBypassFeedbackNoiseGate",
+                "Recordar que tengo cita en el pediatra mañana."
+            )
+        )
+        assertTrue(
+            callPrivate<Boolean>(
+                "shouldBypassFeedbackNoiseGate",
+                "Tenemos que comprar jabón de la niña."
+            )
+        )
+        assertTrue(
+            !callPrivate<Boolean>(
+                "shouldBypassFeedbackNoiseGate",
+                "Totalmente, si si, y todo que recordar."
+            )
+        )
     }
 
     @Test
