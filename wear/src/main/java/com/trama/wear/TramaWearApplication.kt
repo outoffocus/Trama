@@ -3,27 +3,32 @@ package com.trama.wear
 import android.app.Activity
 import android.app.Application
 import android.os.Bundle
-import com.trama.shared.data.DatabaseProvider
+import android.os.Handler
+import android.os.Looper
 import com.trama.wear.service.WatchServiceController
 
 class TramaWearApplication : Application() {
     private var startedActivities = 0
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+    private val foregroundNotify = Runnable {
+        WatchServiceController.notifyAppForeground(applicationContext)
+    }
 
     override fun onCreate() {
         super.onCreate()
-        // Pre-warm database on background thread so it's ready when UI needs it
-        DatabaseProvider.preWarm(this)
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityStarted(activity: Activity) {
                 startedActivities += 1
                 if (startedActivities == 1) {
-                    WatchServiceController.notifyAppForeground(applicationContext)
+                    mainHandler.removeCallbacks(foregroundNotify)
+                    mainHandler.postDelayed(foregroundNotify, STARTUP_AUTO_RESUME_DELAY_MS)
                 }
             }
 
             override fun onActivityStopped(activity: Activity) {
                 startedActivities = (startedActivities - 1).coerceAtLeast(0)
                 if (startedActivities == 0) {
+                    mainHandler.removeCallbacks(foregroundNotify)
                     WatchServiceController.notifyAppBackground()
                 }
             }
@@ -34,5 +39,9 @@ class TramaWearApplication : Application() {
             override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
             override fun onActivityDestroyed(activity: Activity) = Unit
         })
+    }
+
+    private companion object {
+        const val STARTUP_AUTO_RESUME_DELAY_MS = 2_000L
     }
 }
