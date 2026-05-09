@@ -88,6 +88,17 @@ class IntentDetector {
                     label = pattern.label
                 )
             }
+
+            val normalizedMatch = pattern.normalizedTriggers
+                .firstOrNull { trigger -> normalizedText.contains(trigger) }
+            if (normalizedMatch != null) {
+                return DetectionResult(
+                    pattern = pattern,
+                    customKeyword = null,
+                    capturedText = text,
+                    label = pattern.label
+                )
+            }
         }
 
         // 2. Check custom keywords (simple contains, backward compat)

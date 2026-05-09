@@ -36,6 +36,13 @@ class IntentDetectorTest {
     }
 
     @Test
+    fun `detects normalized trigger when ASR drops accents`() {
+        val result = detector.detect("acuerdate de pagar el recibo")
+        assertNotNull(result)
+        assertEquals("recordatorios", result!!.pattern?.id)
+    }
+
+    @Test
     fun `rejects fuzzy single word reminder typo`() {
         val result = detector.detect("recorda llamar al dentista")
         assertNull(result)

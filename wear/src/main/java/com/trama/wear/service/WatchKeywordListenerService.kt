@@ -77,6 +77,7 @@ class WatchKeywordListenerService : LifecycleService() {
         private const val ACTIVE_MIC_CAPTURE_MIN_MS = 1_200L
         private const val ACTIVE_MIC_SILENCE_STOP_MS = 3_000L
         private const val ACTIVE_MIC_SILENCE_RMS_THRESHOLD = 700.0
+        private const val NO_MATCH_DEBUG_INTERVAL_MS = 15_000L
     }
 
     private var recognizer: SpeechRecognizer? = null
@@ -98,6 +99,7 @@ class WatchKeywordListenerService : LifecycleService() {
     // Deduplication
     private var lastSavedText = ""
     private var lastSavedTime = 0L
+    private var lastNoMatchDebugAt = 0L
 
     private val settingsReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -230,11 +232,12 @@ class WatchKeywordListenerService : LifecycleService() {
     private fun loadSettingsFromPrefs() {
         val prefs = getSharedPreferences(PhoneToWatchReceiver.PREFS, Context.MODE_PRIVATE)
 
-        prefs.getString("intent_patterns_json", null)?.let { json ->
-            val patterns = IntentPattern.deserialize(json)
-            intentDetector?.setPatterns(patterns)
-            Log.i(TAG, "Patterns loaded: ${patterns.count { it.enabled }} enabled")
-        }
+        val patterns = prefs.getString("intent_patterns_json", null)
+            ?.let { json -> IntentPattern.deserialize(json) }
+            ?.takeIf { loaded -> loaded.any { it.enabled && it.triggers.isNotEmpty() } }
+            ?: IntentPattern.DEFAULTS
+        intentDetector?.setPatterns(patterns)
+        Log.i(TAG, "Patterns loaded: ${patterns.count { it.enabled }} enabled")
 
         prefs.getString("keyword_mappings", null)?.let { str ->
             val keywords = str.split(",").mapNotNull { entry ->
@@ -335,6 +338,7 @@ class WatchKeywordListenerService : LifecycleService() {
                     } else {
                         // Speech but no keyword → background noise / others talking
                         Log.d(TAG, "No keyword match for: '$text'")
+                        publishNoMatchDebug(text)
                         consecutiveNoKeyword++
                         restartListening(calculateBackoff())
                     }
@@ -652,12 +656,15 @@ class WatchKeywordListenerService : LifecycleService() {
                     val text = vosk.transcribe(window, "es") ?: continue
                     if (text.isNotBlank()) {
                         Log.d(TAG, "Vosk: '$text'")
-                        processVoskTextWithActiveMic(
+                        val matched = processVoskTextWithActiveMic(
                             text = text,
                             preRollPcm = preRollPcm,
                             record = activeRecord,
                             sampleRateHz = sampleRate
                         )
+                        if (!matched) {
+                            publishNoMatchDebug(text)
+                        }
                     }
                 }
             } finally {
@@ -765,6 +772,19 @@ class WatchKeywordListenerService : LifecycleService() {
             return true
         } finally {
             captureInFlight = false
+        }
+    }
+
+    private fun publishNoMatchDebug(text: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastNoMatchDebugAt < NO_MATCH_DEBUG_INTERVAL_MS) return
+        lastNoMatchDebugAt = now
+        lifecycleScope.launch(Dispatchers.IO) {
+            MicCoordinator.sendWatchDebug(
+                applicationContext,
+                "Vosk sin patrón",
+                text.take(80)
+            )
         }
     }
 
