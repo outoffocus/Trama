@@ -9,7 +9,7 @@ plugins {
 val generatedVoskAssetsDir = layout.buildDirectory.dir("generated/assets/vosk")
 val generatedVoskAssetsPath = generatedVoskAssetsDir.get().asFile
 val syncWearVoskAssets by tasks.registering(org.gradle.api.tasks.Copy::class) {
-    from(project(":app").layout.projectDirectory.dir("src/main/assets/asr/vosk"))
+    from(project(":shared").layout.projectDirectory.dir("src/main/assets/asr/vosk"))
     into(generatedVoskAssetsDir.map { it.dir("asr/vosk") })
 }
 

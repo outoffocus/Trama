@@ -9,9 +9,6 @@ import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.WearableListenerService
 import com.trama.shared.sync.MicCoordinator
 import com.trama.wear.service.WatchServiceController
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 
 /**
  * Receives data and messages from the phone:
@@ -33,9 +30,7 @@ class PhoneToWatchReceiver : WearableListenerService() {
         private const val KEY_PHONE_ACTIVE = "phone_active"
     }
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-    // ── DataClient: settings and entries ──────────────────────────────────
+    // ── DataClient: settings ──────────────────────────────────────────────
 
     override fun onDataChanged(dataEvents: DataEventBuffer) {
         dataEvents.forEach { event ->
