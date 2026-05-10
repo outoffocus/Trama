@@ -65,7 +65,13 @@ public class OnlineRecognizer {
     }
 
     public OnlineRecognizerResult getResult(OnlineStream s) {
-        return getResult(ptr, s.getPtr());
+        Object[] result = getResultNative(ptr, s.getPtr());
+        return new OnlineRecognizerResult(
+                (String) result[0],
+                (String[]) result[1],
+                (float[]) result[2],
+                (float[]) result[3]
+        );
     }
 
     private native void delete(long ptr);
@@ -84,5 +90,5 @@ public class OnlineRecognizer {
 
     private native boolean isReady(long ptr, long streamPtr);
 
-    private native OnlineRecognizerResult getResult(long ptr, long streamPtr);
+    private native Object[] getResultNative(long ptr, long streamPtr);
 }
