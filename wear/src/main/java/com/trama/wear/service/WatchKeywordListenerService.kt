@@ -24,6 +24,8 @@ import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import androidx.wear.ongoing.OngoingActivity
 import androidx.wear.ongoing.Status
+import com.trama.shared.audio.LightweightGateAsr
+import com.trama.shared.audio.SherpaGateAsr
 import com.trama.shared.audio.VoskGateAsr
 import com.trama.wear.audio.WatchTriggeredAudioCapture
 import com.trama.wear.NotificationConfig
@@ -51,11 +53,11 @@ import kotlin.math.abs
 /**
  * Watch keyword listener.
  *
- * Primary path: Vosk gate ASR (AudioRecord loop, same model as phone).
- *   - Records 2-second windows continuously, transcribes with Vosk.
+ * Primary path: lightweight gate ASR (Sherpa when bundled, Vosk fallback).
+ *   - Records 2-second windows continuously, transcribes with the gate ASR.
  *   - When keyword detected → WatchTriggeredAudioCapture + send PCM to phone.
  *
- * Fallback path (when Vosk model not installed): Android SpeechRecognizer with
+ * Fallback path (when no local gate model is installed): Android SpeechRecognizer with
  *   smart backoff (1s→2s→4s→5s) and battery guard.
  */
 class WatchKeywordListenerService : LifecycleService() {
@@ -77,8 +79,8 @@ class WatchKeywordListenerService : LifecycleService() {
         private const val ACTIVE_MIC_CAPTURE_MIN_MS = 1_200L
         private const val ACTIVE_MIC_SILENCE_STOP_MS = 3_000L
         private const val ACTIVE_MIC_SILENCE_RMS_THRESHOLD = 700.0
-        private const val VOSK_GATE_MIN_RMS = 250.0
-        private const val VOSK_LOW_ENERGY_DEBUG_INTERVAL_MS = 60_000L
+        private const val GATE_MIN_RMS = 250.0
+        private const val GATE_LOW_ENERGY_DEBUG_INTERVAL_MS = 60_000L
         private const val NO_MATCH_DEBUG_INTERVAL_MS = 15_000L
     }
 
@@ -89,8 +91,8 @@ class WatchKeywordListenerService : LifecycleService() {
 
     @Volatile private var listening = false
     @Volatile private var captureInFlight = false
-    @Volatile private var voskAudioRecord: AudioRecord? = null
-    private var useVoskLoop = false
+    @Volatile private var gateAudioRecord: AudioRecord? = null
+    private var useGateLoop = false
     private var consecutiveNoKeyword = 0   // fallback SpeechRecognizer only
     private var consecutiveErrors = 0      // fallback SpeechRecognizer only
     private var lastNotificationText = ""
@@ -162,14 +164,14 @@ class WatchKeywordListenerService : LifecycleService() {
             if (intentDetector == null) intentDetector = IntentDetector()
             loadSettingsFromPrefs()
 
-            val vosk = VoskGateAsr(applicationContext)
-            if (vosk.isAvailable) {
-                MicCoordinator.sendWatchDebug(applicationContext, "escucha activa · Vosk")
+            val gateAsr = createGateAsr()
+            if (gateAsr != null) {
+                MicCoordinator.sendWatchDebug(applicationContext, "escucha activa · ${gateAsr.name}")
                 withContext(Dispatchers.Main) {
                     registerSettingsReceiver()
                     registerBatteryReceiver()
                 }
-                startVoskLoop(vosk)
+                startGateLoop(gateAsr)
             } else {
                 MicCoordinator.sendWatchDebug(applicationContext, "escucha activa · fallback Android")
                 withContext(Dispatchers.Main) {
@@ -212,9 +214,9 @@ class WatchKeywordListenerService : LifecycleService() {
         listening = false
         try { unregisterReceiver(settingsReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(batteryReceiver) } catch (_: Exception) {}
-        runCatching { voskAudioRecord?.stop() }
-        runCatching { voskAudioRecord?.release() }
-        voskAudioRecord = null
+        runCatching { gateAudioRecord?.stop() }
+        runCatching { gateAudioRecord?.release() }
+        gateAudioRecord = null
         recognizer?.destroy()
         recognizer = null
 
@@ -574,16 +576,29 @@ class WatchKeywordListenerService : LifecycleService() {
         return bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) in 1 until LOW_BATTERY_THRESHOLD
     }
 
-    // ── Vosk AudioRecord loop ────────────────────────────────────────────────
+    // ── Local gate AudioRecord loop ──────────────────────────────────────────
 
-    private fun startVoskLoop(vosk: VoskGateAsr) {
-        useVoskLoop = true
+    private fun createGateAsr(): LightweightGateAsr? {
+        val sherpa = runCatching { SherpaGateAsr(applicationContext) }
+            .onFailure { Log.w(TAG, "Sherpa gate init probe failed", it) }
+            .getOrNull()
+            ?.takeIf { it.isAvailable }
+        if (sherpa != null) return sherpa
+
+        return runCatching { VoskGateAsr(applicationContext) }
+            .onFailure { Log.w(TAG, "Vosk gate init probe failed", it) }
+            .getOrNull()
+            ?.takeIf { it.isAvailable }
+    }
+
+    private fun startGateLoop(gateAsr: LightweightGateAsr) {
+        useGateLoop = true
         listening = true
         updateNotificationIfChanged("Escuchando...")
 
         lifecycleScope.launch(Dispatchers.IO) {
             val sampleRate = 16_000
-            val gateWindowSamples = sampleRate * 2 // Keep Vosk gate close to the known-good cadence.
+            val gateWindowSamples = sampleRate * 2 // Keep the gate close to the known-good cadence.
             val preRollSamples = sampleRate * 6 // Keep the phrase that caused the trigger.
             val stepSamples = gateWindowSamples
             val minBuffer = AudioRecord.getMinBufferSize(
@@ -620,10 +635,10 @@ class WatchKeywordListenerService : LifecycleService() {
                 return@launch
             }
 
-            voskAudioRecord = activeRecord
+            gateAudioRecord = activeRecord
             activeRecord.startRecording()
-            Log.i(TAG, "Vosk loop started")
-            MicCoordinator.sendWatchDebug(applicationContext, "escuchando · Vosk")
+            Log.i(TAG, "Gate loop started engine=${gateAsr.name}")
+            MicCoordinator.sendWatchDebug(applicationContext, "escuchando · ${gateAsr.name}")
 
             try {
                 val rolling = ShortArray(preRollSamples)
@@ -650,7 +665,7 @@ class WatchKeywordListenerService : LifecycleService() {
                     val gatePcm = latestFromRollingWindow(rolling, rollingSamples, gateWindowSamples)
                     val preRollPcm = rolling.copyOf(rollingSamples)
                     val gateRms = rms(gatePcm)
-                    if (gateRms < VOSK_GATE_MIN_RMS) {
+                    if (gateRms < GATE_MIN_RMS) {
                         publishLowEnergyGateDebug(gateRms)
                         continue
                     }
@@ -661,10 +676,10 @@ class WatchKeywordListenerService : LifecycleService() {
                         sampleRateHz = sampleRate
                     )
 
-                    val text = vosk.transcribe(window, "es") ?: continue
+                    val text = gateAsr.transcribe(window, "es") ?: continue
                     if (text.isNotBlank()) {
-                        Log.d(TAG, "Vosk rms=${"%.1f".format(gateRms)}: '$text'")
-                        val matched = processVoskTextWithActiveMic(
+                        Log.d(TAG, "Gate ${gateAsr.name} rms=${"%.1f".format(gateRms)}: '$text'")
+                        val matched = processGateTextWithActiveMic(
                             text = text,
                             preRollPcm = preRollPcm,
                             record = activeRecord,
@@ -678,13 +693,13 @@ class WatchKeywordListenerService : LifecycleService() {
             } finally {
                 runCatching { activeRecord.stop() }
                 activeRecord.release()
-                voskAudioRecord = null
-                Log.i(TAG, "Vosk loop stopped")
+                gateAudioRecord = null
+                Log.i(TAG, "Gate loop stopped engine=${gateAsr.name}")
             }
         }
     }
 
-    private suspend fun processVoskTextWithActiveMic(
+    private suspend fun processGateTextWithActiveMic(
         text: String,
         preRollPcm: ShortArray,
         record: AudioRecord,
@@ -785,9 +800,9 @@ class WatchKeywordListenerService : LifecycleService() {
 
     private fun publishLowEnergyGateDebug(gateRms: Double) {
         val now = System.currentTimeMillis()
-        if (now - lastLowEnergyDebugAt < VOSK_LOW_ENERGY_DEBUG_INTERVAL_MS) return
+        if (now - lastLowEnergyDebugAt < GATE_LOW_ENERGY_DEBUG_INTERVAL_MS) return
         lastLowEnergyDebugAt = now
-        Log.d(TAG, "Vosk acoustic gate skipped low-energy window rms=${"%.1f".format(gateRms)}")
+        Log.d(TAG, "Local acoustic gate skipped low-energy window rms=${"%.1f".format(gateRms)}")
     }
 
     private fun publishNoMatchDebug(text: String) {
@@ -797,7 +812,7 @@ class WatchKeywordListenerService : LifecycleService() {
         lifecycleScope.launch(Dispatchers.IO) {
             MicCoordinator.sendWatchDebug(
                 applicationContext,
-                "Vosk sin patrón",
+                "gate sin patrón",
                 text.take(80)
             )
         }
@@ -909,12 +924,12 @@ class WatchKeywordListenerService : LifecycleService() {
     // ── Mic handoff ──────────────────────────────────────────────────────────
 
     private suspend fun pauseRecognizerForCapture() {
-        if (useVoskLoop) {
-            // Stop the Vosk AudioRecord so WatchTriggeredAudioCapture can open the mic
+        if (useGateLoop) {
+            // Stop the gate AudioRecord so WatchTriggeredAudioCapture can open the mic
             withContext(Dispatchers.IO) {
-                runCatching { voskAudioRecord?.stop() }
-                runCatching { voskAudioRecord?.release() }
-                voskAudioRecord = null
+                runCatching { gateAudioRecord?.stop() }
+                runCatching { gateAudioRecord?.release() }
+                gateAudioRecord = null
             }
         } else {
             withContext(Dispatchers.Main) {
@@ -930,10 +945,10 @@ class WatchKeywordListenerService : LifecycleService() {
     private suspend fun resumeRecognizerAfterCapture() {
         if (!listening) return
         delay(RESTART_AFTER_KEYWORD_MS)
-        if (useVoskLoop) {
-            val vosk = VoskGateAsr(applicationContext)
-            if (vosk.isAvailable) {
-                startVoskLoop(vosk)
+        if (useGateLoop) {
+            val gateAsr = createGateAsr()
+            if (gateAsr != null) {
+                startGateLoop(gateAsr)
             } else {
                 withContext(Dispatchers.Main) {
                     recognizer = SpeechRecognizer.createSpeechRecognizer(applicationContext)

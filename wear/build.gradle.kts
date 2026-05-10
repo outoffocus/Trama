@@ -6,11 +6,16 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
-val generatedVoskAssetsDir = layout.buildDirectory.dir("generated/assets/vosk")
-val generatedVoskAssetsPath = generatedVoskAssetsDir.get().asFile
-val syncWearVoskAssets by tasks.registering(org.gradle.api.tasks.Copy::class) {
-    from(project(":shared").layout.projectDirectory.dir("src/main/assets/asr/vosk"))
-    into(generatedVoskAssetsDir.map { it.dir("asr/vosk") })
+val generatedGateAssetsDir = layout.buildDirectory.dir("generated/assets/gate")
+val generatedGateAssetsPath = generatedGateAssetsDir.get().asFile
+val syncWearGateAssets by tasks.registering(org.gradle.api.tasks.Copy::class) {
+    from(project(":shared").layout.projectDirectory.dir("src/main/assets/asr/vosk")) {
+        into("asr/vosk")
+    }
+    from(project(":shared").layout.projectDirectory.dir("src/main/assets/asr/sherpa-gate")) {
+        into("asr/sherpa-gate")
+    }
+    into(generatedGateAssetsDir)
 }
 
 android {
@@ -50,7 +55,7 @@ android {
 
     sourceSets {
         getByName("main") {
-            assets.srcDir(generatedVoskAssetsPath)
+            assets.srcDir(generatedGateAssetsPath)
         }
     }
 
@@ -62,7 +67,7 @@ android {
 }
 
 tasks.named("preBuild") {
-    dependsOn(syncWearVoskAssets)
+    dependsOn(syncWearGateAssets)
 }
 
 dependencies {
