@@ -29,6 +29,13 @@ class SherpaGateAsr(
         private const val SAMPLE_RATE_HZ = 16_000
 
         private val CANDIDATE_BUNDLES = listOf(
+            GateBundle.Transducer(
+                encoderAsset = "$MODEL_DIR/bookbot-phoneme-es/encoder.int8.onnx",
+                decoderAsset = "$MODEL_DIR/bookbot-phoneme-es/decoder.int8.onnx",
+                joinerAsset = "$MODEL_DIR/bookbot-phoneme-es/joiner.int8.onnx",
+                tokensAsset = "$MODEL_DIR/bookbot-phoneme-es/tokens.txt",
+                label = "bookbot-phoneme-es"
+            ),
             GateBundle.Zipformer2Ctc(
                 modelAsset = "$MODEL_DIR/zipformer2-ctc/model.onnx",
                 tokensAsset = "$MODEL_DIR/zipformer2-ctc/tokens.txt",
@@ -72,13 +79,33 @@ class SherpaGateAsr(
     override val isAvailable: Boolean
         get() = locateBundle() != null
 
+    fun canInitialize(): Boolean {
+        if (!isAvailable) return false
+        return runCatching {
+            if (recognizer == null) {
+                recognizer = createRecognizer()
+            }
+            true
+        }.getOrElse { error ->
+            Log.w(TAG, "Sherpa gate unavailable at runtime", error)
+            recognizer?.release()
+            recognizer = null
+            false
+        }
+    }
+
     override suspend fun transcribe(window: CapturedAudioWindow, languageTag: String): String? {
         val pcm = window.mergedPcm()
         if (pcm.isEmpty() || !isAvailable) return null
 
         return withContext(Dispatchers.IO) {
             recognizerMutex.withLock {
-                val recognizer = recognizer ?: createRecognizer().also { recognizer = it }
+                val recognizer = recognizer ?: runCatching {
+                    createRecognizer().also { recognizer = it }
+                }.getOrElse { error ->
+                    Log.w(TAG, "Sherpa gate recognizer init failed", error)
+                    return@withLock null
+                }
                 val samples = FloatArray(pcm.size) { index -> pcm[index] / 32768.0f }
                 val stream = recognizer.createStream()
                 try {

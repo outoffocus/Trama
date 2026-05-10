@@ -582,7 +582,7 @@ class WatchKeywordListenerService : LifecycleService() {
         val sherpa = runCatching { SherpaGateAsr(applicationContext) }
             .onFailure { Log.w(TAG, "Sherpa gate init probe failed", it) }
             .getOrNull()
-            ?.takeIf { it.isAvailable }
+            ?.takeIf { it.canInitialize() }
         if (sherpa != null) return sherpa
 
         return runCatching { VoskGateAsr(applicationContext) }
@@ -681,6 +681,7 @@ class WatchKeywordListenerService : LifecycleService() {
                         Log.d(TAG, "Gate ${gateAsr.name} rms=${"%.1f".format(gateRms)}: '$text'")
                         val matched = processGateTextWithActiveMic(
                             text = text,
+                            gateName = gateAsr.name,
                             preRollPcm = preRollPcm,
                             record = activeRecord,
                             sampleRateHz = sampleRate
@@ -701,30 +702,52 @@ class WatchKeywordListenerService : LifecycleService() {
 
     private suspend fun processGateTextWithActiveMic(
         text: String,
+        gateName: String,
         preRollPcm: ShortArray,
         record: AudioRecord,
         sampleRateHz: Int
     ): Boolean {
-        val result = intentDetector?.detect(text) ?: return false
-
-        val heuristic = EntryValidatorHeuristics.check(result.capturedText)
-        val allowTextFallback: Boolean
-        if (heuristic != null && !heuristic.isValid) {
-            if (heuristic.reason.startsWith("Fragmento muy corto")) {
-                Log.i(TAG, "Short gate trigger accepted for active-mic capture: '${result.capturedText}'")
-                allowTextFallback = false
-            } else {
-                Log.i(TAG, "Heuristic rejected: ${heuristic.reason}")
-                return true
-            }
+        val phoneticMatch = if (gateName.contains("bookbot-phoneme-es")) {
+            PhoneticIntentDetector.detect(text)
         } else {
-            allowTextFallback = true
+            null
+        }
+
+        val intentId: String
+        val label: String
+        val capturedText: String
+        val allowTextFallback: Boolean
+
+        if (phoneticMatch != null) {
+            intentId = phoneticMatch.intentId
+            label = phoneticMatch.label
+            capturedText = "trigger fonético: ${phoneticMatch.reason}"
+            allowTextFallback = false
+            Log.i(TAG, "Phonetic intent '${phoneticMatch.reason}': '${phoneticMatch.debugText}'")
+        } else {
+            if (gateName.contains("bookbot-phoneme-es")) return false
+
+            val result = intentDetector?.detect(text) ?: return false
+            val heuristic = EntryValidatorHeuristics.check(result.capturedText)
+            if (heuristic != null && !heuristic.isValid) {
+                if (heuristic.reason.startsWith("Fragmento muy corto")) {
+                    Log.i(TAG, "Short gate trigger accepted for active-mic capture: '${result.capturedText}'")
+                    allowTextFallback = false
+                } else {
+                    Log.i(TAG, "Heuristic rejected: ${heuristic.reason}")
+                    return true
+                }
+            } else {
+                allowTextFallback = true
+            }
+            intentId = result.pattern?.id ?: result.customKeyword ?: "nota"
+            label = result.label
+            capturedText = result.capturedText
         }
 
         val now = System.currentTimeMillis()
         if (now - lastSavedTime < DEDUP_WINDOW_MS && isSimilar(text, lastSavedText)) return true
 
-        val intentId = result.pattern?.id ?: result.customKeyword ?: "nota"
         lastSavedText = text
         lastSavedTime = now
 
@@ -735,8 +758,8 @@ class WatchKeywordListenerService : LifecycleService() {
 
         captureInFlight = true
         try {
-            Log.i(TAG, "Intent '$intentId' [${result.label}]: '${text.take(60)}'")
-            MicCoordinator.sendWatchDebug(applicationContext, "capturando audio", result.capturedText)
+            Log.i(TAG, "Intent '$intentId' [$label]: '${text.take(60)}'")
+            MicCoordinator.sendWatchDebug(applicationContext, "capturando audio", capturedText)
 
             val tailPcm = captureTailFromActiveMic(record)
             val pcm = mergePcm(preRollPcm, tailPcm)
@@ -749,12 +772,12 @@ class WatchKeywordListenerService : LifecycleService() {
 
             if (pcm.isEmpty()) {
                 if (allowTextFallback) {
-                    saveEntry(intentId, result.label, result.capturedText, 0.9f)
+                    saveEntry(intentId, label, capturedText, 0.9f)
                 } else {
                     MicCoordinator.sendWatchDebug(
                         applicationContext,
                         "sin audio · trigger corto descartado",
-                        result.capturedText
+                        capturedText
                     )
                 }
                 return true
@@ -766,9 +789,9 @@ class WatchKeywordListenerService : LifecycleService() {
                 sampleRateHz = sampleRateHz,
                 source = Source.WATCH.name,
                 kind = "CONTEXTUAL_TRIGGER",
-                triggerText = result.capturedText,
+                triggerText = capturedText,
                 intentId = intentId,
-                label = result.label,
+                label = label,
                 pcmByteCount = pcm.size * 2,
                 pcmSampleCount = pcm.size,
                 rms = rms(pcm)
@@ -778,17 +801,17 @@ class WatchKeywordListenerService : LifecycleService() {
                 syncer?.syncRecordingAudio(shortsToBytes(pcm), metadata)
             }.onSuccess {
                 Log.i(TAG, "Triggered active-mic audio transferred to phone")
-                MicCoordinator.sendWatchDebug(applicationContext, "audio enviado al móvil", result.capturedText)
+                MicCoordinator.sendWatchDebug(applicationContext, "audio enviado al móvil", capturedText)
             }.onFailure { error ->
                 if (allowTextFallback) {
                     Log.w(TAG, "Triggered active-mic transfer failed, falling back to text entry", error)
-                    saveEntry(intentId, result.label, result.capturedText, 0.9f)
+                    saveEntry(intentId, label, capturedText, 0.9f)
                 } else {
                     Log.w(TAG, "Triggered active-mic transfer failed; short trigger not saved", error)
                     MicCoordinator.sendWatchDebug(
                         applicationContext,
                         "fallo · trigger corto descartado",
-                        result.capturedText
+                        capturedText
                     )
                 }
             }
