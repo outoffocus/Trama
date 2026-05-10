@@ -33,6 +33,7 @@ class SherpaGateAsr(
                 encoderAsset = "$MODEL_DIR/bookbot-phoneme-es/encoder.int8.onnx",
                 decoderAsset = "$MODEL_DIR/bookbot-phoneme-es/decoder.int8.onnx",
                 joinerAsset = "$MODEL_DIR/bookbot-phoneme-es/joiner.int8.onnx",
+                modelType = "zipformer",
                 tokensAsset = "$MODEL_DIR/bookbot-phoneme-es/tokens.txt",
                 label = "bookbot-phoneme-es"
             ),
@@ -45,6 +46,7 @@ class SherpaGateAsr(
                 encoderAsset = "$MODEL_DIR/transducer/encoder.onnx",
                 decoderAsset = "$MODEL_DIR/transducer/decoder.onnx",
                 joinerAsset = "$MODEL_DIR/transducer/joiner.onnx",
+                modelType = "zipformer",
                 tokensAsset = "$MODEL_DIR/transducer/tokens.txt",
                 label = "transducer"
             )
@@ -62,6 +64,7 @@ class SherpaGateAsr(
             val encoderAsset: String,
             val decoderAsset: String,
             val joinerAsset: String,
+            val modelType: String,
             override val tokensAsset: String,
             override val label: String
         ) : GateBundle(tokensAsset, label)
@@ -173,7 +176,7 @@ class SherpaGateAsr(
                             .setJoiner(assetCache.ensureCopied(bundle.joinerAsset))
                             .build()
                     )
-                    .setModelType("transducer")
+                    .setModelType(bundle.modelType)
             }
         }
 
