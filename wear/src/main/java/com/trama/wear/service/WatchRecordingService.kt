@@ -131,12 +131,12 @@ class WatchRecordingService : LifecycleService() {
         startTimeMs = System.currentTimeMillis()
         audioRecord = record
 
-        RecordingController.update(true, 0, "", "")
+        RecordingController.update(true, 0, "", "", recordingKind)
 
         timerJob = lifecycleScope.launch {
             while (isActive) {
                 val elapsed = (System.currentTimeMillis() - startTimeMs) / 1000
-                RecordingController.update(true, elapsed, "", "")
+                RecordingController.update(true, elapsed, "", "", recordingKind)
                 updateNotification(elapsed)
                 delay(1000)
             }

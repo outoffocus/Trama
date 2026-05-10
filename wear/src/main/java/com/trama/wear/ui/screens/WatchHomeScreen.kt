@@ -51,11 +51,14 @@ fun WatchHomeScreen() {
     val phoneActive by WatchServiceController.isPhoneActive.collectAsState()
     val isRecording by RecordingController.isRecording.collectAsState()
     val elapsedSeconds by RecordingController.elapsedSeconds.collectAsState()
+    val recordingKind by RecordingController.recordingKind.collectAsState()
     val batteryPct = rememberBatteryPercentage(context)
     val batteryLow = batteryPct in 1..20
+    val isDirectCapture = isRecording && recordingKind == com.trama.wear.service.WatchRecordingService.KIND_DIRECT_CAPTURE
 
     val listenColor = Color(0xFFC8753A)
     val recordColor = Color(0xFFD45A4A)
+    val directColor = Color(0xFF35A88E)
     val transferColor = Color(0xFF5588EE)
     val idleSurface = Color(0xFF1C1C1F)
     val mutedIcon = Color(0xFF6E6D68)
@@ -73,7 +76,8 @@ fun WatchHomeScreen() {
             ) {
                 Text(
                     text = when {
-                        isRecording -> "Captura directa"
+                        isDirectCapture -> "Captura directa"
+                        isRecording -> "Grabadora"
                         serviceRunning -> "Escucha continua"
                         phoneActive -> "Control en teléfono"
                         else -> "Trama Watch"
@@ -87,7 +91,7 @@ fun WatchHomeScreen() {
                             isRecording -> {
                                 val minutes = elapsedSeconds / 60
                                 val seconds = elapsedSeconds % 60
-                                append("Enviando al teléfono ")
+                                append(if (isDirectCapture) "Enviando al teléfono " else "Grabando ")
                                 append("%02d:%02d".format(minutes, seconds))
                             }
                             serviceRunning -> append("Escuchando en el reloj")
@@ -98,6 +102,7 @@ fun WatchHomeScreen() {
                     },
                     style = MaterialTheme.typography.caption2,
                     color = when {
+                        isDirectCapture -> directColor
                         isRecording -> recordColor
                         serviceRunning -> listenColor
                         phoneActive -> transferColor
@@ -134,76 +139,106 @@ fun WatchHomeScreen() {
         }
 
         item {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 6.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Button(
-                    onClick = {
-                        if (phoneActive || batteryLow) return@Button
-                        if (serviceRunning) WatchServiceController.stopByUser(context)
-                        else WatchServiceController.start(context)
-                    },
-                    enabled = !phoneActive && !batteryLow,
-                    modifier = Modifier.size(52.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        backgroundColor = if (serviceRunning) listenColor else idleSurface
-                    ),
-                    shape = CircleShape
+                Row(
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = if (serviceRunning) Icons.Default.Mic else Icons.Default.MicOff,
-                        contentDescription = if (serviceRunning) "Desactivar escucha continua" else "Activar escucha continua",
-                        modifier = Modifier.size(24.dp),
-                        tint = if (serviceRunning) Color.White else mutedIcon
-                    )
+                    Button(
+                        onClick = {
+                            if (phoneActive || batteryLow) return@Button
+                            if (serviceRunning) WatchServiceController.stopByUser(context)
+                            else WatchServiceController.start(context)
+                        },
+                        enabled = !phoneActive && !batteryLow && !isRecording,
+                        modifier = Modifier.size(48.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            backgroundColor = if (serviceRunning) listenColor else idleSurface
+                        ),
+                        shape = CircleShape
+                    ) {
+                        Icon(
+                            imageVector = if (serviceRunning) Icons.Default.Mic else Icons.Default.MicOff,
+                            contentDescription = if (serviceRunning) "Desactivar escucha continua" else "Activar escucha continua",
+                            modifier = Modifier.size(23.dp),
+                            tint = if (serviceRunning) Color.White else mutedIcon
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.size(10.dp))
+
+                    Button(
+                        onClick = {
+                            if (phoneActive) WatchServiceController.reclaimFromPhone(context)
+                            else WatchServiceController.transferToPhone(context)
+                        },
+                        enabled = !isRecording,
+                        modifier = Modifier.size(48.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            backgroundColor = if (phoneActive) transferColor else idleSurface
+                        ),
+                        shape = CircleShape
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PhoneAndroid,
+                            contentDescription = if (phoneActive) "Recuperar desde el teléfono" else "Transferir al teléfono",
+                            modifier = Modifier.size(21.dp),
+                            tint = if (phoneActive) Color.White else mutedIcon
+                        )
+                    }
                 }
 
-                Spacer(modifier = Modifier.size(10.dp))
-
-                Button(
-                    onClick = {
-                        if (phoneActive) return@Button
-                        if (isRecording) RecordingController.stopRecording(context)
-                        else WatchServiceController.startDirectCapture(context)
-                    },
-                    enabled = !phoneActive,
-                    modifier = Modifier.size(52.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        backgroundColor = if (isRecording) recordColor else idleSurface
-                    ),
-                    shape = CircleShape
+                Row(
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = if (isRecording) Icons.Default.Stop else Icons.Default.FiberManualRecord,
-                        contentDescription = if (isRecording) "Parar captura directa" else "Iniciar captura directa",
-                        modifier = Modifier.size(22.dp),
-                        tint = if (isRecording) Color.White else recordColor
-                    )
-                }
+                    Button(
+                        onClick = {
+                            if (phoneActive) return@Button
+                            if (isRecording && !isDirectCapture) RecordingController.stopRecording(context)
+                            else WatchServiceController.startRecording(context)
+                        },
+                        enabled = !phoneActive && (!isRecording || !isDirectCapture),
+                        modifier = Modifier.size(48.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            backgroundColor = if (isRecording && !isDirectCapture) recordColor else idleSurface
+                        ),
+                        shape = CircleShape
+                    ) {
+                        Icon(
+                            imageVector = if (isRecording && !isDirectCapture) Icons.Default.Stop else Icons.Default.FiberManualRecord,
+                            contentDescription = if (isRecording && !isDirectCapture) "Parar grabadora" else "Iniciar grabadora",
+                            modifier = Modifier.size(21.dp),
+                            tint = if (isRecording && !isDirectCapture) Color.White else recordColor
+                        )
+                    }
 
-                Spacer(modifier = Modifier.size(10.dp))
+                    Spacer(modifier = Modifier.size(10.dp))
 
-                Button(
-                    onClick = {
-                        if (phoneActive) WatchServiceController.reclaimFromPhone(context)
-                        else WatchServiceController.transferToPhone(context)
-                    },
-                    modifier = Modifier.size(52.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        backgroundColor = if (phoneActive) transferColor else idleSurface
-                    ),
-                    shape = CircleShape
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.PhoneAndroid,
-                        contentDescription = if (phoneActive) "Recuperar desde el teléfono" else "Transferir al teléfono",
-                        modifier = Modifier.size(22.dp),
-                        tint = if (phoneActive) Color.White else mutedIcon
-                    )
+                    Button(
+                        onClick = {
+                            if (phoneActive) return@Button
+                            if (isDirectCapture) RecordingController.stopRecording(context)
+                            else WatchServiceController.startDirectCapture(context)
+                        },
+                        enabled = !phoneActive && (!isRecording || isDirectCapture),
+                        modifier = Modifier.size(48.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            backgroundColor = if (isDirectCapture) directColor else idleSurface
+                        ),
+                        shape = CircleShape
+                    ) {
+                        Icon(
+                            imageVector = if (isDirectCapture) Icons.Default.Stop else Icons.Default.FiberManualRecord,
+                            contentDescription = if (isDirectCapture) "Parar captura directa" else "Iniciar captura directa",
+                            modifier = Modifier.size(21.dp),
+                            tint = if (isDirectCapture) Color.White else directColor
+                        )
+                    }
                 }
             }
         }
@@ -216,7 +251,8 @@ fun WatchHomeScreen() {
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
                 ModeLegend("Escucha", listenColor)
-                ModeLegend("Captura", recordColor)
+                ModeLegend("Graba", recordColor)
+                ModeLegend("Directa", directColor)
                 ModeLegend("Teléfono", transferColor)
             }
         }

@@ -25,6 +25,9 @@ object RecordingController {
     private val _currentPartial = MutableStateFlow("")
     val currentPartial: StateFlow<String> = _currentPartial.asStateFlow()
 
+    private val _recordingKind = MutableStateFlow(WatchRecordingService.KIND_MANUAL_RECORDING)
+    val recordingKind: StateFlow<String> = _recordingKind.asStateFlow()
+
     // ID of the saved recording (for navigation after stop)
     private val _savedRecordingId = MutableStateFlow<Long?>(null)
     val savedRecordingId: StateFlow<Long?> = _savedRecordingId.asStateFlow()
@@ -35,6 +38,7 @@ object RecordingController {
 
     /** Start recording via foreground service */
     fun startRecording(context: Context) {
+        _recordingKind.value = WatchRecordingService.KIND_MANUAL_RECORDING
         val intent = Intent(context, WatchRecordingService::class.java).apply {
             action = WatchRecordingService.ACTION_START
         }
@@ -43,6 +47,7 @@ object RecordingController {
 
     /** Start direct phone-processed capture via foreground service */
     fun startDirectCapture(context: Context) {
+        _recordingKind.value = WatchRecordingService.KIND_DIRECT_CAPTURE
         val intent = Intent(context, WatchRecordingService::class.java).apply {
             action = WatchRecordingService.ACTION_START_DIRECT
         }
@@ -68,11 +73,20 @@ object RecordingController {
 
     // ── Called by service only ──
 
-    internal fun update(recording: Boolean, elapsed: Long, text: String, partial: String) {
+    internal fun update(
+        recording: Boolean,
+        elapsed: Long,
+        text: String,
+        partial: String,
+        kind: String = _recordingKind.value
+    ) {
         _isRecording.value = recording
         _elapsedSeconds.value = elapsed
         _transcription.value = text
         _currentPartial.value = partial
+        if (recording) {
+            _recordingKind.value = kind
+        }
     }
 
     internal fun notifySaved(recordingId: Long) {
@@ -84,5 +98,6 @@ object RecordingController {
         _elapsedSeconds.value = 0
         _transcription.value = ""
         _currentPartial.value = ""
+        _recordingKind.value = WatchRecordingService.KIND_MANUAL_RECORDING
     }
 }

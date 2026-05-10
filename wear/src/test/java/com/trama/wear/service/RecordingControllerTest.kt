@@ -106,6 +106,19 @@ class RecordingControllerTest {
     }
 
     @Test
+    fun `update stores recording kind while active`() = runTest {
+        RecordingController.update(
+            recording = true,
+            elapsed = 5L,
+            text = "",
+            partial = "",
+            kind = WatchRecordingService.KIND_DIRECT_CAPTURE
+        )
+
+        assertEquals(WatchRecordingService.KIND_DIRECT_CAPTURE, RecordingController.recordingKind.value)
+    }
+
+    @Test
     fun `reset does not clear savedRecordingId`() = runTest {
         RecordingController.notifySaved(99L)
         RecordingController.reset()
