@@ -78,7 +78,7 @@ class WatchToPhoneSyncer(
             dataMap.putString("metadata", Json.encodeToString(metadata))
             dataMap.putAsset("audio_pcm16", Asset.createFromBytes(pcmBytes))
             dataMap.putLong("timestamp", System.currentTimeMillis())
-        }.asPutDataRequest()
+        }.asPutDataRequest().setUrgent()
 
         // BLE transfers can stall silently when the phone is out of range; without
         // a timeout the coroutine would hang forever and freeze the next capture.

@@ -129,6 +129,83 @@ data class IntentPattern(
             )
         }
 
+        private val ACTIONABLE_TENER_QUE_VERBS = listOf(
+            "abrir",
+            "actualizar",
+            "añadir",
+            "anotar",
+            "apagar",
+            "apuntar",
+            "arreglar",
+            "avisar",
+            "bajar",
+            "bloquear",
+            "borrar",
+            "buscar",
+            "cambiar",
+            "cancelar",
+            "cargar",
+            "cerrar",
+            "cobrar",
+            "coger",
+            "comprar",
+            "comprobar",
+            "confirmar",
+            "contestar",
+            "copiar",
+            "corregir",
+            "crear",
+            "dejar",
+            "descargar",
+            "devolver",
+            "enviar",
+            "escribir",
+            "felicitar",
+            "firmar",
+            "guardar",
+            "hacer",
+            "imprimir",
+            "instalar",
+            "limpiar",
+            "llamar",
+            "llevar",
+            "mandar",
+            "mirar",
+            "pagar",
+            "pasar",
+            "pedir",
+            "preparar",
+            "programar",
+            "recoger",
+            "reclamar",
+            "recordar",
+            "renovar",
+            "reparar",
+            "responder",
+            "reservar",
+            "revisar",
+            "sacar",
+            "subir",
+            "terminar",
+            "traer",
+            "tramitar",
+            "validar",
+            "verificar"
+        )
+
+        private fun tenerQueTriggers(): List<String> {
+            val triggers = linkedSetOf<String>()
+            ACTIONABLE_TENER_QUE_VERBS.forEach { verb ->
+                triggers += "tengo que $verb"
+                triggers += "tenemos que $verb"
+            }
+            triggers += "tengo que ir a"
+            triggers += "tengo que ir al"
+            triggers += "tenemos que ir a"
+            triggers += "tenemos que ir al"
+            return triggers.toList()
+        }
+
         // ── Default patterns ────────────────────────────────────────────────
 
         val DEFAULTS: List<IntentPattern> = listOf(
@@ -159,41 +236,12 @@ data class IntentPattern(
             IntentPattern(
                 id = "tareas",
                 label = "Tareas",
-                triggers = listOf(
-                    "tengo que llamar",
-                    "tengo que comprar",
-                    "tengo que enviar",
-                    "tengo que mandar",
-                    "tengo que escribir",
-                    "tengo que recoger",
-                    "tengo que pagar",
-                    "tengo que reservar",
-                    "tengo que pedir",
-                    "tengo que revisar",
-                    "tengo que buscar",
-                    "tengo que llevar",
-                    "tengo que traer",
-                    "tengo que ir a",
-                    "tengo que ir al",
-                    "tenemos que llamar",
-                    "tenemos que comprar",
-                    "tenemos que enviar",
-                    "tenemos que mandar",
-                    "tenemos que escribir",
-                    "tenemos que recoger",
-                    "tenemos que pagar",
-                    "tenemos que reservar",
-                    "tenemos que pedir",
-                    "tenemos que revisar",
-                    "tenemos que buscar",
-                    "tenemos que llevar",
-                    "tenemos que traer",
-                    "tenemos que ir a",
-                    "tenemos que ir al",
+                triggers = tenerQueTriggers() + listOf(
                     "hay que ir a",
                     "hay que ir al",
                     "hay que llamar a",
                     "hay que escribir a",
+                    "hay que felicitar a",
                     "hay que mandar",
                     "hay que enviar",
                     "hay que comprar",
@@ -210,6 +258,7 @@ data class IntentPattern(
                     "necesito enviar",
                     "necesito mandar",
                     "necesito escribir",
+                    "necesito felicitar",
                     "necesito recoger",
                     "necesito pagar",
                     "necesito reservar",
@@ -227,11 +276,13 @@ data class IntentPattern(
                 triggers = listOf(
                     "tengo que llamar a",
                     "tengo que escribir a",
+                    "tengo que felicitar a",
                     "tengo que mandar mensaje a",
                     "tengo que contestar a",
                     "tengo que responder a",
                     "tenemos que llamar a",
                     "tenemos que escribir a",
+                    "tenemos que felicitar a",
                     "tenemos que mandar mensaje a",
                     "tenemos que contestar a",
                     "tenemos que responder a",
@@ -239,6 +290,7 @@ data class IntentPattern(
                     "tenemos que avisar a",
                     "hay que llamar a",
                     "hay que escribir a",
+                    "hay que felicitar a",
                     "hay que avisar a"
                 )
             ),

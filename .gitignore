@@ -26,6 +26,7 @@ local.properties
 *.iml
 *.hprof
 .cxx/
+.claude/worktrees/
 
 # Signing files
 *.jks

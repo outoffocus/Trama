@@ -265,6 +265,15 @@ class WatchDataReceiverService : WearableListenerService() {
                 }
 
                 if (rms < MIN_AUDIO_RMS) {
+                    if (metadata.kind == "CONTEXTUAL_TRIGGER" && !metadata.triggerText.isNullOrBlank()) {
+                        Log.w(
+                            TAG,
+                            "Watch contextual audio too quiet (RMS=${"%.1f".format(rms)} < $MIN_AUDIO_RMS); " +
+                                "using trigger text fallback"
+                        )
+                        handleContextualWatchCapture(metadata, "", repository)
+                        return@launch
+                    }
                     Log.w(TAG, "Watch audio too quiet (RMS=${"%.1f".format(rms)} < $MIN_AUDIO_RMS), saving failed recording for inspection")
                     saveFailedWatchRecording(
                         metadata = metadata,
@@ -350,7 +359,7 @@ class WatchDataReceiverService : WearableListenerService() {
         transcript: String,
         repository: DiaryRepository
     ) {
-        val text = transcript.trim()
+        val text = transcript.trim().ifBlank { metadata.triggerText.orEmpty().trim() }
         if (text.isBlank()) {
             Log.w(TAG, "Contextual watch capture produced empty transcript; saving failed recording for inspection")
             saveFailedWatchRecording(

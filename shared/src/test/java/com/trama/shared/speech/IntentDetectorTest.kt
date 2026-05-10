@@ -148,12 +148,45 @@ class IntentDetectorTest {
         assertEquals("tareas", detector.detect("hay que ir a la oficina")?.pattern?.id)
         assertEquals("tareas", detector.detect("hay que comprar pan")?.pattern?.id)
         assertEquals("tareas", detector.detect("tengo que comprar calcetines")?.pattern?.id)
+        assertEquals("tareas", detector.detect("tengo que felicitar a Eva")?.pattern?.id)
         assertEquals("tareas", detector.detect("tenemos que comprar jabón")?.pattern?.id)
+        assertEquals("tareas", detector.detect("tenemos que felicitar a Eva")?.pattern?.id)
         assertEquals("tareas", detector.detect("tenemos que ir a Ourense mañana")?.pattern?.id)
         assertEquals("comunicacion", detector.detect("tenemos que hablar con Tony")?.pattern?.id)
-        assertNull(detector.detect("tenemos que sacar el mismo formato"))
+        assertEquals("tareas", detector.detect("hay que felicitar a Eva")?.pattern?.id)
+        assertNull(detector.detect("tenemos que tener el mismo formato"))
         assertNull(detector.detect("tienes que pedir el test"))
         assertNull(detector.detect("hay que hacerlo"))
+    }
+
+    @Test
+    fun `detects felicitar when gate ASR prepends no`() {
+        val result = detector.detect("no tengo que felicitar a eva")
+
+        assertNotNull(result)
+        assertEquals("tareas", result!!.pattern?.id)
+    }
+
+    @Test
+    fun `detects broad actionable tener que verbs`() {
+        val examples = listOf(
+            "tengo que arreglar la puerta",
+            "tengo que avisar a Eva",
+            "tengo que cancelar la cita",
+            "tengo que confirmar la reserva",
+            "tengo que devolver el paquete",
+            "tengo que firmar el contrato",
+            "tengo que hacer la maleta",
+            "tengo que imprimir las entradas",
+            "tengo que renovar el dni",
+            "tengo que tramitar la baja",
+            "tenemos que preparar la reunión",
+            "tenemos que verificar el pago"
+        )
+
+        examples.forEach { text ->
+            assertEquals(text, "tareas", detector.detect(text)?.pattern?.id)
+        }
     }
 
     @Test

@@ -141,12 +141,14 @@ class IntentDetectorTest {
     @Test
     fun `detects explicit useful task triggers`() {
         assertNull(detector.detect("tienes que llamar a Pedro"))
-        assertNull(detector.detect("tenemos que sacar el mismo formato"))
+        assertNull(detector.detect("tenemos que tener el mismo formato"))
         assertNull(detector.detect("hay que hacerlo"))
         assertEquals("tareas", detector.detect("tenemos que comprar jabón")?.pattern?.id)
         assertEquals("tareas", detector.detect("tenemos que ir a Ourense mañana")?.pattern?.id)
         assertEquals("comunicacion", detector.detect("tenemos que hablar con Tony")?.pattern?.id)
         assertEquals("tareas", detector.detect("hay que ir a Ourense mañana")?.pattern?.id)
+        assertEquals("tareas", detector.detect("tengo que firmar el contrato")?.pattern?.id)
+        assertEquals("tareas", detector.detect("tenemos que verificar el pago")?.pattern?.id)
         assertEquals("tareas", detector.detect("tengo que reservar la comida para el domingo")?.pattern?.id)
         assertEquals("recordatorios", detector.detect("tengo que acordarme de comprar leche")?.pattern?.id)
         assertEquals("recordatorios", detector.detect("recordar comprarle el regalo a papa")?.pattern?.id)
