@@ -15,6 +15,12 @@ Fuente:
 Nota: emite fonemas, no texto normal. En Wear se usa solo como gate de
 captura; el movil sigue haciendo la transcripcion final.
 
+Runtime Wear:
+- Galaxy Watch 4 ejecuta esta app como `armeabi-v7a`, asi que Sherpa necesita
+  `shared/src/main/jniLibs/armeabi-v7a/*.so`.
+- Esos binarios se extrajeron de:
+  https://huggingface.co/csukuangfj/sherpa-onnx-libs/resolve/main/android/aar/sherpa-onnx-1.12.21.aar
+
 1) Zipformer2 CTC:
 - asr/sherpa-gate/zipformer2-ctc/model.onnx
 - asr/sherpa-gate/zipformer2-ctc/tokens.txt
