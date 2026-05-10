@@ -143,6 +143,7 @@ class IntentDetectorTest {
         assertNull(detector.detect("tienes que llamar a Pedro"))
         assertNull(detector.detect("tenemos que tener el mismo formato"))
         assertNull(detector.detect("hay que hacerlo"))
+        assertEquals("tareas", detector.detect("mañana tengo de compra")?.pattern?.id)
         assertEquals("tareas", detector.detect("tenemos que comprar jabón")?.pattern?.id)
         assertEquals("tareas", detector.detect("tenemos que ir a Ourense mañana")?.pattern?.id)
         assertEquals("comunicacion", detector.detect("tenemos que hablar con Tony")?.pattern?.id)

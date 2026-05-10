@@ -147,6 +147,7 @@ class IntentDetectorTest {
         assertEquals("tareas", detector.detect("hay que llamar a Elena mañana")?.pattern?.id)
         assertEquals("tareas", detector.detect("hay que ir a la oficina")?.pattern?.id)
         assertEquals("tareas", detector.detect("hay que comprar pan")?.pattern?.id)
+        assertEquals("tareas", detector.detect("mañana tengo de compra")?.pattern?.id)
         assertEquals("tareas", detector.detect("tengo que comprar calcetines")?.pattern?.id)
         assertEquals("tareas", detector.detect("tengo que felicitar a Eva")?.pattern?.id)
         assertEquals("tareas", detector.detect("tenemos que comprar jabón")?.pattern?.id)
