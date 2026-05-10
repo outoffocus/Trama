@@ -27,6 +27,7 @@ class SherpaGateAsr(
         private const val TAG = "SherpaGateAsr"
         private const val MODEL_DIR = "asr/sherpa-gate"
         private const val SAMPLE_RATE_HZ = 16_000
+        private const val ENABLE_BOOKBOT_PHONEME_GATE = false
 
         private val CANDIDATE_BUNDLES = listOf(
             GateBundle.Transducer(
@@ -34,6 +35,7 @@ class SherpaGateAsr(
                 decoderAsset = "$MODEL_DIR/bookbot-phoneme-es/decoder.int8.onnx",
                 joinerAsset = "$MODEL_DIR/bookbot-phoneme-es/joiner.int8.onnx",
                 modelType = "zipformer",
+                enabled = ENABLE_BOOKBOT_PHONEME_GATE,
                 tokensAsset = "$MODEL_DIR/bookbot-phoneme-es/tokens.txt",
                 label = "bookbot-phoneme-es"
             ),
@@ -47,6 +49,7 @@ class SherpaGateAsr(
                 decoderAsset = "$MODEL_DIR/transducer/decoder.onnx",
                 joinerAsset = "$MODEL_DIR/transducer/joiner.onnx",
                 modelType = "zipformer",
+                enabled = true,
                 tokensAsset = "$MODEL_DIR/transducer/tokens.txt",
                 label = "transducer"
             )
@@ -65,6 +68,7 @@ class SherpaGateAsr(
             val decoderAsset: String,
             val joinerAsset: String,
             val modelType: String,
+            val enabled: Boolean,
             override val tokensAsset: String,
             override val label: String
         ) : GateBundle(tokensAsset, label)
@@ -135,6 +139,7 @@ class SherpaGateAsr(
     }
 
     private fun bundleExists(bundle: GateBundle): Boolean {
+        if (bundle is GateBundle.Transducer && !bundle.enabled) return false
         val requiredAssets = when (bundle) {
             is GateBundle.Zipformer2Ctc -> listOf(bundle.modelAsset, bundle.tokensAsset)
             is GateBundle.Transducer -> listOf(

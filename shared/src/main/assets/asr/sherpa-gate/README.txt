@@ -15,6 +15,11 @@ Fuente:
 Nota: emite fonemas, no texto normal. En Wear se usa solo como gate de
 captura; el movil sigue haciendo la transcripcion final.
 
+Estado: desactivado por defecto. En Galaxy Watch 4 la carga nativa con
+sherpa-onnx 1.12.21 aborta por metadata incompleta (`attention_dims`) y
+mutex destruido. Mantener el asset para investigacion, pero no inicializarlo
+en produccion/campo hasta convertirlo o encontrar un runtime compatible.
+
 Runtime Wear:
 - Galaxy Watch 4 ejecuta esta app como `armeabi-v7a`, asi que Sherpa necesita
   `shared/src/main/jniLibs/armeabi-v7a/*.so`.
