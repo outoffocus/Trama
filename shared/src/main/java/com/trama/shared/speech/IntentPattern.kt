@@ -198,12 +198,30 @@ data class IntentPattern(
             ACTIONABLE_TENER_QUE_VERBS.forEach { verb ->
                 triggers += "tengo que $verb"
                 triggers += "tenemos que $verb"
+                asrDriftVerbForms(verb).forEach { driftVerb ->
+                    triggers += "tengo de $driftVerb"
+                    triggers += "tenemos de $driftVerb"
+                    triggers += "tengo que $driftVerb"
+                    triggers += "tenemos que $driftVerb"
+                }
             }
             triggers += "tengo que ir a"
             triggers += "tengo que ir al"
+            triggers += "tengo de ir a"
+            triggers += "tengo de ir al"
             triggers += "tenemos que ir a"
             triggers += "tenemos que ir al"
+            triggers += "tenemos de ir a"
+            triggers += "tenemos de ir al"
             return triggers.toList()
+        }
+
+        private fun asrDriftVerbForms(verb: String): List<String> {
+            val forms = linkedSetOf<String>()
+            if (verb.length > 4 && verb.last() == 'r') {
+                forms += verb.dropLast(1)
+            }
+            return forms.toList()
         }
 
         // ── Default patterns ────────────────────────────────────────────────
@@ -253,10 +271,6 @@ data class IntentPattern(
                     "hay que reservar",
                     "hay que revisar",
                     "hay que preparar",
-                    "tengo de compra",
-                    "tenemos de compra",
-                    "mañana tengo de compra",
-                    "mañana tenemos de compra",
                     "necesito comprar",
                     "necesito llamar",
                     "necesito enviar",
