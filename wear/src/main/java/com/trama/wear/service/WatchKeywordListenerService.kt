@@ -77,6 +77,8 @@ class WatchKeywordListenerService : LifecycleService() {
         private const val ACTIVE_MIC_CAPTURE_MIN_MS = 1_200L
         private const val ACTIVE_MIC_SILENCE_STOP_MS = 3_000L
         private const val ACTIVE_MIC_SILENCE_RMS_THRESHOLD = 700.0
+        private const val VOSK_GATE_MIN_RMS = 250.0
+        private const val VOSK_LOW_ENERGY_DEBUG_INTERVAL_MS = 60_000L
         private const val NO_MATCH_DEBUG_INTERVAL_MS = 15_000L
     }
 
@@ -100,6 +102,7 @@ class WatchKeywordListenerService : LifecycleService() {
     private var lastSavedText = ""
     private var lastSavedTime = 0L
     private var lastNoMatchDebugAt = 0L
+    private var lastLowEnergyDebugAt = 0L
 
     private val settingsReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -646,6 +649,11 @@ class WatchKeywordListenerService : LifecycleService() {
 
                     val gatePcm = latestFromRollingWindow(rolling, rollingSamples, gateWindowSamples)
                     val preRollPcm = rolling.copyOf(rollingSamples)
+                    val gateRms = rms(gatePcm)
+                    if (gateRms < VOSK_GATE_MIN_RMS) {
+                        publishLowEnergyGateDebug(gateRms)
+                        continue
+                    }
 
                     val window = CapturedAudioWindow(
                         preRollPcm = shortArrayOf(),
@@ -655,7 +663,7 @@ class WatchKeywordListenerService : LifecycleService() {
 
                     val text = vosk.transcribe(window, "es") ?: continue
                     if (text.isNotBlank()) {
-                        Log.d(TAG, "Vosk: '$text'")
+                        Log.d(TAG, "Vosk rms=${"%.1f".format(gateRms)}: '$text'")
                         val matched = processVoskTextWithActiveMic(
                             text = text,
                             preRollPcm = preRollPcm,
@@ -773,6 +781,13 @@ class WatchKeywordListenerService : LifecycleService() {
         } finally {
             captureInFlight = false
         }
+    }
+
+    private fun publishLowEnergyGateDebug(gateRms: Double) {
+        val now = System.currentTimeMillis()
+        if (now - lastLowEnergyDebugAt < VOSK_LOW_ENERGY_DEBUG_INTERVAL_MS) return
+        lastLowEnergyDebugAt = now
+        Log.d(TAG, "Vosk acoustic gate skipped low-energy window rms=${"%.1f".format(gateRms)}")
     }
 
     private fun publishNoMatchDebug(text: String) {

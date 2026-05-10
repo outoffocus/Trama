@@ -84,6 +84,30 @@ object WatchServiceController {
      * Start recording. Stops keyword listener if active (modes are exclusive).
      */
     fun startRecording(context: Context, allowBackgroundStart: Boolean = true) {
+        startRecordingMode(
+            context = context,
+            allowBackgroundStart = allowBackgroundStart,
+            directCapture = false
+        )
+    }
+
+    /**
+     * Start a direct capture. This intentionally skips watch-side keyword
+     * matching and sends the audio to the phone for Whisper/LLM processing.
+     */
+    fun startDirectCapture(context: Context, allowBackgroundStart: Boolean = true) {
+        startRecordingMode(
+            context = context,
+            allowBackgroundStart = allowBackgroundStart,
+            directCapture = true
+        )
+    }
+
+    private fun startRecordingMode(
+        context: Context,
+        allowBackgroundStart: Boolean,
+        directCapture: Boolean
+    ) {
         // Stop keyword listener — modes are exclusive
         if (_isRunning.value) {
             expectedStop = true
@@ -103,7 +127,11 @@ object WatchServiceController {
         }
         _isPhoneActive.value = false
         try {
-            RecordingController.startRecording(context)
+            if (directCapture) {
+                RecordingController.startDirectCapture(context)
+            } else {
+                RecordingController.startRecording(context)
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to start watch recording", e)
             _isPhoneActive.value = true

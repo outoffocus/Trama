@@ -73,7 +73,7 @@ fun WatchHomeScreen() {
             ) {
                 Text(
                     text = when {
-                        isRecording -> "Grabadora"
+                        isRecording -> "Captura directa"
                         serviceRunning -> "Escucha continua"
                         phoneActive -> "Control en teléfono"
                         else -> "Trama Watch"
@@ -87,7 +87,7 @@ fun WatchHomeScreen() {
                             isRecording -> {
                                 val minutes = elapsedSeconds / 60
                                 val seconds = elapsedSeconds % 60
-                                append("Grabando ")
+                                append("Enviando al teléfono ")
                                 append("%02d:%02d".format(minutes, seconds))
                             }
                             serviceRunning -> append("Escuchando en el reloj")
@@ -168,7 +168,7 @@ fun WatchHomeScreen() {
                     onClick = {
                         if (phoneActive) return@Button
                         if (isRecording) RecordingController.stopRecording(context)
-                        else WatchServiceController.startRecording(context)
+                        else WatchServiceController.startDirectCapture(context)
                     },
                     enabled = !phoneActive,
                     modifier = Modifier.size(52.dp),
@@ -179,7 +179,7 @@ fun WatchHomeScreen() {
                 ) {
                     Icon(
                         imageVector = if (isRecording) Icons.Default.Stop else Icons.Default.FiberManualRecord,
-                        contentDescription = if (isRecording) "Parar grabadora" else "Iniciar grabadora",
+                        contentDescription = if (isRecording) "Parar captura directa" else "Iniciar captura directa",
                         modifier = Modifier.size(22.dp),
                         tint = if (isRecording) Color.White else recordColor
                     )
@@ -216,7 +216,7 @@ fun WatchHomeScreen() {
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
                 ModeLegend("Escucha", listenColor)
-                ModeLegend("Graba", recordColor)
+                ModeLegend("Captura", recordColor)
                 ModeLegend("Teléfono", transferColor)
             }
         }

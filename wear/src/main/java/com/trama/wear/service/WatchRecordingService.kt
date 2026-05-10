@@ -47,7 +47,10 @@ class WatchRecordingService : LifecycleService() {
         private const val SAMPLE_RATE_HZ = 16_000
         private const val READ_SIZE = 1024
         const val ACTION_START = "com.trama.watch.RECORD_START"
+        const val ACTION_START_DIRECT = "com.trama.watch.DIRECT_CAPTURE_START"
         const val ACTION_STOP = "com.trama.watch.RECORD_STOP"
+        const val KIND_MANUAL_RECORDING = "MANUAL_RECORDING"
+        const val KIND_DIRECT_CAPTURE = "DIRECT_CAPTURE"
     }
 
     private var audioRecord: AudioRecord? = null
@@ -57,6 +60,7 @@ class WatchRecordingService : LifecycleService() {
     private var timerJob: Job? = null
     private var captureJob: Job? = null
     private var isActive = false
+    private var recordingKind = KIND_MANUAL_RECORDING
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onCreate() {
@@ -77,14 +81,15 @@ class WatchRecordingService : LifecycleService() {
         super.onStartCommand(intent, flags, startId)
 
         when (intent?.action) {
-            ACTION_START -> startRecording()
+            ACTION_START -> startRecording(KIND_MANUAL_RECORDING)
+            ACTION_START_DIRECT -> startRecording(KIND_DIRECT_CAPTURE)
             ACTION_STOP -> stopRecording()
         }
 
         return START_NOT_STICKY
     }
 
-    private fun startRecording() {
+    private fun startRecording(kind: String) {
         if (isActive) return
         if (isBatteryLow()) {
             Log.w(TAG, "Battery too low for watch recording")
@@ -120,6 +125,7 @@ class WatchRecordingService : LifecycleService() {
         }
 
         isActive = true
+        recordingKind = kind
         capturedChunks.clear()
         capturedSamples = 0
         startTimeMs = System.currentTimeMillis()
@@ -163,7 +169,7 @@ class WatchRecordingService : LifecycleService() {
             }
         }
 
-        Log.i(TAG, "Recording started")
+        Log.i(TAG, "Recording started kind=$recordingKind")
     }
 
     private fun stopRecording() {
@@ -194,7 +200,7 @@ class WatchRecordingService : LifecycleService() {
                     durationSeconds = elapsed,
                     sampleRateHz = SAMPLE_RATE_HZ,
                     source = Source.WATCH.name,
-                    kind = "MANUAL_RECORDING",
+                    kind = recordingKind,
                     pcmByteCount = pcmBytes.size,
                     pcmSampleCount = sampleCount,
                     rms = rms(pcmBytes)
@@ -206,7 +212,7 @@ class WatchRecordingService : LifecycleService() {
 
                 if (success) {
                     RecordingController.notifySaved(startTimeMs)
-                    Log.i(TAG, "Recording audio transferred to phone (${elapsed}s)")
+                    Log.i(TAG, "Recording audio transferred to phone (${elapsed}s, kind=$recordingKind)")
                 } else {
                     Log.w(TAG, "Recording audio transfer failed")
                 }
@@ -253,6 +259,7 @@ class WatchRecordingService : LifecycleService() {
         val minutes = elapsedSeconds / 60
         val seconds = elapsedSeconds % 60
         val timeStr = "%02d:%02d".format(minutes, seconds)
+        val isDirectCapture = recordingKind == KIND_DIRECT_CAPTURE
 
         val stopIntent = Intent(this, WatchRecordingService::class.java).apply {
             action = ACTION_STOP
@@ -276,7 +283,7 @@ class WatchRecordingService : LifecycleService() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("Grabando $timeStr")
+            .setContentTitle(if (isDirectCapture) "Captura directa $timeStr" else "Grabando $timeStr")
             .setContentText("Audio local · se enviará al teléfono")
             .setContentIntent(openPending)
             .addAction(android.R.drawable.ic_media_pause, "Parar", stopPending)

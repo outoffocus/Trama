@@ -41,6 +41,14 @@ object RecordingController {
         ContextCompat.startForegroundService(context, intent)
     }
 
+    /** Start direct phone-processed capture via foreground service */
+    fun startDirectCapture(context: Context) {
+        val intent = Intent(context, WatchRecordingService::class.java).apply {
+            action = WatchRecordingService.ACTION_START_DIRECT
+        }
+        ContextCompat.startForegroundService(context, intent)
+    }
+
     /** Stop recording via foreground service */
     fun stopRecording(context: Context) {
         val intent = Intent(context, WatchRecordingService::class.java).apply {
