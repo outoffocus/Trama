@@ -71,6 +71,15 @@ object DeletionFeedbackStore {
         val instruction: String
     )
 
+    data class LearningAssessment(
+        val matchedReason: String? = null,
+        val matchedText: String? = null,
+        val similarity: Float = 0f,
+        val acceptedText: String? = null,
+        val acceptedSimilarity: Float = 0f,
+        val scoreDelta: Float = 0f
+    )
+
     private const val FILE = "deletion_feedback.json"
     private const val ACCEPTED_FILE = "accepted_feedback.json"
     private const val MAX_ENTRIES = 100
@@ -248,6 +257,53 @@ object DeletionFeedbackStore {
         return if (best != null && bestScore >= 0.3f) best to bestScore else null
     }
 
+    fun assessCandidate(
+        context: Context,
+        text: String,
+        cleanText: String,
+        actionType: String
+    ): LearningAssessment {
+        val candidateText = listOf(text, cleanText, actionType)
+            .filter { it.isNotBlank() }
+            .joinToString(" ")
+        val incoming = tokenize(candidateText).toSet()
+        if (incoming.isEmpty()) return LearningAssessment()
+
+        val deletedMatches = load(context)
+            .asSequence()
+            .mapNotNull { signal ->
+                val score = similarity(incoming, signal.tokens.toSet())
+                if (score >= 0.3f) signal to score else null
+            }
+            .toList()
+        val deletedMatch = deletedMatches
+            .filter { (signal, _) -> Reason.fromKey(signal.reason)?.affectsLocalDecision == true }
+            .maxByOrNull { it.second }
+            ?: deletedMatches.maxByOrNull { it.second }
+
+        val acceptedMatch = loadAccepted(context)
+            .asSequence()
+            .mapNotNull { signal ->
+                val score = similarity(incoming, signal.tokens.toSet())
+                if (score >= 0.3f) signal to score else null
+            }
+            .maxByOrNull { it.second }
+
+        val matchedReason = deletedMatch?.first?.reason
+        val deletedScore = deletedMatch?.second ?: 0f
+        val acceptedScore = acceptedMatch?.second ?: 0f
+        val delta = scoreDeltaFor(matchedReason, deletedScore) + if (acceptedScore >= 0.5f) 0.12f else 0f
+
+        return LearningAssessment(
+            matchedReason = matchedReason,
+            matchedText = deletedMatch?.first?.text,
+            similarity = deletedScore,
+            acceptedText = acceptedMatch?.first?.text,
+            acceptedSimilarity = acceptedScore,
+            scoreDelta = delta.coerceIn(-0.5f, 0.2f)
+        )
+    }
+
     /**
      * Recent noise signals to inject as DISCARD few-shot examples. Only the
      * raw deleted text is exposed — reason metadata is internal.
@@ -360,6 +416,42 @@ object DeletionFeedbackStore {
             .mapTo(phrases) { it.joinToString(" ") }
         return phrases
     }
+
+    private fun similarity(left: Set<String>, right: Set<String>): Float {
+        if (left.isEmpty() || right.isEmpty()) return 0f
+        val intersection = left.intersect(right).size
+        if (intersection == 0) return 0f
+        val union = left.union(right).size
+        val jaccard = intersection.toFloat() / union.toFloat()
+        val containment = intersection.toFloat() / minOf(left.size, right.size).toFloat()
+        return maxOf(jaccard, containment * 0.85f)
+    }
+
+    private fun scoreDeltaFor(reasonKey: String?, similarity: Float): Float {
+        val reason = Reason.fromKey(reasonKey) ?: return 0f
+        if (similarity < 0.3f) return 0f
+        return when (reason) {
+            Reason.NOISE, Reason.NOT_FOR_ME -> when {
+                similarity >= 0.7f -> -0.40f
+                similarity >= 0.45f -> -0.22f
+                else -> -0.08f
+            }
+            Reason.BAD_TRANSCRIPTION -> if (similarity >= 0.55f) -0.18f else -0.06f
+            Reason.DUPLICATE_OR_DONE,
+            Reason.NO_LONGER_APPLIES,
+            Reason.OTHER -> 0f
+        }
+    }
+
+    private val Reason.affectsLocalDecision: Boolean
+        get() = when (this) {
+            Reason.NOISE,
+            Reason.NOT_FOR_ME,
+            Reason.BAD_TRANSCRIPTION -> true
+            Reason.DUPLICATE_OR_DONE,
+            Reason.NO_LONGER_APPLIES,
+            Reason.OTHER -> false
+        }
 
     private fun tokenize(text: String): List<String> {
         val normalized = text.lowercase(Locale.getDefault())

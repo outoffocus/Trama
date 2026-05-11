@@ -163,6 +163,76 @@ internal fun buildTimelineEvents(
 }
 
 @Composable
+internal fun LocationGroupedTimelineList(
+    events: List<TimelineEventUi>,
+    processingEntryIds: Set<Long>,
+    processingBackends: Map<Long, EntryProcessingState.Backend> = emptyMap(),
+    accentConfig: TimelineAccentConfig,
+    onEntryClick: (Long) -> Unit,
+    onRecordingClick: (Long) -> Unit,
+    onPlaceClick: (Long) -> Unit = {},
+    modifier: Modifier = Modifier,
+    emptyTitle: String = "No hay eventos",
+    emptyBody: String = "Todavía no se ha registrado nada en este día."
+) {
+    val hourFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+    val sections = remember(events) { buildLocationTimelineSections(events) }
+
+    if (events.isEmpty()) {
+        Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = emptyTitle,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = emptyBody,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                )
+            }
+        }
+        return
+    }
+
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        sections.forEachIndexed { sectionIndex, section ->
+            item(key = "location_section_${section.id}") {
+                LocationTimelineHeader(
+                    section = section,
+                    hourFormat = hourFormat,
+                    accent = if (section.locationEvent?.isHighlight == true) {
+                        accentConfig.place
+                    } else {
+                        accentConfig.place.copy(alpha = 0.86f)
+                    },
+                    onPlaceClick = onPlaceClick,
+                    modifier = Modifier.padding(top = if (sectionIndex == 0) 2.dp else 8.dp)
+                )
+            }
+            timelineListContent(
+                events = section.events,
+                processingEntryIds = processingEntryIds,
+                processingBackends = processingBackends,
+                hourFormat = hourFormat,
+                accentConfig = accentConfig,
+                itemModifier = Modifier.padding(start = if (section.locationEvent != null) 24.dp else 0.dp),
+                keyPrefix = "location_${section.id}_",
+                showTimeMarkers = false,
+                onEntryClick = onEntryClick,
+                onRecordingClick = onRecordingClick,
+                onPlaceClick = onPlaceClick
+            )
+        }
+    }
+}
+
+@Composable
 internal fun TimelineList(
     events: List<TimelineEventUi>,
     processingEntryIds: Set<Long>,
@@ -269,6 +339,7 @@ internal fun LazyListScope.timelineListContent(
     selectedEventIds: Set<Long> = emptySet(),
     onEventSelectionChange: ((Long, Boolean) -> Unit)? = null,
     onEnterEventSelectionMode: ((Long) -> Unit)? = null,
+    showTimeMarkers: Boolean = true,
 ) {
     items(
         count = events.size,
@@ -276,7 +347,7 @@ internal fun LazyListScope.timelineListContent(
     ) { index ->
         val event = events[index]
         val previousEvent = events.getOrNull(index - 1)
-        if (previousEvent == null || previousEvent.timestamp.hourBucket() != event.timestamp.hourBucket()) {
+        if (showTimeMarkers && (previousEvent == null || previousEvent.timestamp.hourBucket() != event.timestamp.hourBucket())) {
             TimelineTimeMarker(
                 text = hourFormat.format(Date(event.timestamp.hourStartMillis())),
                 modifier = Modifier.padding(top = if (index == 0) 2.dp else 8.dp, bottom = 2.dp)
@@ -581,6 +652,130 @@ internal fun LazyListScope.timelineListContent(
                                 tint = accentConfig.place
                             )
                         }
+                    )
+                }
+            }
+        }
+    }
+}
+
+private data class TimelineLocationSection(
+    val id: String,
+    val title: String,
+    val startTimestamp: Long,
+    val endTimestamp: Long?,
+    val locationEvent: TimelineEvent?,
+    val events: List<TimelineEventUi>
+)
+
+private fun buildLocationTimelineSections(events: List<TimelineEventUi>): List<TimelineLocationSection> {
+    val dwellEvents = events
+        .mapNotNull { (it as? TimelineEventUi.StoredEvent)?.event }
+        .filter { it.type == TimelineEventType.DWELL }
+        .sortedBy { it.timestamp }
+    val sectionEvents = linkedMapOf<Long, MutableList<TimelineEventUi>>()
+    val orphanEvents = mutableListOf<TimelineEventUi>()
+
+    events
+        .filterNot { (it as? TimelineEventUi.StoredEvent)?.event?.type == TimelineEventType.DWELL }
+        .sortedBy { it.timestamp }
+        .forEach { event ->
+            val location = dwellEvents.lastOrNull { dwell ->
+                val end = dwell.endTimestamp ?: Long.MAX_VALUE
+                event.timestamp >= dwell.timestamp && event.timestamp <= end
+            }
+            if (location != null) {
+                sectionEvents.getOrPut(location.id) { mutableListOf() }.add(event)
+            } else {
+                orphanEvents.add(event)
+            }
+        }
+
+    return buildList {
+        dwellEvents.forEach { dwell ->
+            add(
+                TimelineLocationSection(
+                    id = "place_${dwell.id}",
+                    title = dwell.title,
+                    startTimestamp = dwell.timestamp,
+                    endTimestamp = dwell.endTimestamp,
+                    locationEvent = dwell,
+                    events = sectionEvents[dwell.id].orEmpty()
+                )
+            )
+        }
+        orphanEvents
+            .groupBy { it.timestamp.hourBucket() }
+            .forEach { (bucket, bucketEvents) ->
+                val firstTimestamp = bucketEvents.minOf { it.timestamp }
+                add(
+                    TimelineLocationSection(
+                        id = "without_place_$bucket",
+                        title = "Sin ubicación",
+                        startTimestamp = firstTimestamp,
+                        endTimestamp = null,
+                        locationEvent = null,
+                        events = bucketEvents.sortedBy { it.timestamp }
+                    )
+                )
+            }
+    }.sortedBy { it.startTimestamp }
+}
+
+@Composable
+private fun LocationTimelineHeader(
+    section: TimelineLocationSection,
+    hourFormat: SimpleDateFormat,
+    accent: Color,
+    onPlaceClick: (Long) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val location = section.locationEvent
+    val timeLabel = section.endTimestamp?.let { end ->
+        "${hourFormat.format(Date(section.startTimestamp))}-${hourFormat.format(Date(end))}"
+    } ?: hourFormat.format(Date(section.startTimestamp))
+    val duration = location?.let {
+        DwellDurationFormatter.formatHours(it.timestamp, it.endTimestamp)
+    }
+
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .then(
+                location?.placeId?.let { placeId ->
+                    Modifier.clickable { onPlaceClick(placeId) }
+                } ?: Modifier
+            ),
+        shape = RoundedCornerShape(8.dp),
+        color = accent.copy(alpha = 0.10f)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TimelineIconGlyph(accent = accent, shape = CircleShape) {
+                Icon(
+                    Icons.Default.Place,
+                    contentDescription = null,
+                    tint = accent
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "$timeLabel ${section.title}",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (!duration.isNullOrBlank()) {
+                    Spacer(Modifier.height(1.dp))
+                    Text(
+                        text = duration,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }

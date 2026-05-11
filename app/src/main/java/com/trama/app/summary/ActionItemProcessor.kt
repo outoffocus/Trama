@@ -137,7 +137,8 @@ class ActionItemProcessor(private val context: Context) {
         }
 
         if (result != null && splitCleanTexts.isEmpty()) {
-            if (shouldAcceptAsTask(result)) {
+            val learningDecision = learningDecisionFor(originalText, result)
+            if (shouldAcceptAsTask(result) && learningDecision.route == UserLearningDecisionEngine.Route.KEEP) {
                 repository.updateAIProcessing(
                     id = entryId,
                     cleanText = result.cleanText,
@@ -156,7 +157,8 @@ class ActionItemProcessor(private val context: Context) {
                         result = result,
                         decision = "accepted",
                         route = EntryStatus.PENDING,
-                        backend = "llm"
+                        backend = "llm",
+                        learningDecision = learningDecision
                     ) + mapOf(
                         "id" to entryId,
                         "kind" to result.kind,
@@ -179,11 +181,12 @@ class ActionItemProcessor(private val context: Context) {
                     priority = result.priority,
                     confidence = result.confidence
                 )
-                routeRejected(entryId, result, repository)
+                routeRejected(entryId, result, repository, learningDecision)
                 Log.i(
                     TAG,
                     "Routing entry $entryId after utility classification: '${result.cleanText}' " +
-                        "(kind=${result.kind}, actionable=${result.isActionable}, confidence=${result.confidence})"
+                        "(kind=${result.kind}, actionable=${result.isActionable}, confidence=${result.confidence}, " +
+                        "learning=${learningDecision.route})"
                 )
                 CaptureLog.event(
                     gate = CaptureLog.Gate.LLM,
@@ -192,9 +195,10 @@ class ActionItemProcessor(private val context: Context) {
                     meta = llmDecisionMeta(
                         entryId = entryId,
                         result = result,
-                        decision = "rejected",
-                        route = rejectedStatus(result),
-                        backend = "llm"
+                        decision = if (learningDecision.route == UserLearningDecisionEngine.Route.KEEP) "rejected" else "learning_${learningDecision.route.name.lowercase()}",
+                        route = rejectedStatus(result, learningDecision),
+                        backend = "llm",
+                        learningDecision = learningDecision
                     ) + mapOf(
                         "id" to entryId,
                         "kind" to result.kind,
@@ -203,9 +207,9 @@ class ActionItemProcessor(private val context: Context) {
                         "usefulness" to "%.2f".format(result.usefulnessScore),
                         "actionability" to "%.2f".format(result.actionabilityScore),
                         "discardReason" to result.discardReason,
-                        "route" to rejectedStatus(result),
+                        "route" to rejectedStatus(result, learningDecision),
                         "rejectStage" to "UserSurface",
-                        "outcome" to if (rejectedStatus(result) == EntryStatus.SUGGESTED) {
+                        "outcome" to if (rejectedStatus(result, learningDecision) == EntryStatus.SUGGESTED) {
                             CaptureLog.CaptureOutcome.LOW_CONFIDENCE_SUGGESTED
                         } else {
                             CaptureLog.CaptureOutcome.ACTION_REJECTED
@@ -215,7 +219,8 @@ class ActionItemProcessor(private val context: Context) {
                 return false
             }
         } else if (heuristicFallback != null && splitCleanTexts.isEmpty()) {
-            if (shouldAcceptAsTask(heuristicFallback)) {
+            val learningDecision = learningDecisionFor(originalText, heuristicFallback)
+            if (shouldAcceptAsTask(heuristicFallback) && learningDecision.route == UserLearningDecisionEngine.Route.KEEP) {
                 repository.updateAIProcessing(
                     id = entryId,
                     cleanText = heuristicFallback.cleanText,
@@ -234,7 +239,8 @@ class ActionItemProcessor(private val context: Context) {
                         result = heuristicFallback,
                         decision = "accepted",
                         route = EntryStatus.PENDING,
-                        backend = "heuristic_fallback"
+                        backend = "heuristic_fallback",
+                        learningDecision = learningDecision
                     )
                 )
                 acceptedForTimeline = true
@@ -247,11 +253,11 @@ class ActionItemProcessor(private val context: Context) {
                     priority = heuristicFallback.priority,
                     confidence = heuristicFallback.confidence
                 )
-                routeRejected(entryId, heuristicFallback, repository)
+                routeRejected(entryId, heuristicFallback, repository, learningDecision)
                 Log.i(
                     TAG,
                     "Routing heuristic fallback to review queue for entry $entryId: " +
-                        "'${heuristicFallback.cleanText}' (confidence=${heuristicFallback.confidence})"
+                        "'${heuristicFallback.cleanText}' (confidence=${heuristicFallback.confidence}, learning=${learningDecision.route})"
                 )
                 CaptureLog.event(
                     gate = CaptureLog.Gate.LLM,
@@ -260,9 +266,10 @@ class ActionItemProcessor(private val context: Context) {
                     meta = llmDecisionMeta(
                         entryId = entryId,
                         result = heuristicFallback,
-                        decision = "rejected",
-                        route = rejectedStatus(heuristicFallback),
-                        backend = "heuristic_fallback"
+                        decision = if (learningDecision.route == UserLearningDecisionEngine.Route.KEEP) "rejected" else "learning_${learningDecision.route.name.lowercase()}",
+                        route = rejectedStatus(heuristicFallback, learningDecision),
+                        backend = "heuristic_fallback",
+                        learningDecision = learningDecision
                     )
                 )
                 return false
@@ -961,16 +968,28 @@ class ActionItemProcessor(private val context: Context) {
     private suspend fun routeRejected(
         entryId: Long,
         result: ProcessingResult,
-        repository: DiaryRepository
+        repository: DiaryRepository,
+        learningDecision: UserLearningDecisionEngine.LearningDecision = noLearningDecision()
     ) {
-        if (rejectedStatus(result) == EntryStatus.SUGGESTED) {
+        if (rejectedStatus(result, learningDecision) == EntryStatus.SUGGESTED) {
             repository.markSuggested(entryId)
         } else {
             repository.markDiscarded(entryId)
         }
     }
 
-    private fun rejectedStatus(result: ProcessingResult): String {
+    private fun rejectedStatus(result: ProcessingResult): String =
+        rejectedStatus(result, noLearningDecision())
+
+    private fun rejectedStatus(
+        result: ProcessingResult,
+        learningDecision: UserLearningDecisionEngine.LearningDecision
+    ): String {
+        when (learningDecision.route) {
+            UserLearningDecisionEngine.Route.DISCARD -> return EntryStatus.DISCARDED
+            UserLearningDecisionEngine.Route.DEMOTE_TO_SUGGESTED -> return EntryStatus.SUGGESTED
+            UserLearningDecisionEngine.Route.KEEP -> Unit
+        }
         // Strong signal that the model saw a task but it didn't clear the bar.
         val likelyTask = result.kind == KIND_TASK && result.isActionable
         // Soft signals reroute to SUGGESTED so the user can confirm/dismiss
@@ -998,7 +1017,8 @@ class ActionItemProcessor(private val context: Context) {
         result: ProcessingResult,
         decision: String,
         route: String,
-        backend: String
+        backend: String,
+        learningDecision: UserLearningDecisionEngine.LearningDecision = noLearningDecision()
     ): Map<String, Any?> = mapOf(
         "entryId" to entryId,
         "decision" to decision,
@@ -1012,8 +1032,50 @@ class ActionItemProcessor(private val context: Context) {
         "confidence" to "%.2f".format(result.confidence),
         "usefulness" to "%.2f".format(result.usefulnessScore),
         "actionability" to "%.2f".format(result.actionabilityScore),
-        "discardReason" to result.discardReason
+        "discardReason" to result.discardReason,
+        "learningDecision" to learningDecision.route.name,
+        "learningScoreDelta" to "%.2f".format(learningDecision.scoreDelta),
+        "learningReason" to learningDecision.reason,
+        "learningMatchedReason" to learningDecision.matchedReason,
+        "learningSimilarity" to "%.2f".format(learningDecision.similarity)
     )
+
+    private fun learningDecisionFor(
+        originalText: String,
+        result: ProcessingResult
+    ): UserLearningDecisionEngine.LearningDecision {
+        val assessment = runCatching {
+            DeletionFeedbackStore.assessCandidate(
+                context = context,
+                text = originalText,
+                cleanText = result.cleanText,
+                actionType = result.actionType
+            )
+        }.getOrDefault(DeletionFeedbackStore.LearningAssessment())
+
+        return UserLearningDecisionEngine.decide(
+            UserLearningDecisionEngine.Candidate(
+                originalText = originalText,
+                cleanText = result.cleanText,
+                actionType = result.actionType,
+                confidence = result.confidence,
+                usefulnessScore = result.usefulnessScore,
+                actionabilityScore = result.actionabilityScore,
+                kind = result.kind,
+                isActionable = result.isActionable,
+                assessment = assessment
+            )
+        )
+    }
+
+    private fun noLearningDecision(): UserLearningDecisionEngine.LearningDecision =
+        UserLearningDecisionEngine.LearningDecision(
+            route = UserLearningDecisionEngine.Route.KEEP,
+            scoreDelta = 0f,
+            reason = "not_evaluated",
+            matchedReason = null,
+            similarity = 0f
+        )
 
     private fun qualityBucket(
         result: ProcessingResult,

@@ -27,12 +27,12 @@ import com.trama.app.summary.DeletionFeedbackStore.Reason
 private data class ReasonOption(val reason: Reason, val emoji: String, val label: String)
 
 private val OPTIONS = listOf(
-    ReasonOption(Reason.NOISE, "🚫", "Era ruido / no es una tarea"),
+    ReasonOption(Reason.NOISE, "🚫", "No era una tarea / era ruido"),
     ReasonOption(Reason.NOT_FOR_ME, "👤", "No es para mí"),
     ReasonOption(Reason.BAD_TRANSCRIPTION, "✏️", "Texto mal transcrito"),
     ReasonOption(Reason.DUPLICATE_OR_DONE, "🔁", "Duplicada / ya hecha"),
     ReasonOption(Reason.NO_LONGER_APPLIES, "⏭️", "Ya no aplica"),
-    ReasonOption(Reason.OTHER, "❓", "Otro motivo"),
+    ReasonOption(Reason.OTHER, "❓", "Otro motivo (no se usará para filtrar)"),
 )
 
 @Composable
@@ -53,7 +53,7 @@ fun DeleteReasonDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    text = "¿Por qué la eliminas? Nos ayuda a no proponerte cosas similares.",
+                    text = "¿Por qué la eliminas? Elige la causa real para ajustar futuras sugerencias.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

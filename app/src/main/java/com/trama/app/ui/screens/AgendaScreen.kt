@@ -31,6 +31,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -39,6 +43,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -46,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.trama.app.ui.components.SwipeableReminderCard
 import com.trama.app.ui.theme.LocalTramaColors
 import com.trama.shared.data.DatabaseProvider
 import com.trama.shared.model.DiaryEntry
@@ -53,6 +59,7 @@ import com.trama.shared.model.EntryStatus
 import com.trama.shared.model.TimelineEvent
 import com.trama.shared.model.TimelineEventType
 import com.trama.shared.util.DayRange
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -79,6 +86,8 @@ fun AgendaScreen(
 ) {
     val context = LocalContext.current
     val repository = remember { DatabaseProvider.getRepository(context) }
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     val today = remember { DayRange.today() }
     val endOfThisWeek = remember(today) { endOfWeekMs(today.startMs) }
@@ -135,7 +144,37 @@ fun AgendaScreen(
             day.tasks.count { it.priority.equals("URGENT", ignoreCase = true) }
         }
 
+    fun markEntryCompleted(entry: DiaryEntry) {
+        scope.launch {
+            repository.markCompleted(entry.id)
+            val result = snackbarHostState.showSnackbar(
+                message = "Marcada como hecha",
+                actionLabel = "Deshacer",
+                duration = SnackbarDuration.Short
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                repository.markPending(entry.id)
+            }
+        }
+    }
+
+    fun postponeEntry(entry: DiaryEntry, dueDate: Long) {
+        scope.launch {
+            val previousDue = entry.dueDate
+            repository.updateDueDate(entry.id, dueDate)
+            val result = snackbarHostState.showSnackbar(
+                message = "Pospuesta",
+                actionLabel = "Deshacer",
+                duration = SnackbarDuration.Short
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                repository.updateDueDate(entry.id, previousDue)
+            }
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("Agenda") },
@@ -169,17 +208,38 @@ fun AgendaScreen(
             if (overdueTasks.isNotEmpty()) {
                 item("overdue_header") { SectionTitle("Vencidas", "${overdueTasks.size}") }
                 items(overdueTasks, key = { "ov_${it.id}" }) { task ->
-                    TaskRow(entry = task, onClick = { onEntryClick(task.id) }, overdue = true)
+                    SwipeableTaskRow(
+                        entry = task,
+                        onClick = { onEntryClick(task.id) },
+                        onComplete = { markEntryCompleted(task) },
+                        onPostpone = { dueDate -> postponeEntry(task, dueDate) },
+                        overdue = true
+                    )
                 }
             }
 
-            agendaSection(thisWeekSection, onEntryClick)
-            agendaSection(nextWeekSection, onEntryClick)
+            agendaSection(
+                section = thisWeekSection,
+                onEntryClick = onEntryClick,
+                onComplete = ::markEntryCompleted,
+                onPostpone = ::postponeEntry
+            )
+            agendaSection(
+                section = nextWeekSection,
+                onEntryClick = onEntryClick,
+                onComplete = ::markEntryCompleted,
+                onPostpone = ::postponeEntry
+            )
 
             if (laterTasks.isNotEmpty()) {
                 item("later_header") { SectionTitle("Más adelante", "${laterTasks.size}") }
                 items(laterTasks, key = { "later_${it.id}" }) { task ->
-                    TaskRow(entry = task, onClick = { onEntryClick(task.id) })
+                    SwipeableTaskRow(
+                        entry = task,
+                        onClick = { onEntryClick(task.id) },
+                        onComplete = { markEntryCompleted(task) },
+                        onPostpone = { dueDate -> postponeEntry(task, dueDate) }
+                    )
                 }
             }
 
@@ -192,7 +252,12 @@ fun AgendaScreen(
                     )
                 }
                 items(undatedTasks, key = { "und_${it.id}" }) { task ->
-                    TaskRow(entry = task, onClick = { onEntryClick(task.id) })
+                    SwipeableTaskRow(
+                        entry = task,
+                        onClick = { onEntryClick(task.id) },
+                        onComplete = { markEntryCompleted(task) },
+                        onPostpone = { dueDate -> postponeEntry(task, dueDate) }
+                    )
                 }
             }
 
@@ -224,7 +289,9 @@ fun AgendaScreen(
 
 private fun LazyListScope.agendaSection(
     section: AgendaSection,
-    onEntryClick: (Long) -> Unit
+    onEntryClick: (Long) -> Unit,
+    onComplete: (DiaryEntry) -> Unit,
+    onPostpone: (DiaryEntry, Long) -> Unit
 ) {
     if (section.days.isEmpty()) return
     item("${section.title}_header") {
@@ -238,7 +305,12 @@ private fun LazyListScope.agendaSection(
             EventRow(event = ev)
         }
         items(day.tasks, key = { "${section.title}_${day.dayStartMs}_tk_${it.id}" }) { task ->
-            TaskRow(entry = task, onClick = { onEntryClick(task.id) })
+            SwipeableTaskRow(
+                entry = task,
+                onClick = { onEntryClick(task.id) },
+                onComplete = { onComplete(task) },
+                onPostpone = { dueDate -> onPostpone(task, dueDate) }
+            )
         }
     }
 }
@@ -392,6 +464,24 @@ private fun EventRow(event: TimelineEvent) {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun SwipeableTaskRow(
+    entry: DiaryEntry,
+    onClick: () -> Unit,
+    onComplete: () -> Unit,
+    onPostpone: (Long) -> Unit,
+    overdue: Boolean = false
+) {
+    SwipeableReminderCard(
+        entry = entry,
+        enabled = entry.status != EntryStatus.COMPLETED && entry.status != EntryStatus.DISCARDED,
+        onMarkDone = onComplete,
+        onPostponeSelected = { dueDate, _ -> onPostpone(dueDate) }
+    ) {
+        TaskRow(entry = entry, onClick = onClick, overdue = overdue)
     }
 }
 

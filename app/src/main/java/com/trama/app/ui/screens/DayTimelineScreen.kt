@@ -157,7 +157,7 @@ fun DayTimelineScreen(
                     )
                 }
             }
-            TimelineList(
+            LocationGroupedTimelineList(
                 events = timelineEvents,
                 processingEntryIds = processingEntryIds,
                 processingBackends = processingBackends,
@@ -165,7 +165,6 @@ fun DayTimelineScreen(
                 onEntryClick = onEntryClick,
                 onRecordingClick = onRecordingClick,
                 onPlaceClick = onPlaceClick,
-                onToggleComplete = null,
                 modifier = Modifier.padding(top = 4.dp),
                 emptyTitle = "Nada registrado",
                 emptyBody = "Ese día no tiene eventos todavía."
