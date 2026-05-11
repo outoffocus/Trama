@@ -140,7 +140,9 @@ import com.trama.shared.model.DailyPage
 import com.trama.shared.model.Source
 import com.trama.shared.model.TimelineEventType
 import com.trama.shared.sync.MicCoordinator
+import com.trama.shared.util.DayRange
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -167,14 +169,7 @@ fun CalendarScreen(
         GoogleCalendarSyncManager(context).syncSelectedCalendars()
     }
 
-    val today = remember { Calendar.getInstance() }
-
-    val todayStart = remember {
-        Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-        }.timeInMillis
-    }
+    var todayStart by remember { mutableStateOf(DayRange.today().startMs) }
 
     val initialDayStart = remember(initialSelectedDayStart, todayStart) {
         initialSelectedDayStart ?: todayStart
@@ -191,6 +186,27 @@ fun CalendarScreen(
     }
     var showMonthSheet by remember { mutableStateOf(false) }
     val monthSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            val currentTodayStart = DayRange.today().startMs
+            if (currentTodayStart != todayStart) {
+                val wasShowingToday = selectedDayStart == todayStart
+                todayStart = currentTodayStart
+                if (wasShowingToday) {
+                    selectedDayStart = currentTodayStart
+                    displayMonth = Calendar.getInstance().apply {
+                        timeInMillis = currentTodayStart
+                        set(Calendar.DAY_OF_MONTH, 1)
+                    }
+                }
+            }
+
+            val now = System.currentTimeMillis()
+            val nextDayStart = DayRange.of(now).endExclusiveMs
+            delay((nextDayStart - now + 1_000L).coerceIn(1_000L, 60 * 60 * 1000L))
+        }
+    }
 
     val monthStart = remember(displayMonth) {
         (displayMonth.clone() as Calendar).apply {
@@ -283,7 +299,7 @@ fun CalendarScreen(
     val pendingOtherDays = remember(acceptedPendingOnDay, selectedDayStart) {
         acceptedPendingOnDay.filter { it.createdAt < selectedDayStart }
     }
-    val todayEnd = remember(todayStart) { com.trama.shared.util.DayRange.of(todayStart).endInclusiveMs }
+    val todayEnd = remember(todayStart) { DayRange.of(todayStart).endInclusiveMs }
     val endOfThisWeek = remember(todayStart) {
         val cal = Calendar.getInstance().apply { timeInMillis = todayStart }
         // Week ends on Sunday (locale-friendly: roll forward until SUNDAY).
