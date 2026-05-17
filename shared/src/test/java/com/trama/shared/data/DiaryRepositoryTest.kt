@@ -200,6 +200,7 @@ private class FakeDiaryDao : DiaryDao {
     override suspend fun delete(entry: DiaryEntry): Int = 1
     override suspend fun deleteById(id: Long) { lastDeletedId = id }
     override suspend fun updateText(id: Long, text: String) {}
+    override suspend fun updateCreatedAt(id: Long, createdAt: Long) {}
     override suspend fun markSynced(ids: List<Long>): Int { lastSyncedIds = ids; return ids.size }
     override suspend fun existsByCreatedAtAndText(createdAt: Long, text: String): Boolean = existsResult
     override suspend fun deleteByIds(ids: List<Long>) {}

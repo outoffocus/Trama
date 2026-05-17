@@ -300,6 +300,17 @@ fun CalendarScreen(
         acceptedPendingOnDay.filter { it.createdAt < selectedDayStart }
     }
     val todayEnd = remember(todayStart) { DayRange.of(todayStart).endInclusiveMs }
+    LaunchedEffect(allPendingForOriginalLookup, todayStart, todayEnd) {
+        val now = System.currentTimeMillis()
+        allPendingForOriginalLookup
+            .filter {
+                it.source == Source.WATCH &&
+                    it.status == EntryStatus.PENDING &&
+                    it.dueDate == null &&
+                    it.createdAt !in todayStart..todayEnd
+            }
+            .forEach { repository.updateCreatedAt(it.id, now) }
+    }
     val endOfThisWeek = remember(todayStart) {
         val cal = Calendar.getInstance().apply { timeInMillis = todayStart }
         // Week ends on Sunday (locale-friendly: roll forward until SUNDAY).

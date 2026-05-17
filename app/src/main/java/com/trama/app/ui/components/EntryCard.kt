@@ -103,6 +103,7 @@ fun EntryCard(
     val isSuggested = entry.status == EntryStatus.SUGGESTED
     val primaryText = entry.displayText.ifBlank { entry.text }
     val t = LocalTramaColors.current
+    val hasTrailingActions = !isSelectionMode && onQuickActionClick != null && quickActionIcon != null
 
     val cardColor by animateColorAsState(
         targetValue = when {
@@ -196,7 +197,7 @@ fun EntryCard(
                     .weight(1f)
                     .padding(
                         start  = 10.dp,
-                        end    = if (onQuickActionClick != null) 2.dp else 11.dp,
+                        end    = if (hasTrailingActions) 2.dp else 11.dp,
                         top    = 9.dp,
                         bottom = 9.dp
                     )
@@ -246,28 +247,41 @@ fun EntryCard(
             }
 
             // ── Right action: quick-action button ───────────────────────────
-            if (!isSelectionMode) {
-                if (onQuickActionClick != null && quickActionIcon != null) {
-                    Surface(
-                        onClick  = onQuickActionClick,
-                        modifier = Modifier.padding(end = 8.dp),
-                        shape    = CircleShape,
-                        color    = eventAccent.copy(alpha = 0.13f)
-                    ) {
-                        Box(
-                            modifier        = Modifier.size(40.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector      = quickActionIcon,
-                                contentDescription = quickActionLabel,
-                                modifier         = Modifier.size(18.dp),
-                                tint             = eventAccent
-                            )
-                        }
-                    }
-                }
+            if (!isSelectionMode && onQuickActionClick != null && quickActionIcon != null) {
+                EntryActionIconButton(
+                    onClick = onQuickActionClick,
+                    icon = quickActionIcon,
+                    contentDescription = quickActionLabel,
+                    tint = eventAccent
+                )
             }
+        }
+    }
+}
+
+@Composable
+private fun EntryActionIconButton(
+    onClick: () -> Unit,
+    icon: ImageVector,
+    contentDescription: String?,
+    tint: Color
+) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.padding(end = 8.dp),
+        shape = CircleShape,
+        color = tint.copy(alpha = 0.13f)
+    ) {
+        Box(
+            modifier = Modifier.size(40.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                modifier = Modifier.size(18.dp),
+                tint = tint
+            )
         }
     }
 }

@@ -23,6 +23,7 @@ import com.trama.shared.model.RecordingStatus
 import com.trama.shared.model.Source
 import com.trama.shared.model.SyncPayload
 import com.trama.shared.model.WatchAudioSyncMetadata
+import com.trama.shared.util.DayRange
 import com.trama.app.summary.ActionItemProcessor
 import com.trama.app.summary.RecordingProcessor
 import com.trama.shared.model.DiaryEntry
@@ -164,8 +165,14 @@ class WatchDataReceiverService : WearableListenerService() {
                 // Sync diary entries
                 var insertedEntries = 0
                 for (syncEntry in payload.entries) {
-                    val entry = syncEntry.toDiaryEntry()
-                    if (!repository.existsByCreatedAtAndText(entry.createdAt, entry.text)) {
+                    val rawEntry = syncEntry.toDiaryEntry()
+                    val entry = rawEntry.copy(
+                        createdAt = normalizeWatchCreatedAt(rawEntry.createdAt)
+                    )
+                    if (
+                        !repository.existsByCreatedAtAndText(rawEntry.createdAt, rawEntry.text) &&
+                        !repository.existsByCreatedAtAndText(entry.createdAt, entry.text)
+                    ) {
                         val insertedId = repository.insert(entry)
                         insertedEntries++
                         // Process with AI to generate cleanText / actionType / dueDate / priority
@@ -180,9 +187,14 @@ class WatchDataReceiverService : WearableListenerService() {
                 // Sync recordings and process them with Gemini
                 var insertedRecordings = 0
                 for (syncRecording in payload.recordings) {
-                    if (!repository.existsRecordingByCreatedAt(syncRecording.createdAt)) {
-                        val recording = syncRecording.toRecording()
-                        val recordingId = repository.insertRecording(recording)
+                    val recording = syncRecording.toRecording()
+                    val normalizedCreatedAt = normalizeWatchCreatedAt(recording.createdAt)
+                    if (
+                        !repository.existsRecordingByCreatedAt(recording.createdAt) &&
+                        !repository.existsRecordingByCreatedAt(normalizedCreatedAt)
+                    ) {
+                        val normalizedRecording = recording.copy(createdAt = normalizedCreatedAt)
+                        val recordingId = repository.insertRecording(normalizedRecording)
                         insertedRecordings++
                         Log.i(TAG, "Received recording from watch (id=$recordingId), processing...")
 
@@ -214,10 +226,16 @@ class WatchDataReceiverService : WearableListenerService() {
                 // Guard against corrupted/zero sampleRateHz — would cause divide-by-zero in
                 // duration/RMS math and the capture would be silently discarded.
                 val sampleRateHz = rawMetadata.sampleRateHz.coerceIn(8_000, 48_000)
-                val metadata = if (sampleRateHz == rawMetadata.sampleRateHz) rawMetadata
+                val metadataWithSampleRate = if (sampleRateHz == rawMetadata.sampleRateHz) rawMetadata
                     else rawMetadata.copy(sampleRateHz = sampleRateHz)
+                val metadata = metadataWithSampleRate.copy(
+                    createdAt = normalizeWatchCreatedAt(metadataWithSampleRate.createdAt)
+                )
 
-                if (repository.existsRecordingByCreatedAt(metadata.createdAt)) {
+                if (
+                    repository.existsRecordingByCreatedAt(metadataWithSampleRate.createdAt) ||
+                    repository.existsRecordingByCreatedAt(metadata.createdAt)
+                ) {
                     Log.i(TAG, "Watch audio already imported for ${metadata.createdAt}")
                     return@launch
                 }
@@ -333,6 +351,16 @@ class WatchDataReceiverService : WearableListenerService() {
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to process watch audio payload", e)
             }
+        }
+    }
+
+    private fun normalizeWatchCreatedAt(createdAt: Long, now: Long = System.currentTimeMillis()): Long {
+        val today = DayRange.of(now)
+        return if (createdAt in today.startMs until today.endExclusiveMs) {
+            createdAt
+        } else {
+            Log.w(TAG, "Watch timestamp outside today (${createdAt}); using phone receive time $now")
+            now
         }
     }
 

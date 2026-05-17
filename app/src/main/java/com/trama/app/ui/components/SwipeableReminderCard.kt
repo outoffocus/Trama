@@ -29,7 +29,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,7 +58,6 @@ fun SwipeableReminderCard(
     }
 
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     var showPostponeSheet by remember(entry.id) { mutableStateOf(false) }
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
@@ -241,9 +239,7 @@ fun SwipeableReminderCard(
                 }
             }
         }
-    ) {
-        content()
-    }
+    ) { content() }
 }
 
 private data class SwipeReminderInfo(

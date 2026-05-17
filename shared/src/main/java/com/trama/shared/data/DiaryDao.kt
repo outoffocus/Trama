@@ -19,8 +19,9 @@ interface DiaryDao {
     @Query("SELECT * FROM diary_entries ORDER BY createdAt DESC")
     fun getAll(): Flow<List<DiaryEntry>>
 
-    /** All pending items, ordered by priority then date (accumulative view) */
-    @Query("""SELECT * FROM diary_entries WHERE status = 'PENDING'
+    /** All open items, including suggested tasks awaiting review. */
+    @Query("""SELECT * FROM diary_entries WHERE status IN ('PENDING','SUGGESTED')
+              AND duplicateOfId IS NULL
               ORDER BY CASE priority
                 WHEN 'URGENT' THEN 0 WHEN 'HIGH' THEN 1
                 WHEN 'NORMAL' THEN 2 WHEN 'LOW' THEN 3 ELSE 4 END,
@@ -40,12 +41,12 @@ interface DiaryDao {
     fun getOverdue(now: Long = System.currentTimeMillis()): Flow<List<DiaryEntry>>
 
     /**
-     * Pending tasks from other days visible on [dayEnd]:
+     * Pending/suggested tasks from other days visible on [dayEnd]:
      * created before [beforeDayStart] AND (no dueDate OR dueDate <= [dayEnd]).
      * Tasks explicitly postponed to the future (dueDate > dayEnd) are excluded.
      */
     @Query("""SELECT * FROM diary_entries
-              WHERE status = 'PENDING'
+              WHERE status IN ('PENDING','SUGGESTED')
               AND duplicateOfId IS NULL
               AND createdAt < :beforeDayStart
               AND (dueDate IS NULL OR dueDate <= :dayEnd)
@@ -111,6 +112,9 @@ interface DiaryDao {
 
     @Query("UPDATE diary_entries SET text = :text, cleanText = :text, correctedText = NULL WHERE id = :id")
     suspend fun updateText(id: Long, text: String)
+
+    @Query("UPDATE diary_entries SET createdAt = :createdAt WHERE id = :id")
+    suspend fun updateCreatedAt(id: Long, createdAt: Long)
 
     @Query("UPDATE diary_entries SET dueDate = :dueDate WHERE id = :id")
     suspend fun updateDueDate(id: Long, dueDate: Long?)

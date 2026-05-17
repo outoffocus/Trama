@@ -65,6 +65,8 @@ class DiaryRepository(
 
     suspend fun updateText(id: Long, text: String) = dao.updateText(id, text)
 
+    suspend fun updateCreatedAt(id: Long, createdAt: Long) = dao.updateCreatedAt(id, createdAt)
+
     suspend fun updateDueDate(id: Long, dueDate: Long?) = dao.updateDueDate(id, dueDate)
 
     suspend fun markSynced(ids: List<Long>) = dao.markSynced(ids)
