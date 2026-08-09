@@ -1,11 +1,13 @@
 package com.trama.wear.service
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -13,6 +15,7 @@ import android.os.BatteryManager
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.trama.shared.data.DatabaseProvider
@@ -21,6 +24,7 @@ import com.trama.shared.model.WatchAudioSyncMetadata
 import com.trama.wear.NotificationConfig
 import com.trama.wear.R
 import com.trama.wear.sync.WatchToPhoneSyncer
+import com.trama.wear.audio.WatchRecordingFileStore
 import com.trama.wear.ui.WatchMainActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -28,8 +32,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
+import java.io.File
+import java.io.FileOutputStream
 
 /**
  * Manual recorder on watch.
@@ -54,8 +58,8 @@ class WatchRecordingService : LifecycleService() {
     }
 
     private var audioRecord: AudioRecord? = null
-    private val capturedChunks = mutableListOf<ShortArray>()
     private var capturedSamples = 0
+    private var pendingAudioFile: File? = null
     private var startTimeMs = 0L
     private var timerJob: Job? = null
     private var captureJob: Job? = null
@@ -91,6 +95,13 @@ class WatchRecordingService : LifecycleService() {
 
     private fun startRecording(kind: String) {
         if (isActive) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.w(TAG, "Microphone permission missing")
+            stopSelf()
+            return
+        }
         if (isBatteryLow()) {
             Log.w(TAG, "Battery too low for watch recording")
             stopSelf()
@@ -126,9 +137,9 @@ class WatchRecordingService : LifecycleService() {
 
         isActive = true
         recordingKind = kind
-        capturedChunks.clear()
         capturedSamples = 0
         startTimeMs = System.currentTimeMillis()
+        pendingAudioFile = WatchRecordingFileStore.createPending(this, kind, startTimeMs)
         audioRecord = record
 
         RecordingController.update(true, 0, "", "", recordingKind)
@@ -144,19 +155,28 @@ class WatchRecordingService : LifecycleService() {
 
         captureJob = lifecycleScope.launch(Dispatchers.IO) {
             val readBuffer = ShortArray(READ_SIZE)
+            val byteBuffer = ByteArray(READ_SIZE * 2)
+            val outputFile = pendingAudioFile ?: return@launch
             try {
-                record.startRecording()
-                while (isActive) {
-                    val read = record.read(readBuffer, 0, readBuffer.size)
-                    if (read > 0) {
-                        synchronized(capturedChunks) {
-                            capturedChunks += readBuffer.copyOf(read)
+                FileOutputStream(outputFile, false).use { output ->
+                    record.startRecording()
+                    while (isActive) {
+                        val read = record.read(readBuffer, 0, readBuffer.size)
+                        if (read > 0) {
+                            repeat(read) { index ->
+                                val value = readBuffer[index].toInt()
+                                byteBuffer[index * 2] = value.toByte()
+                                byteBuffer[index * 2 + 1] = (value ushr 8).toByte()
+                            }
+                            output.write(byteBuffer, 0, read * 2)
                             capturedSamples += read
+                        } else if (read < 0) {
+                            Log.w(TAG, "AudioRecord read error: $read")
+                            break
                         }
-                    } else if (read < 0) {
-                        Log.w(TAG, "AudioRecord read error: $read")
-                        break
                     }
+                    output.flush()
+                    output.fd.sync()
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Watch audio capture failed", e)
@@ -176,22 +196,21 @@ class WatchRecordingService : LifecycleService() {
         if (!isActive) return
         isActive = false
         timerJob?.cancel()
-        captureJob?.cancel()
-        captureJob = null
 
         audioRecord?.let { record ->
             runCatching { record.stop() }
-            record.release()
         }
-        audioRecord = null
 
         val elapsed = ((System.currentTimeMillis() - startTimeMs) / 1000).toInt()
-        val pcmBytes = synchronized(capturedChunks) {
-            shortsToBytes(capturedChunks)
-        }
-
-        if (pcmBytes.isNotEmpty()) {
-            ioScope.launch {
+        val completedCaptureJob = captureJob
+        val pendingFile = pendingAudioFile
+        ioScope.launch {
+            completedCaptureJob?.join()
+            captureJob = null
+            val audioFile = pendingFile?.takeIf { it.exists() && it.length() > 0L }
+                ?.let(WatchRecordingFileStore::finalize)
+            if (audioFile != null) {
+                val pcmBytes = audioFile.readBytes()
                 val repository = DatabaseProvider.getRepository(applicationContext)
                 val syncer = WatchToPhoneSyncer(applicationContext, repository)
                 val sampleCount = pcmBytes.size / 2
@@ -211,6 +230,7 @@ class WatchRecordingService : LifecycleService() {
                 }.isSuccess
 
                 if (success) {
+                    audioFile.delete()
                     RecordingController.notifySaved(startTimeMs)
                     Log.i(TAG, "Recording audio transferred to phone (${elapsed}s, kind=$recordingKind)")
                 } else {
@@ -219,10 +239,10 @@ class WatchRecordingService : LifecycleService() {
 
                 RecordingController.reset()
                 stopSelf()
-            }
-        } else {
+            } else {
             RecordingController.reset()
             stopSelf()
+            }
         }
         Log.i(TAG, "Recording stopped")
     }
@@ -294,18 +314,12 @@ class WatchRecordingService : LifecycleService() {
     }
 
     private fun updateNotification(elapsedSeconds: Long) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) return
         getSystemService(NotificationManager::class.java)
             ?.notify(NOTIFICATION_ID, buildNotification(elapsedSeconds))
-    }
-
-    private fun shortsToBytes(chunks: List<ShortArray>): ByteArray {
-        val totalSamples = chunks.sumOf { it.size }
-        if (totalSamples <= 0) return byteArrayOf()
-        val buffer = ByteBuffer.allocate(totalSamples * 2).order(ByteOrder.LITTLE_ENDIAN)
-        chunks.forEach { chunk ->
-            chunk.forEach { sample -> buffer.putShort(sample) }
-        }
-        return buffer.array()
     }
 
     private fun rms(pcmBytes: ByteArray): Double {

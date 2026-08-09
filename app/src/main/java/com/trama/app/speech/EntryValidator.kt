@@ -204,8 +204,7 @@ class EntryValidator(private val context: Context) {
     }
 
     private fun getApiKey(): String? {
-        return context.getSharedPreferences("daily_summary", Context.MODE_PRIVATE)
-            .getString("gemini_api_key", null)
+        return com.trama.app.security.SecureSecretStore.getGeminiApiKey(context)
     }
 
     @Serializable

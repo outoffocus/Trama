@@ -39,6 +39,7 @@ class ServiceControllerTest {
         // notifyStopped is the only method that doesn't require Context
         ServiceController.notifyStopped()
         assertFalse(ServiceController.isRunning.value)
+        assertEquals(ServiceController.ListenerState.STOPPED, ServiceController.listenerState.value)
     }
 
     @Test
@@ -53,5 +54,23 @@ class ServiceControllerTest {
         // Verify the StateFlow contract: value is accessible without collection
         val value = ServiceController.isRunning.value
         assertNotNull(value)
+    }
+
+    @Test
+    fun `service lifecycle reports starting listening paused and failed`() = runTest {
+        ServiceController.notifyStarting()
+        assertEquals(ServiceController.ListenerState.STARTING, ServiceController.listenerState.value)
+        assertTrue(ServiceController.isRunning.value)
+
+        ServiceController.notifyListening()
+        assertEquals(ServiceController.ListenerState.LISTENING, ServiceController.listenerState.value)
+
+        ServiceController.notifyPaused()
+        assertEquals(ServiceController.ListenerState.PAUSED, ServiceController.listenerState.value)
+        assertTrue(ServiceController.isRunning.value)
+
+        ServiceController.notifyFailed()
+        assertEquals(ServiceController.ListenerState.FAILED, ServiceController.listenerState.value)
+        assertTrue(ServiceController.isRunning.value)
     }
 }

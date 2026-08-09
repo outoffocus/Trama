@@ -20,7 +20,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle as collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,11 +49,11 @@ fun SearchScreen(
     val resultsState by (
         if (query.length >= 2) repository.search(query)
         else flowOf(emptyList())
-    ).collectAsState(initial = null)
+    ).collectAsState(initialValue = null)
     val processingEntryIds by EntryProcessingState.processingIds.collectAsState()
     val processingBackends by EntryProcessingState.processingBackends.collectAsState()
     val pendingColorIndex by settings.timelineColorPending.collectAsState(
-        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PENDING
+        initialValue = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PENDING
     )
     val pendingAccent = remember(pendingColorIndex) { timelineAccentColor(pendingColorIndex) }
 

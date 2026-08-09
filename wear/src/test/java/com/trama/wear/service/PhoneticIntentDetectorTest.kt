@@ -3,6 +3,7 @@ package com.trama.wear.service
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PhoneticIntentDetectorTest {
@@ -13,6 +14,7 @@ class PhoneticIntentDetectorTest {
 
         assertNotNull(match)
         assertEquals("phonetic_tengo_que", match?.intentId)
+        assertTrue(match!!.confidence >= 0.8f)
     }
 
     @Test
@@ -26,6 +28,13 @@ class PhoneticIntentDetectorTest {
     @Test
     fun ignoresUnrelatedPhonemes() {
         val match = PhoneticIntentDetector.detect("b u e n o s d i a s")
+
+        assertNull(match)
+    }
+
+    @Test
+    fun ignoresIsolatedActionVerbWithoutGrammaticalCue() {
+        val match = PhoneticIntentDetector.detect("k o m p ɾ a ɾ")
 
         assertNull(match)
     }

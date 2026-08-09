@@ -48,7 +48,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle as collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,7 +66,9 @@ import com.trama.app.summary.ActionType
 import com.trama.app.summary.CalendarHelper
 import com.trama.app.summary.DeletionFeedbackStore
 import com.trama.app.summary.EntryActionBridge
-import com.trama.app.summary.RecordingProcessor
+import com.trama.app.summary.RecordingProcessorWorker
+import com.trama.app.summary.RecordingTranscriptionWorker
+import com.trama.app.audio.PcmRecordingStorage
 import com.trama.app.summary.SuggestedAction
 import com.trama.app.ui.SettingsDataStore
 import com.trama.app.ui.components.CalendarActionDialog
@@ -95,9 +97,9 @@ fun RecordingDetailScreen(
     val settings = remember { SettingsDataStore(context) }
     val scope = rememberCoroutineScope()
 
-    val recording by repository.getRecordingById(recordingId).collectAsState(initial = null)
-    val actions by repository.getByRecordingId(recordingId).collectAsState(initial = emptyList())
-    val learnFromDeletions by settings.learnFromDeletions.collectAsState(initial = false)
+    val recording by repository.getRecordingById(recordingId).collectAsState(initialValue = null)
+    val actions by repository.getByRecordingId(recordingId).collectAsState(initialValue = emptyList())
+    val learnFromDeletions by settings.learnFromDeletions.collectAsState(initialValue = false)
 
     // Resolve duplicate original entry texts
     val duplicateOriginals = remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
@@ -148,7 +150,11 @@ fun RecordingDetailScreen(
                             rec.processingStatus == RecordingStatus.PENDING) {
                             IconButton(onClick = {
                                 scope.launch(Dispatchers.IO) {
-                                    RecordingProcessor(context).process(recordingId, repository)
+                                    if (rec.transcription.isBlank() && rec.audioFilePath != null) {
+                                        RecordingTranscriptionWorker.enqueue(context, recordingId)
+                                    } else {
+                                        RecordingProcessorWorker.enqueue(context, recordingId)
+                                    }
                                 }
                             }) {
                                 Icon(Icons.Default.Refresh,
@@ -163,6 +169,8 @@ fun RecordingDetailScreen(
                         // Delete
                         IconButton(onClick = {
                             scope.launch(Dispatchers.IO) {
+                                PcmRecordingStorage.resolveManagedFile(context, rec.audioFilePath)
+                                    ?.delete()
                                 repository.deleteRecording(recordingId)
                             }
                             onBack()
@@ -389,13 +397,20 @@ private fun StatusBadge(recording: Recording) {
             Triple(Icons.Default.CheckCircle, "Procesado con Gemini", MaterialTheme.colorScheme.primary)
         status == RecordingStatus.PROCESSING ->
             Triple(Icons.Default.Schedule, "Procesando...", MaterialTheme.colorScheme.tertiary)
+        status == RecordingStatus.CAPTURING ->
+            Triple(Icons.Default.Schedule, "Recuperando captura...", MaterialTheme.colorScheme.tertiary)
+        status == RecordingStatus.TRANSCRIBING ->
+            Triple(Icons.Default.Schedule, "Transcribiendo audio...", MaterialTheme.colorScheme.tertiary)
         status == RecordingStatus.FAILED ->
             Triple(Icons.Default.Error, "Error al procesar", MaterialTheme.colorScheme.error)
         else ->
             Triple(Icons.Default.Schedule, "Pendiente", MaterialTheme.colorScheme.onSurfaceVariant)
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        if (status == RecordingStatus.PROCESSING) {
+        if (status == RecordingStatus.PROCESSING ||
+            status == RecordingStatus.CAPTURING ||
+            status == RecordingStatus.TRANSCRIBING
+        ) {
             CircularProgressIndicator(
                 modifier = Modifier.size(14.dp),
                 strokeWidth = 2.dp,

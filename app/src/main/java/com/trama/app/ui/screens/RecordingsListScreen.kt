@@ -25,7 +25,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle as collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,7 +36,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.trama.app.summary.RecordingProcessor
+import com.trama.app.summary.RecordingProcessorWorker
+import com.trama.app.summary.RecordingTranscriptionWorker
+import com.trama.app.audio.PcmRecordingStorage
 import com.trama.app.ui.components.RecordingCard
 import com.trama.shared.data.DatabaseProvider
 import com.trama.shared.model.RecordingStatus
@@ -52,7 +54,7 @@ fun RecordingsListScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val repository = remember { DatabaseProvider.getRepository(context) }
-    val recordings by repository.getAllRecordings().collectAsState(initial = emptyList())
+    val recordings by repository.getAllRecordings().collectAsState(initialValue = emptyList())
 
     var selectionMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<Long>()) }
@@ -74,8 +76,15 @@ fun RecordingsListScreen(
                         }
                         IconButton(
                             onClick = {
+                                val idsToDelete = selectedIds
                                 scope.launch(Dispatchers.IO) {
-                                    repository.deleteRecordingsByIds(selectedIds.toList())
+                                    recordings.filter { it.id in idsToDelete }.forEach { recording ->
+                                        PcmRecordingStorage.resolveManagedFile(
+                                            context,
+                                            recording.audioFilePath
+                                        )?.delete()
+                                    }
+                                    repository.deleteRecordingsByIds(idsToDelete.toList())
                                 }
                                 selectionMode = false
                                 selectedIds = emptySet()
@@ -113,11 +122,18 @@ fun RecordingsListScreen(
                         if (failedCount > 0) {
                             IconButton(onClick = {
                                 scope.launch(Dispatchers.IO) {
-                                    val processor = RecordingProcessor(context)
                                     recordings.filter {
                                         it.processingStatus == RecordingStatus.FAILED ||
                                             it.processingStatus == RecordingStatus.PENDING
-                                    }.forEach { processor.process(it.id, repository) }
+                                    }.forEach { recording ->
+                                        if (recording.transcription.isBlank() &&
+                                            recording.audioFilePath != null
+                                        ) {
+                                            RecordingTranscriptionWorker.enqueue(context, recording.id)
+                                        } else {
+                                            RecordingProcessorWorker.enqueue(context, recording.id)
+                                        }
+                                    }
                                 }
                             }) {
                                 Icon(Icons.Default.Refresh, contentDescription = "Reprocesar")

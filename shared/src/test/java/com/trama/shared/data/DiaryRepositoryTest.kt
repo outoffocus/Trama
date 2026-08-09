@@ -203,6 +203,8 @@ private class FakeDiaryDao : DiaryDao {
     override suspend fun updateCreatedAt(id: Long, createdAt: Long) {}
     override suspend fun markSynced(ids: List<Long>): Int { lastSyncedIds = ids; return ids.size }
     override suspend fun existsByCreatedAtAndText(createdAt: Long, text: String): Boolean = existsResult
+    override suspend fun getByCreatedAtAndText(createdAt: Long, text: String): DiaryEntry? =
+        inserted.find { it.createdAt == createdAt && it.text == text }
     override suspend fun deleteByIds(ids: List<Long>) {}
     override suspend fun updateLLMReview(id: Long, correctedText: String?, confidence: Float) {}
     override suspend fun updateProcessingBackend(id: Long, backend: String?) {}
@@ -252,19 +254,27 @@ private class FakeRecordingDao : RecordingDao {
     override suspend fun delete(id: Long) {}
     override suspend fun deleteByIds(ids: List<Long>) {}
     override suspend fun updateStatus(id: Long, status: String) {}
+    override suspend fun updateCapturedAudio(id: Long, audioFilePath: String, durationSeconds: Int, audioSampleRateHz: Int, status: String) {}
+    override suspend fun updateTranscription(id: Long, transcription: String, durationSeconds: Int, status: String, processedLocally: Boolean, processedBy: String?) {}
+    override suspend fun getByStatuses(statuses: List<String>): List<Recording> =
+        recordings.filter { it.processingStatus in statuses }
     override suspend fun updateProcessingResult(id: Long, title: String, summary: String, keyPoints: String?, status: String, processedLocally: Boolean, processedBy: String?) {}
     override fun count(): Flow<Int> = flowOf(recordings.size)
     override suspend fun getUnsynced(): List<Recording> = emptyList()
     override suspend fun markSynced(ids: List<Long>) {}
     override suspend fun existsByCreatedAt(createdAt: Long): Boolean = recordings.any { it.createdAt == createdAt }
+    override suspend fun getByCreatedAt(createdAt: Long): Recording? =
+        recordings.find { it.createdAt == createdAt }
 }
 
 private class FakeTimelineEventDao : TimelineEventDao {
     override fun getAll(): Flow<List<TimelineEvent>> = flowOf(emptyList())
+    override suspend fun getAllOnce(): List<TimelineEvent> = emptyList()
     override fun byDateRange(startTime: Long, endTime: Long): Flow<List<TimelineEvent>> = flowOf(emptyList())
     override suspend fun byDateRangeOnce(startTime: Long, endTime: Long): List<TimelineEvent> = emptyList()
     override suspend fun getByIdOnce(id: Long): TimelineEvent? = null
     override suspend fun getByTypeSourceAndDataJson(type: String, source: String, dataJson: String): TimelineEvent? = null
+    override suspend fun getByNaturalKey(type: String, timestamp: Long, title: String): TimelineEvent? = null
     override fun getByPlaceId(placeId: Long): Flow<List<TimelineEvent>> = flowOf(emptyList())
     override suspend fun insert(event: TimelineEvent): Long = 1L
     override suspend fun insertAll(events: List<TimelineEvent>) {}
@@ -280,6 +290,7 @@ private class FakePlaceDao : PlaceDao {
     override suspend fun getAllOnce(): List<Place> = emptyList()
     override fun getById(id: Long): Flow<Place?> = flowOf(null)
     override suspend fun getByIdOnce(id: Long): Place? = null
+    override suspend fun getByNaturalKey(name: String, latitude: Double, longitude: Double): Place? = null
     override suspend fun insert(place: Place): Long = 1L
     override suspend fun update(place: Place) {}
     override suspend fun rename(id: Long, name: String, updatedAt: Long) {}

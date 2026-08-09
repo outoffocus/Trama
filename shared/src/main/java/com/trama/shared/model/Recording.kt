@@ -17,10 +17,15 @@ data class Recording(
     val processingStatus: String = RecordingStatus.PENDING,
     val processedLocally: Boolean = false,
     val processedBy: String? = null, // "CLOUD", "NANO", "LOCAL"
-    val isSynced: Boolean = false
+    val isSynced: Boolean = false,
+    /** App-private PCM file retained so interrupted transcription can be retried. */
+    val audioFilePath: String? = null,
+    val audioSampleRateHz: Int = 16_000
 )
 
 object RecordingStatus {
+    const val CAPTURING = "CAPTURING"
+    const val TRANSCRIBING = "TRANSCRIBING"
     const val PENDING = "PENDING"
     const val PROCESSING = "PROCESSING"
     const val COMPLETED = "COMPLETED"

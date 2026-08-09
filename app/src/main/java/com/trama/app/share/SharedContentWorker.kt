@@ -147,10 +147,11 @@ class SharedContentWorker(
                         val outputFormat = codec.outputFormat
                         outputSampleRate = outputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
                         outputChannels = outputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-                        pcmEncoding = outputFormat.getInteger(
-                            MediaFormat.KEY_PCM_ENCODING,
+                        pcmEncoding = if (outputFormat.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
+                            outputFormat.getInteger(MediaFormat.KEY_PCM_ENCODING)
+                        } else {
                             AudioFormat.ENCODING_PCM_16BIT
-                        )
+                        }
                     }
                     outputIndex >= 0 -> {
                         val outputBuffer = codec.getOutputBuffer(outputIndex)

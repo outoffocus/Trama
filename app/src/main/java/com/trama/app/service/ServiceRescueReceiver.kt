@@ -78,24 +78,26 @@ class ServiceRescueReceiver : BroadcastReceiver() {
             return
         }
 
-        val startResult = ServiceController.startFromWatchdog(context, reason = intent.action.orEmpty())
-        if (startResult.started) {
+        // Android 14+ rejects microphone foreground-service starts from an
+        // alarm or package receiver. Request visible user interaction instead.
+        val notified = ListenerRecoveryNotifier.show(
+            context,
+            reason = intent.action.orEmpty()
+        )
+        if (notified) {
             log(
-                "watchdog_started_service",
-                meta = serviceState(context) + mapOf("outcome" to CaptureLog.CaptureOutcome.SERVICE_AVAILABLE)
+                "watchdog_requested_user_reactivation",
+                meta = serviceState(context) + mapOf("outcome" to CaptureLog.CaptureOutcome.SERVICE_SUSPENDED)
             )
         } else {
             log(
-                "watchdog_start_failed",
+                "watchdog_cannot_notify",
                 result = CaptureLog.Result.REJECT,
                 meta = serviceState(context) + mapOf(
-                    "serviceStartError" to (startResult.errorType ?: "unknown_start_failure"),
-                    "message" to startResult.message,
-                    "stack" to startResult.stack,
+                    "serviceStartError" to "missing_notification_permission",
                     "outcome" to CaptureLog.CaptureOutcome.SERVICE_UNAVAILABLE
                 )
             )
-            ServiceWatchdogScheduler.schedule(context, reason = "start_failed")
         }
     }
 

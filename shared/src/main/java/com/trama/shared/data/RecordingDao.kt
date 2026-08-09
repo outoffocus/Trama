@@ -34,6 +34,35 @@ interface RecordingDao {
     suspend fun updateStatus(id: Long, status: String)
 
     @Query("""UPDATE recordings
+              SET audioFilePath = :audioFilePath, durationSeconds = :durationSeconds,
+                  audioSampleRateHz = :audioSampleRateHz, processingStatus = :status
+              WHERE id = :id""")
+    suspend fun updateCapturedAudio(
+        id: Long,
+        audioFilePath: String,
+        durationSeconds: Int,
+        audioSampleRateHz: Int,
+        status: String
+    )
+
+    @Query("""UPDATE recordings
+              SET transcription = :transcription, durationSeconds = :durationSeconds,
+                  processingStatus = :status, processedLocally = :processedLocally,
+                  processedBy = :processedBy
+              WHERE id = :id""")
+    suspend fun updateTranscription(
+        id: Long,
+        transcription: String,
+        durationSeconds: Int,
+        status: String,
+        processedLocally: Boolean,
+        processedBy: String?
+    )
+
+    @Query("SELECT * FROM recordings WHERE processingStatus IN (:statuses) ORDER BY createdAt ASC")
+    suspend fun getByStatuses(statuses: List<String>): List<Recording>
+
+    @Query("""UPDATE recordings
               SET title = :title, summary = :summary, keyPoints = :keyPoints,
                   processingStatus = :status, processedLocally = :processedLocally,
                   processedBy = :processedBy
@@ -55,4 +84,7 @@ interface RecordingDao {
 
     @Query("SELECT EXISTS(SELECT 1 FROM recordings WHERE createdAt = :createdAt)")
     suspend fun existsByCreatedAt(createdAt: Long): Boolean
+
+    @Query("SELECT * FROM recordings WHERE createdAt = :createdAt LIMIT 1")
+    suspend fun getByCreatedAt(createdAt: Long): Recording?
 }

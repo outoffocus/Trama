@@ -36,7 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle as collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -385,7 +385,7 @@ fun EntryDetailScreen(
     }
 
     val settings = remember(context) { com.trama.app.ui.SettingsDataStore(context) }
-    val learnFromDeletions by settings.learnFromDeletions.collectAsState(initial = false)
+    val learnFromDeletions by settings.learnFromDeletions.collectAsState(initialValue = false)
 
     fun performDelete(reason: com.trama.app.summary.DeletionFeedbackStore.Reason?) {
         scope.launch {

@@ -1295,8 +1295,7 @@ Reglas:
     }
 
     private fun getApiKey(): String? =
-        context.getSharedPreferences("daily_summary", Context.MODE_PRIVATE)
-            .getString("gemini_api_key", null)
+        com.trama.app.security.SecureSecretStore.getGeminiApiKey(context)
 
     companion object {
         private const val TAG = "ActionItemProcessor"

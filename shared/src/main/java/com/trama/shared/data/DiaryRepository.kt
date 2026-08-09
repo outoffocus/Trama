@@ -74,6 +74,9 @@ class DiaryRepository(
     suspend fun existsByCreatedAtAndText(createdAt: Long, text: String): Boolean =
         dao.existsByCreatedAtAndText(createdAt, text)
 
+    suspend fun getByCreatedAtAndText(createdAt: Long, text: String): DiaryEntry? =
+        dao.getByCreatedAtAndText(createdAt, text)
+
     suspend fun deleteByIds(ids: List<Long>) = dao.deleteByIds(ids)
 
     suspend fun updateLLMReview(id: Long, correctedText: String?, confidence: Float) =
@@ -166,6 +169,30 @@ class DiaryRepository(
     suspend fun updateRecordingStatus(id: Long, status: String) =
         recordingDao?.updateStatus(id, status)
 
+    suspend fun updateCapturedRecordingAudio(
+        id: Long,
+        audioFilePath: String,
+        durationSeconds: Int,
+        status: String,
+        audioSampleRateHz: Int = 16_000
+    ) = recordingDao?.updateCapturedAudio(
+        id, audioFilePath, durationSeconds, audioSampleRateHz, status
+    )
+
+    suspend fun updateRecordingTranscription(
+        id: Long,
+        transcription: String,
+        durationSeconds: Int,
+        status: String,
+        processedLocally: Boolean,
+        processedBy: String?
+    ) = recordingDao?.updateTranscription(
+        id, transcription, durationSeconds, status, processedLocally, processedBy
+    )
+
+    suspend fun getRecordingsByStatuses(statuses: List<String>): List<Recording> =
+        recordingDao?.getByStatuses(statuses) ?: emptyList()
+
     suspend fun updateRecordingResult(
         id: Long, title: String, summary: String, keyPoints: String?, status: String,
         processedLocally: Boolean = false, processedBy: String? = null
@@ -184,11 +211,17 @@ class DiaryRepository(
     suspend fun existsRecordingByCreatedAt(createdAt: Long): Boolean =
         recordingDao?.existsByCreatedAt(createdAt) ?: false
 
+    suspend fun getRecordingByCreatedAt(createdAt: Long): Recording? =
+        recordingDao?.getByCreatedAt(createdAt)
+
     // ── TimelineEvent ──
 
     fun getTimelineEvents(): Flow<List<TimelineEvent>> =
         timelineEventDao?.getAll()?.distinctUntilChanged()
             ?: kotlinx.coroutines.flow.flowOf(emptyList())
+
+    suspend fun getAllTimelineEventsOnce(): List<TimelineEvent> =
+        timelineEventDao?.getAllOnce() ?: emptyList()
 
     fun getTimelineEventsByDateRange(startTime: Long, endTime: Long): Flow<List<TimelineEvent>> =
         timelineEventDao?.byDateRange(startTime, endTime)?.distinctUntilChanged()
@@ -211,6 +244,12 @@ class DiaryRepository(
         source: String,
         dataJson: String
     ): TimelineEvent? = timelineEventDao?.getByTypeSourceAndDataJson(type, source, dataJson)
+
+    suspend fun getTimelineEventByNaturalKey(
+        type: String,
+        timestamp: Long,
+        title: String
+    ): TimelineEvent? = timelineEventDao?.getByNaturalKey(type, timestamp, title)
 
     fun getTimelineEventsByPlaceId(placeId: Long): Flow<List<TimelineEvent>> =
         timelineEventDao?.getByPlaceId(placeId)?.distinctUntilChanged()
@@ -246,6 +285,9 @@ class DiaryRepository(
 
     suspend fun getPlaceByIdOnce(id: Long): Place? =
         placeDao?.getByIdOnce(id)
+
+    suspend fun getPlaceByNaturalKey(name: String, latitude: Double, longitude: Double): Place? =
+        placeDao?.getByNaturalKey(name, latitude, longitude)
 
     suspend fun getAllPlacesOnce(): List<Place> =
         placeDao?.getAllOnce() ?: emptyList()

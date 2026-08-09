@@ -40,7 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle as collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -97,13 +97,13 @@ fun AgendaScreen(
     }
     val rangeFar = endOfNextWeek + 1
 
-    val pending by repository.getPending().collectAsState(initial = emptyList())
+    val pending by repository.getPending().collectAsState(initialValue = emptyList())
     val thisWeekEvents by repository
         .getTimelineEventsByDateRange(today.startMs, endOfThisWeek)
-        .collectAsState(initial = emptyList())
+        .collectAsState(initialValue = emptyList())
     val nextWeekEvents by repository
         .getTimelineEventsByDateRange(startOfNextWeek, endOfNextWeek)
-        .collectAsState(initial = emptyList())
+        .collectAsState(initialValue = emptyList())
 
     val thisWeekSection = remember(pending, thisWeekEvents, today, endOfThisWeek) {
         buildSection(

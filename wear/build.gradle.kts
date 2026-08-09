@@ -28,6 +28,9 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+        ndk {
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a")
+        }
     }
 
     buildTypes {
@@ -92,6 +95,7 @@ dependencies {
     implementation(libs.lifecycle.service)
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.activity.compose)
+    implementation(libs.fragment)
 
     // Wearable Data Layer (for phone sync)
     implementation(libs.play.services.wearable)

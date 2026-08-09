@@ -564,8 +564,7 @@ Reglas:
     }
 
     private fun getApiKey(): String? =
-        context.getSharedPreferences("daily_summary", Context.MODE_PRIVATE)
-            .getString("gemini_api_key", null)
+        com.trama.app.security.SecureSecretStore.getGeminiApiKey(context)
 
     private fun validateActionType(type: String): String = when (type.uppercase()) {
         "CALL", "BUY", "SEND", "EVENT", "REVIEW", "TALK_TO", "GENERIC" -> type.uppercase()

@@ -36,12 +36,12 @@ class SettingsEnforcementTest {
 
     @Test
     fun `context pre-roll default is in seconds`() {
-        assertEquals(2, SettingsDataStore.DEFAULT_CONTEXT_PRE_ROLL)
+        assertEquals(5, SettingsDataStore.DEFAULT_CONTEXT_PRE_ROLL)
     }
 
     @Test
     fun `context post-roll default is in seconds`() {
-        assertEquals(8, SettingsDataStore.DEFAULT_CONTEXT_POST_ROLL)
+        assertEquals(10, SettingsDataStore.DEFAULT_CONTEXT_POST_ROLL)
     }
 
     // ── Settings Consistency ──

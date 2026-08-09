@@ -14,6 +14,7 @@ import android.widget.Toast
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.trama.app.audio.ContextualAudioCaptureEngine
+import com.trama.app.audio.CaptureProcessingSequencer
 import com.trama.app.audio.SherpaWhisperAsrEngine
 import com.trama.app.audio.SileroVadFilter
 import com.trama.app.diagnostics.CaptureLog
@@ -37,7 +38,10 @@ import com.trama.app.ui.SettingsDataStore
 import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.Source
 import com.trama.shared.speech.IntentDetector.DetectionResult
+import com.trama.shared.speech.CaptureIntentRules
+import com.trama.shared.speech.CaptureProfile
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -88,6 +92,7 @@ class KeywordListenerService : LifecycleService() {
         private const val MAX_ASR_WINDOW_MS = 20_000L
         private const val BLOCKED_FALLBACK_LOG_INTERVAL_MS = 60_000L
         private const val MEDIA_PLAYBACK_POLL_MS = 2_000L
+        private const val SHADOW_DEDUP_MS = 60_000L
 
         private const val BATTERY_THRESHOLD = 15
         // Soft threshold: above the hard stop (15%) but still constrained.
@@ -107,6 +112,10 @@ class KeywordListenerService : LifecycleService() {
     private lateinit var settings: SettingsDataStore
     private lateinit var dictionary: PersonalDictionary
     private lateinit var intentDetector: IntentDetector
+    private lateinit var shadowIntentDetector: IntentDetector
+    @Volatile private var activeCaptureProfile: CaptureProfile = CaptureProfile.STRICT
+    @Volatile private var lastShadowText: String = ""
+    @Volatile private var lastShadowAt: Long = 0L
     private lateinit var entryValidator: EntryValidator
     private lateinit var speakerVerificationManager: SherpaSpeakerVerificationManager
     private var phoneToWatchSyncer: PhoneToWatchSyncer? = null
@@ -169,7 +178,7 @@ class KeywordListenerService : LifecycleService() {
         )
     }
 
-    private val detectionState = DetectionState()
+    private val captureProcessingSequencer = CaptureProcessingSequencer()
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -209,12 +218,14 @@ class KeywordListenerService : LifecycleService() {
 
     override fun onCreate() {
         super.onCreate()
+        ServiceController.notifyStarting()
         logServiceEvent("onCreate")
         notifier.createChannels()
         initDatabase()
         settings = SettingsDataStore(applicationContext)
         dictionary = PersonalDictionary(applicationContext)
         intentDetector = IntentDetector()
+        shadowIntentDetector = IntentDetector()
         entryValidator = EntryValidator(applicationContext)
         speakerVerificationManager = SherpaSpeakerVerificationManager(applicationContext)
         settingsSyncer = SettingsSyncer(applicationContext)
@@ -402,12 +413,15 @@ class KeywordListenerService : LifecycleService() {
     private suspend fun loadInitialSettings() {
         val patterns = settings.intentPatterns.first()
         val customKw = settings.customKeywords.first()
+        val captureProfile = settings.captureProfile.first()
         val preRollSeconds = settings.contextPreRollSeconds.first()
         val postRollSeconds = settings.contextPostRollSeconds.first()
         val debugEnabled = settings.asrDebugEnabled.first()
 
         intentDetector.setPatterns(patterns)
         intentDetector.setCustomKeywords(customKw)
+        intentDetector.setCaptureProfile(captureProfile)
+        configureShadowDetector(patterns, customKw, captureProfile)
         contextPreRollSeconds = preRollSeconds
         contextPostRollSeconds = postRollSeconds
         asrDebugEnabled = debugEnabled
@@ -418,6 +432,18 @@ class KeywordListenerService : LifecycleService() {
             TAG,
             "Initial settings loaded: ${patterns.count { it.enabled }} patterns, ${customKw.size} keywords, " +
                 "preRoll=${contextPreRollSeconds}s, postRoll=${contextPostRollSeconds}s"
+        )
+        logServiceEvent(
+            state = "capture_config_loaded",
+            meta = mapOf(
+                "profile" to captureProfile.name,
+                "enabledCategories" to patterns.count { it.enabled },
+                "explicitPhrases" to patterns.filter { it.enabled }.sumOf { it.normalizedTriggers.size },
+                "customKeywords" to customKw.size,
+                "presetVersion" to IntentPattern.CURRENT_PRESET_VERSION,
+                "preRollSeconds" to contextPreRollSeconds,
+                "postRollSeconds" to contextPostRollSeconds
+            )
         )
     }
 
@@ -442,18 +468,21 @@ class KeywordListenerService : LifecycleService() {
     private fun observeSettings() {
         lifecycleScope.launch {
             settings.intentPatterns
-                .combine(settings.customKeywords) { patterns, keywords ->
-                    patterns to keywords
+                .combine(settings.customKeywords) { patterns, keywords -> patterns to keywords }
+                .combine(settings.captureProfile) { (patterns, keywords), profile ->
+                    Triple(patterns, keywords, profile)
                 }
                 .distinctUntilChanged()
-                .collect { (patterns, keywords) ->
+                .collect { (patterns, keywords, profile) ->
                     intentDetector.setPatterns(patterns)
                     intentDetector.setCustomKeywords(keywords)
+                    intentDetector.setCaptureProfile(profile)
+                    configureShadowDetector(patterns, keywords, profile)
                     Log.i(TAG, "Intent patterns updated: ${patterns.count { it.enabled }} enabled")
                     Log.i(TAG, "Custom keywords updated: ${keywords.size} keywords")
 
                     updateWhisperHotwords(keywords, patterns)
-                    launch(Dispatchers.IO) { settingsSyncer.syncPatterns(patterns, keywords) }
+                    launch(Dispatchers.IO) { settingsSyncer.syncPatterns(patterns, keywords, profile) }
                 }
         }
         lifecycleScope.launch {
@@ -493,6 +522,54 @@ class KeywordListenerService : LifecycleService() {
             .filter { it.length >= 3 }
         val all = (customKeywords + patternWords).distinct()
         whisper.setHotwords(all)
+    }
+
+    private fun configureShadowDetector(
+        patterns: List<IntentPattern>,
+        customKeywords: List<String>,
+        activeProfile: CaptureProfile
+    ) {
+        activeCaptureProfile = activeProfile
+        val shadowProfile = when (activeProfile) {
+            CaptureProfile.STRICT -> CaptureProfile.BALANCED
+            CaptureProfile.BALANCED -> CaptureProfile.SENSITIVE
+            CaptureProfile.SENSITIVE -> CaptureProfile.SENSITIVE
+        }
+        shadowIntentDetector.setPatterns(patterns)
+        shadowIntentDetector.setCustomKeywords(customKeywords)
+        shadowIntentDetector.setCaptureProfile(shadowProfile)
+    }
+
+    /** Logs what the next more permissive profile would capture without changing behavior. */
+    private fun detectGateTrigger(text: String): Boolean {
+        if (intentDetector.detect(text) != null) return true
+        if (activeCaptureProfile == CaptureProfile.SENSITIVE) return false
+        val shadow = shadowIntentDetector.detect(text) ?: return false
+        val now = System.currentTimeMillis()
+        val normalized = text.trim().lowercase(Locale.getDefault())
+        if (normalized != lastShadowText || now - lastShadowAt >= SHADOW_DEDUP_MS) {
+            lastShadowText = normalized
+            lastShadowAt = now
+            CaptureLog.event(
+                gate = CaptureLog.Gate.INTENT,
+                result = CaptureLog.Result.NO_MATCH,
+                text = text,
+                meta = mapOf(
+                    "shadow" to true,
+                    "activeProfile" to activeCaptureProfile.name,
+                    "shadowProfile" to when (activeCaptureProfile) {
+                        CaptureProfile.STRICT -> CaptureProfile.BALANCED.name
+                        CaptureProfile.BALANCED -> CaptureProfile.SENSITIVE.name
+                        CaptureProfile.SENSITIVE -> CaptureProfile.SENSITIVE.name
+                    },
+                    "candidate" to (shadow.pattern?.id ?: shadow.customKeyword ?: "custom"),
+                    "trigger" to shadow.matchedTrigger,
+                    "confidence" to shadow.confidence,
+                    "reasons" to shadow.scoreReasons.joinToString(",")
+                )
+            )
+        }
+        return false
     }
 
     private fun initDatabase() {
@@ -535,6 +612,7 @@ class KeywordListenerService : LifecycleService() {
         } else {
             listening = false
             dedicatedAsrFailedOver = true
+            ServiceController.notifyFailed()
             notifier.updateForegroundIfChanged("ASR local no disponible")
             publishAsrDebug(engine = "offline", status = "asr local no disponible")
             logServiceEvent(
@@ -569,6 +647,7 @@ class KeywordListenerService : LifecycleService() {
     private fun handleMediaPlaybackActive(reason: String) {
         if (mediaPlaybackActive && reason != "init") return
         mediaPlaybackActive = true
+        ServiceController.notifyPaused()
         Log.i(TAG, "External media playback active; pausing listener")
         CaptureLog.event(
             gate = CaptureLog.Gate.SERVICE,
@@ -600,17 +679,15 @@ class KeywordListenerService : LifecycleService() {
 
     private fun initContextualCaptureAndStart() {
         listening = true
+        ServiceController.notifyListening()
         val captureEngine = ContextualAudioCaptureEngine(
             context = applicationContext,
             initialConfig = currentContextualConfig(),
             gateAsr = gateAsr,
-            triggerDetector = { text -> intentDetector.detect(text) != null },
+            triggerDetector = ::detectGateTrigger,
             isThrottled = { shouldThrottleCapture() }
         ).also { engine ->
             engine.onStatusChanged = { state ->
-                if (state == "gating" || state == "capturing") {
-                    detectionState.resetForRearm()
-                }
                 if (state == "stalled") {
                     logServiceEvent("audio_record_stalled", result = CaptureLog.Result.REJECT)
                 }
@@ -624,13 +701,12 @@ class KeywordListenerService : LifecycleService() {
                     else -> notifier.updateForegroundIfChanged("Escuchando (ASR dedicado)")
                 }
             }
-            engine.onGateMatch = {
-                val detection = intentDetector.detect(it)
-                detectionState.pendingGateDetection = detection
+            engine.onGateMatch = { _, transcript ->
+                val detection = intentDetector.detect(transcript)
                 val reason = detection?.label?.let { label -> "gate -> $label" } ?: "gate -> trigger"
-                publishAsrDebug(status = "trigger detectado", gateText = it, triggerReason = reason)
+                publishAsrDebug(status = "trigger detectado", gateText = transcript, triggerReason = reason)
             }
-            engine.onGateEvaluated = { transcript, matched, debugSummary ->
+            engine.onGateEvaluated = { captureId, transcript, matched, debugSummary ->
                 val reason = if (matched) {
                     intentDetector.detect(transcript)?.label?.let { label -> "gate -> $label" } ?: "gate -> trigger"
                 } else {
@@ -641,6 +717,7 @@ class KeywordListenerService : LifecycleService() {
                     result = if (matched) CaptureLog.Result.OK else CaptureLog.Result.NO_MATCH,
                     text = transcript.ifBlank { null },
                     meta = mapOf(
+                        "captureId" to captureId,
                         "summary" to debugSummary,
                         "reason" to reason
                     ) + powerSnapshot()
@@ -655,12 +732,13 @@ class KeywordListenerService : LifecycleService() {
             engine.shouldCaptureUnmatchedGateWindow = { windowMs, transcript, debugSummary, isFinal ->
                 shouldEscalateUncertainGate(windowMs, transcript, debugSummary, isFinal)
             }
-            engine.onSegmentFinalized = { reason, windowMs, droppedSamples, triggerMatched ->
+            engine.onSegmentFinalized = { captureId, reason, windowMs, droppedSamples, triggerMatched ->
                 CaptureLog.event(
                     gate = CaptureLog.Gate.ASR_GATE,
                     result = CaptureLog.Result.OK,
                     text = "segment_finalized",
                     meta = mapOf(
+                        "captureId" to captureId,
                         "reason" to reason,
                         "windowMs" to windowMs,
                         "droppedSamples" to droppedSamples,
@@ -686,21 +764,25 @@ class KeywordListenerService : LifecycleService() {
                     ) + powerSnapshot()
                 )
             }
-            engine.onWindowCaptured = { window, source ->
-                lifecycleScope.launch(Dispatchers.IO) {
+            engine.onWindowCaptured = { envelope ->
+                lifecycleScope.launch(Dispatchers.IO, start = CoroutineStart.UNDISPATCHED) {
+                    captureProcessingSequencer.process capture@{
+                    val window = envelope.window
+                    val source = envelope.source
                     if (mediaPlaybackActive || isMediaPlaybackActiveNow()) {
                         CaptureLog.event(
                             gate = CaptureLog.Gate.ASR_FINAL,
                             result = CaptureLog.Result.REJECT,
                             text = "media_playback_blocked_window",
                             meta = mapOf(
+                                "captureId" to envelope.captureId,
                                 "source" to source,
                                 "windowMs" to window.durationMs(),
                                 "outcome" to CaptureLog.CaptureOutcome.MEDIA_PLAYBACK
                             ) + powerSnapshot()
                         )
                         publishAsrDebug(status = "audio externo ignorado", triggerReason = "media_playback")
-                        return@launch
+                        return@capture
                     }
                     val startedAt = System.currentTimeMillis()
                     publishAsrDebug(status = "procesando audio")
@@ -729,6 +811,7 @@ class KeywordListenerService : LifecycleService() {
                             },
                             text = sileroDecision.reason,
                             meta = mapOf(
+                                "captureId" to envelope.captureId,
                                 "source" to source,
                                 "windowMs" to asrWindow.durationMs(),
                                 "vadMs" to sileroDecision.elapsedMs,
@@ -742,7 +825,7 @@ class KeywordListenerService : LifecycleService() {
                     }
                     if (sileroDecision != null && !sileroDecision.containsSpeech) {
                         publishAsrDebug(status = "sin habla detectada", triggerReason = "silero_vad")
-                        return@launch
+                        return@capture
                     }
                     val transcript = try {
                         asrEngine.transcribe(asrWindow, languageTag = "es")
@@ -761,6 +844,7 @@ class KeywordListenerService : LifecycleService() {
                             result = CaptureLog.Result.OK,
                             text = text,
                             meta = mapOf(
+                                "captureId" to envelope.captureId,
                                 "engine" to asrEngine.name,
                                 "windowMs" to window.durationMs(),
                                 "decodeMs" to elapsedMs,
@@ -788,6 +872,7 @@ class KeywordListenerService : LifecycleService() {
                                 result = CaptureLog.Result.REJECT,
                                 text = text,
                                 meta = mapOf(
+                                    "captureId" to envelope.captureId,
                                     "sim" to "%.2f".format(speakerVerification.similarity),
                                     "threshold" to "%.2f".format(speakerThreshold),
                                     "speakerReason" to speakerVerification.reason,
@@ -795,12 +880,13 @@ class KeywordListenerService : LifecycleService() {
                                     "outcome" to CaptureLog.CaptureOutcome.NOT_OWNER
                                 )
                             )
-                            return@launch
+                            return@capture
                         }
                         CaptureLog.event(
                             gate = CaptureLog.Gate.SPEAKER,
                             result = CaptureLog.Result.OK,
                             meta = mapOf(
+                                "captureId" to envelope.captureId,
                                 "sim" to "%.2f".format(speakerVerification.similarity),
                                 "speakerReason" to speakerVerification.reason,
                                 "speakerConfigured" to speakerVerificationManager.isConfigured,
@@ -829,9 +915,18 @@ class KeywordListenerService : LifecycleService() {
                                 "too_short",
                                 "embedding_failed"
                             )
-                        val saved = processText(text, preferSuggested = !ownerIsStrong)
+                        val saved = processText(
+                            text = text,
+                            preferSuggested = !ownerIsStrong,
+                            captureId = envelope.captureId
+                        )
                         val rescued = if (!saved) {
-                            processPendingGateResult(text, preferSuggested = !ownerIsStrong)
+                            processGateResult(
+                                gateText = envelope.gateTranscript,
+                                finalText = text,
+                                preferSuggested = !ownerIsStrong,
+                                captureId = envelope.captureId
+                            )
                         } else {
                             false
                         }
@@ -841,12 +936,14 @@ class KeywordListenerService : LifecycleService() {
                                 result = CaptureLog.Result.NO_MATCH,
                                 text = text,
                                 meta = mapOf(
+                                    "captureId" to envelope.captureId,
                                     "rejectStage" to "IntentCandidate",
                                     "intentReason" to "no_final_intent",
                                     "outcome" to CaptureLog.CaptureOutcome.NO_INTENT
                                 )
                             )
                         }
+                    }
                     }
                 }
             }
@@ -1069,7 +1166,7 @@ class KeywordListenerService : LifecycleService() {
      * Uses regex patterns for flexible matching of natural speech variations.
      * Now includes speaker verification and LLM validation.
      */
-    private fun processText(text: String, preferSuggested: Boolean): Boolean {
+    private fun processText(text: String, preferSuggested: Boolean, captureId: Long): Boolean {
         val result = intentDetector.detect(text) ?: return false
         publishAsrDebug(
             gateText = text,
@@ -1078,13 +1175,19 @@ class KeywordListenerService : LifecycleService() {
         return processDetectedResult(
             result = result,
             text = text,
-            preferSuggested = preferSuggested
+            preferSuggested = preferSuggested,
+            captureId = captureId
         )
     }
 
-    private fun processPendingGateResult(finalText: String, preferSuggested: Boolean): Boolean {
-        val result = detectionState.pendingGateDetection ?: return false
-        Log.i(TAG, "Using pending gate detection to preserve recognized reminder")
+    private fun processGateResult(
+        gateText: String?,
+        finalText: String,
+        preferSuggested: Boolean,
+        captureId: Long
+    ): Boolean {
+        val result = gateText?.let(intentDetector::detect) ?: return false
+        Log.i(TAG, "Using gate detection correlated with the final capture")
         publishAsrDebug(
             gateText = finalText,
             triggerReason = "gate latched -> ${result.label}"
@@ -1092,23 +1195,35 @@ class KeywordListenerService : LifecycleService() {
         return processDetectedResult(
             result = result.copy(capturedText = finalText, label = result.label),
             text = finalText,
-            preferSuggested = preferSuggested
+            preferSuggested = preferSuggested,
+            captureId = captureId
         )
     }
 
     private fun processDetectedResult(
         result: DetectionResult,
         text: String,
-        preferSuggested: Boolean = false
+        preferSuggested: Boolean = false,
+        captureId: Long
     ): Boolean {
-        val routeToSuggested = preferSuggested || result.shouldRouteToSuggested()
+        val acceptance = IntentAcceptancePolicy.evaluate(
+            detectorConfidence = result.confidence,
+            ownerVerified = !preferSuggested,
+            weakGrammaticalOwnership = result.shouldRouteToSuggested()
+        )
+        val routeToSuggested = acceptance.routeToSuggested
         CaptureLog.event(
             gate = CaptureLog.Gate.INTENT,
             result = CaptureLog.Result.OK,
             text = text,
             meta = mapOf(
+                "captureId" to captureId,
                 "label" to result.label,
                 "pattern" to (result.pattern?.id ?: "custom"),
+                "trigger" to result.matchedTrigger,
+                "detectorConfidence" to "%.2f".format(result.confidence),
+                "scoreReasons" to result.scoreReasons.joinToString(","),
+                "acceptanceReasons" to acceptance.reasons.joinToString(","),
                 "preferSuggested" to routeToSuggested,
                 "outcome" to CaptureLog.CaptureOutcome.INTENT_CANDIDATE
             )
@@ -1121,20 +1236,30 @@ class KeywordListenerService : LifecycleService() {
                     gate = CaptureLog.Gate.DEDUP_MEM,
                     result = CaptureLog.Result.DUP,
                     text = text,
-                    meta = mapOf("outcome" to CaptureLog.CaptureOutcome.DUPLICATE)
+                    meta = mapOf(
+                        "captureId" to captureId,
+                        "outcome" to CaptureLog.CaptureOutcome.DUPLICATE
+                    )
                 )
                 return false
             }
-            DeduplicationManager.Reservation.Reserved -> {
-                detectionState.partialAlreadySaved = true
-            }
+            DeduplicationManager.Reservation.Reserved -> Unit
         }
 
-        detectionState.clearPending()
         publishAsrDebug(status = "procesando entrada")
 
-        val intentId = result.pattern?.id ?: result.customKeyword ?: "nota"
-        Log.i(TAG, "Intent '$intentId' [${result.label}] found in: '${text.take(60)}'")
+        val fallbackClassification = CaptureIntentRules.Classification(
+            id = result.pattern?.id ?: result.customKeyword ?: "nota",
+            label = result.label
+        )
+        val classification = if (result.customKeyword != null) {
+            fallbackClassification
+        } else {
+            CaptureIntentRules.classify(result.capturedText, fallbackClassification)
+        }
+        val intentId = classification.id
+        val classifiedLabel = classification.label
+        Log.i(TAG, "Intent '$intentId' [$classifiedLabel] found in: '${text.take(60)}'")
         Log.i(
             TAG,
             "Detector result [$intentId]: raw='${text.take(160)}' | captured='${result.capturedText.take(160)}'"
@@ -1157,13 +1282,14 @@ class KeywordListenerService : LifecycleService() {
 
             captureSaver.save(
                 intentId = intentId,
-                label = result.label,
+                label = classifiedLabel,
                 text = correctedText,
                 originalText = result.capturedText,
                 llmConfidence = validation?.confidence ?: 0.9f,
                 wasReviewed = validation?.correctedText != null || validation?.reason?.contains("IA") == true,
-                confidence = 0.9f,
-                preferSuggested = routeToSuggested
+                confidence = result.confidence,
+                preferSuggested = routeToSuggested,
+                suggestedReasons = acceptance.reasons
             )
         }
 
@@ -1172,6 +1298,7 @@ class KeywordListenerService : LifecycleService() {
 
     private fun DetectionResult.shouldRouteToSuggested(): Boolean {
         val normalized = capturedText.lowercase(Locale.getDefault())
+        if (scoreReasons.contains("weak_ownership")) return true
         if (pattern?.id == "tareas" && WEAK_OWNERSHIP_PREFIXES.any { normalized.contains(it) }) {
             return true
         }

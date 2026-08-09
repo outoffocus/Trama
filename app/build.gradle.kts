@@ -18,6 +18,10 @@ android {
         versionCode = 1
         versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        ndk {
+            // Phone Whisper/speaker binaries are currently ARM64-only.
+            abiFilters += "arm64-v8a"
+        }
     }
 
     buildTypes {

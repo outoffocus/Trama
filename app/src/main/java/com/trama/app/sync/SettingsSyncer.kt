@@ -5,6 +5,7 @@ import android.util.Log
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import com.trama.shared.speech.IntentPattern
+import com.trama.shared.speech.CaptureProfile
 import kotlinx.coroutines.tasks.await
 
 /**
@@ -51,13 +52,14 @@ class SettingsSyncer(private val context: Context) {
     suspend fun syncPatterns(
         patterns: List<IntentPattern>,
         customKeywords: List<String>,
+        captureProfile: CaptureProfile = CaptureProfile.STRICT,
         force: Boolean = false
     ) {
         if (!shouldSyncToWatch()) return
         try {
             val patternsJson = IntentPattern.serialize(patterns)
             val keywordsStr = customKeywords.joinToString(",")
-            val signature = "patterns:${patternsJson.hashCode()}:keywords:${keywordsStr.hashCode()}"
+            val signature = "patterns:${patternsJson.hashCode()}:keywords:${keywordsStr.hashCode()}:profile:${captureProfile.name}"
             if (!force && isAlreadySynced(signature)) {
                 Log.d(TAG, "Skipping watch settings sync: unchanged")
                 return
@@ -66,6 +68,7 @@ class SettingsSyncer(private val context: Context) {
             val request = PutDataMapRequest.create(SETTINGS_PATH).apply {
                 dataMap.putString("intent_patterns_json", patternsJson)
                 dataMap.putString("keyword_mappings", keywordsStr)
+                dataMap.putString("capture_profile", captureProfile.name)
                 dataMap.putLong("updated_at", System.currentTimeMillis())
             }.asPutDataRequest()
 

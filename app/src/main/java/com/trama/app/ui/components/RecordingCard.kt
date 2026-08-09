@@ -104,7 +104,9 @@ fun RecordingCard(
                             tint = eventAccent,
                             modifier = Modifier.size(18.dp)
                         )
-                        RecordingStatus.PROCESSING -> CircularProgressIndicator(
+                        RecordingStatus.PROCESSING,
+                        RecordingStatus.CAPTURING,
+                        RecordingStatus.TRANSCRIBING -> CircularProgressIndicator(
                             modifier = Modifier.size(16.dp),
                             strokeWidth = 2.dp,
                             color = eventAccent

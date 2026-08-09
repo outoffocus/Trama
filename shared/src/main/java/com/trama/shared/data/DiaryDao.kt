@@ -126,6 +126,9 @@ interface DiaryDao {
     @Query("SELECT COUNT(*) > 0 FROM diary_entries WHERE createdAt = :createdAt AND text = :text")
     suspend fun existsByCreatedAtAndText(createdAt: Long, text: String): Boolean
 
+    @Query("SELECT * FROM diary_entries WHERE createdAt = :createdAt AND text = :text LIMIT 1")
+    suspend fun getByCreatedAtAndText(createdAt: Long, text: String): DiaryEntry?
+
     /** Batch delete by IDs */
     @Query("DELETE FROM diary_entries WHERE id IN (:ids)")
     suspend fun deleteByIds(ids: List<Long>)

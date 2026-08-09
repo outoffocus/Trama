@@ -93,7 +93,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle as collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -227,17 +227,17 @@ fun CalendarScreen(
     }
 
     // Data
-    val monthEntriesState by repository.byDateRange(monthStart, monthEnd).collectAsState(initial = null)
-    val monthStoredEventsState by repository.getTimelineEventsByDateRange(monthStart, monthEnd).collectAsState(initial = null)
-    val placesState by repository.getPlaces().collectAsState(initial = null)
-    val selectedDayEventsState by repository.getTimelineEventsByDateRange(selectedDayStart, selectedDayEnd).collectAsState(initial = null)
-    val selectedDailyPageState by repository.getDailyPage(selectedDayStart).collectAsState(initial = null)
-    val pendingOnDayState by repository.getPendingForDay(selectedDayStart, selectedDayEnd).collectAsState(initial = null)
-    val pendingFromOtherDaysState by repository.getPendingFromOtherDays(selectedDayStart, selectedDayEnd).collectAsState(initial = null)
-    val duplicateEntriesState by repository.getDuplicates().collectAsState(initial = null)
-    val allPendingState by repository.getPending().collectAsState(initial = null)
-    val completedOnDayState by repository.getCompletedByCompletedAt(selectedDayStart, selectedDayEnd).collectAsState(initial = null)
-    val recordingsState by repository.getAllRecordings().collectAsState(initial = null)
+    val monthEntriesState by repository.byDateRange(monthStart, monthEnd).collectAsState(initialValue = null)
+    val monthStoredEventsState by repository.getTimelineEventsByDateRange(monthStart, monthEnd).collectAsState(initialValue = null)
+    val placesState by repository.getPlaces().collectAsState(initialValue = null)
+    val selectedDayEventsState by repository.getTimelineEventsByDateRange(selectedDayStart, selectedDayEnd).collectAsState(initialValue = null)
+    val selectedDailyPageState by repository.getDailyPage(selectedDayStart).collectAsState(initialValue = null)
+    val pendingOnDayState by repository.getPendingForDay(selectedDayStart, selectedDayEnd).collectAsState(initialValue = null)
+    val pendingFromOtherDaysState by repository.getPendingFromOtherDays(selectedDayStart, selectedDayEnd).collectAsState(initialValue = null)
+    val duplicateEntriesState by repository.getDuplicates().collectAsState(initialValue = null)
+    val allPendingState by repository.getPending().collectAsState(initialValue = null)
+    val completedOnDayState by repository.getCompletedByCompletedAt(selectedDayStart, selectedDayEnd).collectAsState(initialValue = null)
+    val recordingsState by repository.getAllRecordings().collectAsState(initialValue = null)
     val processingEntryIds by EntryProcessingState.processingIds.collectAsState()
     val processingBackends by EntryProcessingState.processingBackends.collectAsState()
     val serviceRunning by ServiceController.isRunning.collectAsState()
@@ -246,23 +246,23 @@ fun CalendarScreen(
     val recordingElapsed by RecordingState.elapsedSeconds.collectAsState()
     val watchActive by ServiceController.isWatchActive.collectAsState()
     val locationRunning by ServiceController.isLocationRunning.collectAsState()
-    val showListeningStatusOnHome by settings.listeningStatusOnHome.collectAsState(initial = false)
-    val asrStatus by settings.asrDebugStatus.collectAsState(initial = "sin datos")
-    val watchStatus by settings.watchDebugStatus.collectAsState(initial = "")
+    val showListeningStatusOnHome by settings.listeningStatusOnHome.collectAsState(initialValue = false)
+    val asrStatus by settings.asrDebugStatus.collectAsState(initialValue = "sin datos")
+    val watchStatus by settings.watchDebugStatus.collectAsState(initialValue = "")
     val pendingColorIndex by settings.timelineColorPending.collectAsState(
-        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PENDING
+        initialValue = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PENDING
     )
     val completedColorIndex by settings.timelineColorCompleted.collectAsState(
-        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_COMPLETED
+        initialValue = SettingsDataStore.DEFAULT_TIMELINE_COLOR_COMPLETED
     )
     val recordingColorIndex by settings.timelineColorRecording.collectAsState(
-        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_RECORDING
+        initialValue = SettingsDataStore.DEFAULT_TIMELINE_COLOR_RECORDING
     )
     val placeColorIndex by settings.timelineColorPlace.collectAsState(
-        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PLACE
+        initialValue = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PLACE
     )
     val calendarColorIndex by settings.timelineColorCalendar.collectAsState(
-        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_CALENDAR
+        initialValue = SettingsDataStore.DEFAULT_TIMELINE_COLOR_CALENDAR
     )
 
     val monthEntries = monthEntriesState ?: emptyList()
@@ -451,7 +451,7 @@ fun CalendarScreen(
         micActionsVisible = false
     }
 
-    val learnFromDeletions by settings.learnFromDeletions.collectAsState(initial = false)
+    val learnFromDeletions by settings.learnFromDeletions.collectAsState(initialValue = false)
     var pendingBulkDelete by remember { mutableStateOf(false) }
 
     fun performBulkDelete(reason: com.trama.app.summary.DeletionFeedbackStore.Reason?) {

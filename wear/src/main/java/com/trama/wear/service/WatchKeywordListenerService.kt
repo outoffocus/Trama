@@ -1,5 +1,6 @@
 package com.trama.wear.service
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -9,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
+import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -20,6 +22,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import androidx.wear.ongoing.OngoingActivity
@@ -242,6 +245,10 @@ class WatchKeywordListenerService : LifecycleService() {
             ?.takeIf { loaded -> loaded.any { it.enabled && it.triggers.isNotEmpty() } }
             ?: IntentPattern.DEFAULTS
         intentDetector?.setPatterns(patterns)
+        val profile = prefs.getString("capture_profile", null)
+            ?.let { runCatching { com.trama.shared.speech.CaptureProfile.valueOf(it) }.getOrNull() }
+            ?: com.trama.shared.speech.CaptureProfile.STRICT
+        intentDetector?.setCaptureProfile(profile)
         Log.i(TAG, "Patterns loaded: ${patterns.count { it.enabled }} enabled")
 
         prefs.getString("keyword_mappings", null)?.let { str ->
@@ -495,7 +502,7 @@ class WatchKeywordListenerService : LifecycleService() {
             try {
                 pauseRecognizerForCapture()
                 MicCoordinator.sendWatchDebug(applicationContext, "capturando audio", capturedText)
-                val tailPcm = WatchTriggeredAudioCapture().capture()
+                val tailPcm = WatchTriggeredAudioCapture(applicationContext).capture()
                 val pcm = mergePcm(preRollPcm, tailPcm)
                 if (pcm.isEmpty()) {
                     if (allowTextFallback) {
@@ -592,6 +599,13 @@ class WatchKeywordListenerService : LifecycleService() {
     }
 
     private fun startGateLoop(gateAsr: LightweightGateAsr) {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.w(TAG, "Microphone permission missing; stopping gate loop")
+            stopSelf()
+            return
+        }
         useGateLoop = true
         listening = true
         updateNotificationIfChanged("Escuchando...")
@@ -1047,6 +1061,10 @@ class WatchKeywordListenerService : LifecycleService() {
     private fun updateNotificationIfChanged(text: String) {
         if (text == lastNotificationText) return
         lastNotificationText = text
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) return
         getSystemService(NotificationManager::class.java)
             .notify(NOTIFICATION_ID, buildNotification(text))
     }

@@ -70,7 +70,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle as collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -78,6 +78,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import com.trama.app.diagnostics.CaptureLog
+import com.trama.app.diagnostics.CaptureMetrics
 import com.trama.app.diagnostics.DiagnosticsExportManager
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -87,6 +88,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -102,6 +104,7 @@ import com.trama.app.speech.speaker.SpeakerEnrollmentStep
 import com.trama.app.speech.speaker.VerificationDiagnostic
 import com.trama.app.service.ServiceController
 import com.trama.app.speech.IntentPattern
+import com.trama.shared.speech.CaptureProfile
 import com.trama.app.summary.ActionItemProcessor
 import com.trama.app.summary.CalendarHelper
 import com.trama.app.summary.GemmaClient
@@ -143,80 +146,82 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
 
     // Settings state
-    val autoStart by settings.autoStart.collectAsState(initial = false)
+    val autoStart by settings.autoStart.collectAsState(initialValue = false)
     val recordingDuration by settings.recordingDuration.collectAsState(
-        initial = SettingsDataStore.DEFAULT_DURATION
+        initialValue = SettingsDataStore.DEFAULT_DURATION
     )
-    val summaryEnabled by settings.summaryEnabled.collectAsState(initial = true)
-    val summaryHour by settings.summaryHour.collectAsState(initial = SettingsDataStore.DEFAULT_SUMMARY_HOUR)
-    val weeklyAgendaEnabled by settings.weeklyAgendaEnabled.collectAsState(initial = true)
-    val weeklyAgendaDayOfWeek by settings.weeklyAgendaDayOfWeek.collectAsState(initial = SettingsDataStore.DEFAULT_WEEKLY_AGENDA_DAY_OF_WEEK)
-    val weeklyAgendaHour by settings.weeklyAgendaHour.collectAsState(initial = SettingsDataStore.DEFAULT_WEEKLY_AGENDA_HOUR)
-    val visibleCalendarIds by settings.visibleCalendarIds.collectAsState(initial = null)
-    val intentPatterns by settings.intentPatterns.collectAsState(initial = IntentPattern.DEFAULTS)
+    val summaryEnabled by settings.summaryEnabled.collectAsState(initialValue = true)
+    val summaryHour by settings.summaryHour.collectAsState(initialValue = SettingsDataStore.DEFAULT_SUMMARY_HOUR)
+    val weeklyAgendaEnabled by settings.weeklyAgendaEnabled.collectAsState(initialValue = true)
+    val weeklyAgendaDayOfWeek by settings.weeklyAgendaDayOfWeek.collectAsState(initialValue = SettingsDataStore.DEFAULT_WEEKLY_AGENDA_DAY_OF_WEEK)
+    val weeklyAgendaHour by settings.weeklyAgendaHour.collectAsState(initialValue = SettingsDataStore.DEFAULT_WEEKLY_AGENDA_HOUR)
+    val visibleCalendarIds by settings.visibleCalendarIds.collectAsState(initialValue = null)
+    val intentPatterns by settings.intentPatterns.collectAsState(initialValue = IntentPattern.DEFAULTS)
+    val customKeywords by settings.customKeywords.collectAsState(initialValue = emptyList())
+    val captureProfile by settings.captureProfile.collectAsState(initialValue = CaptureProfile.STRICT)
 
     // Gemini API key
     val geminiApiKey by viewModel.geminiApiKey.collectAsState()
 
     val personalDictionary = viewModel.personalDictionary
-    val learnedCorrections by personalDictionary.corrections.collectAsState(initial = emptyList())
+    val learnedCorrections by personalDictionary.corrections.collectAsState(initialValue = emptyList())
     val speakerVerificationManager = viewModel.speakerVerificationManager
 
     // Backup
-    val backupEnabled by settings.backupEnabled.collectAsState(initial = true)
-    val backupHour by settings.backupHour.collectAsState(initial = SettingsDataStore.DEFAULT_BACKUP_HOUR)
+    val backupEnabled by settings.backupEnabled.collectAsState(initialValue = false)
+    val backupHour by settings.backupHour.collectAsState(initialValue = SettingsDataStore.DEFAULT_BACKUP_HOUR)
     val contextPreRoll by settings.contextPreRollSeconds.collectAsState(
-        initial = SettingsDataStore.DEFAULT_CONTEXT_PRE_ROLL
+        initialValue = SettingsDataStore.DEFAULT_CONTEXT_PRE_ROLL
     )
     val contextPostRoll by settings.contextPostRollSeconds.collectAsState(
-        initial = SettingsDataStore.DEFAULT_CONTEXT_POST_ROLL
+        initialValue = SettingsDataStore.DEFAULT_CONTEXT_POST_ROLL
     )
-    val asrDebugEnabled by settings.asrDebugEnabled.collectAsState(initial = false)
-    val listeningStatusOnHome by settings.listeningStatusOnHome.collectAsState(initial = false)
-    val asrDebugEngine by settings.asrDebugEngine.collectAsState(initial = "-")
-    val asrDebugStatus by settings.asrDebugStatus.collectAsState(initial = "sin datos")
-    val asrDebugLastText by settings.asrDebugLastText.collectAsState(initial = "")
-    val asrDebugGateText by settings.asrDebugGateText.collectAsState(initial = "")
-    val asrDebugTriggerReason by settings.asrDebugTriggerReason.collectAsState(initial = "")
-    val asrDebugLastWindowMs by settings.asrDebugLastWindowMs.collectAsState(initial = 0)
-    val asrDebugLastDecodeMs by settings.asrDebugLastDecodeMs.collectAsState(initial = 0)
+    val asrDebugEnabled by settings.asrDebugEnabled.collectAsState(initialValue = false)
+    val listeningStatusOnHome by settings.listeningStatusOnHome.collectAsState(initialValue = false)
+    val asrDebugEngine by settings.asrDebugEngine.collectAsState(initialValue = "-")
+    val asrDebugStatus by settings.asrDebugStatus.collectAsState(initialValue = "sin datos")
+    val asrDebugLastText by settings.asrDebugLastText.collectAsState(initialValue = "")
+    val asrDebugGateText by settings.asrDebugGateText.collectAsState(initialValue = "")
+    val asrDebugTriggerReason by settings.asrDebugTriggerReason.collectAsState(initialValue = "")
+    val asrDebugLastWindowMs by settings.asrDebugLastWindowMs.collectAsState(initialValue = 0)
+    val asrDebugLastDecodeMs by settings.asrDebugLastDecodeMs.collectAsState(initialValue = 0)
     val asrProcessingInFlight = remember(asrDebugStatus) {
         asrDebugStatus.contains("procesando", ignoreCase = true)
     }
-    val watchDebugStatus by settings.watchDebugStatus.collectAsState(initial = "")
-    val watchDebugTrigger by settings.watchDebugTrigger.collectAsState(initial = "")
-    val locationEnabled by settings.locationEnabled.collectAsState(initial = false)
+    val watchDebugStatus by settings.watchDebugStatus.collectAsState(initialValue = "")
+    val watchDebugTrigger by settings.watchDebugTrigger.collectAsState(initialValue = "")
+    val locationEnabled by settings.locationEnabled.collectAsState(initialValue = false)
     val locationIntervalMinutes by settings.locationIntervalMinutes.collectAsState(
-        initial = SettingsDataStore.DEFAULT_LOCATION_INTERVAL_MINUTES
+        initialValue = SettingsDataStore.DEFAULT_LOCATION_INTERVAL_MINUTES
     )
     val locationDwellMinutes by settings.locationDwellMinutes.collectAsState(
-        initial = SettingsDataStore.DEFAULT_LOCATION_DWELL_MINUTES
+        initialValue = SettingsDataStore.DEFAULT_LOCATION_DWELL_MINUTES
     )
     val locationEntryRadiusMeters by settings.locationEntryRadiusMeters.collectAsState(
-        initial = SettingsDataStore.DEFAULT_LOCATION_ENTRY_RADIUS_METERS
+        initialValue = SettingsDataStore.DEFAULT_LOCATION_ENTRY_RADIUS_METERS
     )
     val locationExitRadiusMeters by settings.locationExitRadiusMeters.collectAsState(
-        initial = SettingsDataStore.DEFAULT_LOCATION_EXIT_RADIUS_METERS
+        initialValue = SettingsDataStore.DEFAULT_LOCATION_EXIT_RADIUS_METERS
     )
-    val googlePlacesApiKey by settings.googlePlacesApiKey.collectAsState(initial = "")
+    val googlePlacesApiKey by settings.googlePlacesApiKey.collectAsState(initialValue = "")
     val timelinePendingColorIndex by settings.timelineColorPending.collectAsState(
-        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PENDING
+        initialValue = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PENDING
     )
     val timelineCompletedColorIndex by settings.timelineColorCompleted.collectAsState(
-        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_COMPLETED
+        initialValue = SettingsDataStore.DEFAULT_TIMELINE_COLOR_COMPLETED
     )
     val timelineRecordingColorIndex by settings.timelineColorRecording.collectAsState(
-        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_RECORDING
+        initialValue = SettingsDataStore.DEFAULT_TIMELINE_COLOR_RECORDING
     )
     val timelinePlaceColorIndex by settings.timelineColorPlace.collectAsState(
-        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PLACE
+        initialValue = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PLACE
     )
     val timelineCalendarColorIndex by settings.timelineColorCalendar.collectAsState(
-        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_CALENDAR
+        initialValue = SettingsDataStore.DEFAULT_TIMELINE_COLOR_CALENDAR
     )
-    val themeMode by settings.themeMode.collectAsState(initial = SettingsDataStore.DEFAULT_THEME_MODE)
-    val showOldEntriesExpanded by settings.showOldEntriesExpanded.collectAsState(initial = false)
-    val learnFromDeletions by settings.learnFromDeletions.collectAsState(initial = false)
+    val themeMode by settings.themeMode.collectAsState(initialValue = SettingsDataStore.DEFAULT_THEME_MODE)
+    val showOldEntriesExpanded by settings.showOldEntriesExpanded.collectAsState(initialValue = false)
+    val learnFromDeletions by settings.learnFromDeletions.collectAsState(initialValue = false)
     var deletionFeedbackCount by remember { mutableStateOf(com.trama.app.summary.DeletionFeedbackStore.count(context)) }
     val locationDebugStatus by LocationDebugState.status.collectAsState()
     val locationDebugLastSample by LocationDebugState.lastSample.collectAsState()
@@ -309,6 +314,10 @@ fun SettingsScreen(
         backupLocationName = name ?: "trama-backup.json"
         // Trigger immediate backup so the file isn't empty
         AutoBackupWorker.runNow(context)
+        scope.launch {
+            settings.setBackupEnabled(true)
+            BackupScheduler.schedule(context, backupHour)
+        }
         Toast.makeText(context, "Backup configurado — guardando ahora...", Toast.LENGTH_SHORT).show()
     }
 
@@ -407,7 +416,7 @@ fun SettingsScreen(
             return
         }
 
-        val capture = OfflineDictationCapture()
+        val capture = OfflineDictationCapture(context)
         activeSpeakerCapture = capture
         scope.launch {
             speakerRecordingInProgress = true
@@ -517,7 +526,7 @@ fun SettingsScreen(
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = "Sin enrolar, las voces de otras personas se tratan como tuyas. Tres muestras bastan.",
+                                    text = "Sin enrolar, las voces de otras personas se tratan como tuyas. Recomendamos cinco muestras variadas.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.85f)
                                 )
@@ -536,8 +545,8 @@ fun SettingsScreen(
                 SectionHeader("General")
 
                 SettingToggle(
-                    title = "Inicio automatico",
-                    subtitle = "Iniciar al encender el dispositivo",
+                    title = "Recordar escucha al reiniciar",
+                    subtitle = "Mostrar un aviso para reactivarla después de encender el dispositivo",
                     checked = autoStart,
                     onCheckedChange = { scope.launch { settings.setAutoStart(it) } }
                 )
@@ -658,6 +667,42 @@ fun SettingsScreen(
                     )
 
                     Spacer(modifier = Modifier.height(14.dp))
+                    Text(
+                        "Precisión de captura",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    val profileOptions = listOf(
+                        CaptureProfile.STRICT to "Estricto",
+                        CaptureProfile.BALANCED to "Equilibrado",
+                        CaptureProfile.SENSITIVE to "Sensible"
+                    )
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        profileOptions.forEachIndexed { index, (profile, label) ->
+                            SegmentedButton(
+                                selected = captureProfile == profile,
+                                onClick = { scope.launch { settings.setCaptureProfile(profile) } },
+                                shape = when (index) {
+                                    0 -> RoundedCornerShape(topStart = 10.dp, bottomStart = 10.dp)
+                                    profileOptions.lastIndex -> RoundedCornerShape(topEnd = 10.dp, bottomEnd = 10.dp)
+                                    else -> RoundedCornerShape(0.dp)
+                                }
+                            ) { Text(label, style = MaterialTheme.typography.labelSmall) }
+                        }
+                    }
+                    Text(
+                        when (captureProfile) {
+                            CaptureProfile.STRICT -> "Recomendado: exige intención personal, verbo accionable y contexto suficiente."
+                            CaptureProfile.BALANCED -> "Tolera algunos errores del reconocimiento y expresiones impersonales; las dudas van a Sugeridas."
+                            CaptureProfile.SENSITIVE -> "Prioriza no perder frases y puede activar más transcripciones ambientales."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -698,7 +743,7 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "Contexto previo (t0)",
+                            "Audio anterior a la frase",
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.weight(1f)
                         )
@@ -713,8 +758,8 @@ fun SettingsScreen(
                         onValueChange = {
                             scope.launch { settings.setContextPreRollSeconds(it.roundToInt()) }
                         },
-                        valueRange = 1f..30f,
-                        steps = 28,
+                        valueRange = 3f..10f,
+                        steps = 6,
                         modifier = Modifier.fillMaxWidth()
                     )
 
@@ -725,7 +770,7 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "Contexto posterior (t1)",
+                            "Máximo después de la frase",
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.weight(1f)
                         )
@@ -740,8 +785,8 @@ fun SettingsScreen(
                         onValueChange = {
                             scope.launch { settings.setContextPostRollSeconds(it.roundToInt()) }
                         },
-                        valueRange = 1f..30f,
-                        steps = 28,
+                        valueRange = 5f..15f,
+                        steps = 9,
                         modifier = Modifier.fillMaxWidth()
                     )
 
@@ -1146,6 +1191,7 @@ fun SettingsScreen(
                         onValueChange = { scope.launch { settings.setGooglePlacesApiKey(it) } },
                         label = { Text("Google Places API key") },
                         supportingText = { Text("Opcional. Se usará más adelante como fallback.") },
+                        visualTransformation = PasswordVisualTransformation(),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
@@ -1334,6 +1380,7 @@ fun SettingsScreen(
                         },
                         label = { Text("Clave API Gemini") },
                         supportingText = { Text("Gratis en aistudio.google.com") },
+                        visualTransformation = PasswordVisualTransformation(),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
@@ -1895,7 +1942,7 @@ fun SettingsScreen(
                         subtitle = when {
                             !speakerBackendAvailable -> "Falta el modelo de speaker embedding offline"
                             speakerConfigured -> "Filtra capturas ajenas despues de transcribir"
-                            else -> "Necesita al menos 3 muestras de tu voz"
+                            else -> "Mínimo 3 muestras; recomendado 5 en ambientes distintos"
                         },
                         checked = speakerEnabled && speakerConfigured && speakerBackendAvailable,
                         onCheckedChange = {
@@ -1908,7 +1955,7 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(12.dp))
 
                     Text(
-                        "Muestras guardadas: $speakerSampleCount/${SherpaSpeakerVerificationManager.REQUIRED_SAMPLES}",
+                        "Muestras guardadas: $speakerSampleCount/${SherpaSpeakerVerificationManager.RECOMMENDED_SAMPLES} recomendadas",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1963,17 +2010,30 @@ fun SettingsScreen(
                     if (speakerBackendAvailable) {
                         Spacer(modifier = Modifier.height(14.dp))
                         Text(
-                            "Umbral de coincidencia: ${"%.0f".format(speakerThreshold * 100)}%",
+                            "Tolerancia de voz",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Slider(
-                            value = speakerThreshold,
-                            onValueChange = {
-                                speakerVerificationManager.setThreshold(it)
-                                refreshSpeakerUi()
-                            },
-                            valueRange = 0.4f..0.95f
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf(
+                                "Tolerante" to 0.52f,
+                                "Recomendada" to 0.60f,
+                                "Estricta" to 0.68f
+                            ).forEach { (label, value) ->
+                                FilterChip(
+                                    selected = kotlin.math.abs(speakerThreshold - value) < 0.04f,
+                                    onClick = {
+                                        speakerVerificationManager.setThreshold(value)
+                                        refreshSpeakerUi()
+                                    },
+                                    label = { Text(label) }
+                                )
+                            }
+                        }
+                        Text(
+                            "Valor actual: ${"%.0f".format(speakerThreshold * 100)}%. Usa Estricta si aparecen voces ajenas; Tolerante si rechaza tu voz.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
 
                         Spacer(modifier = Modifier.height(12.dp))
@@ -2039,9 +2099,14 @@ fun SettingsScreen(
 
             SettingToggle(
                 title = "Backup automatico diario",
-                subtitle = "Guarda en la carpeta Descargas",
+                subtitle = if (backupLocationName == null) "Pendiente: elige un archivo de destino"
+                    else "Actualiza diariamente el archivo elegido",
                 checked = backupEnabled,
                 onCheckedChange = {
+                    if (it && backupLocationName == null) {
+                        backupFileSetupLauncher.launch("trama-backup.json")
+                        return@SettingToggle
+                    }
                     scope.launch {
                         settings.setBackupEnabled(it)
                         if (it) BackupScheduler.schedule(context, backupHour)
@@ -2226,13 +2291,13 @@ fun SettingsScreen(
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                "Las categorias no tienen que entender toda la frase. Sirven para detectar familias de intención cortas y estables, y solo entonces dejar pasar la captura a Whisper.",
+                                "El gate usa estructuras gramaticales compactas y un vocabulario de acciones. Las frases de abajo son expresiones explícitas adicionales, no cientos de combinaciones internas.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                "Base recomendada: usa pocas frases muy intencionales. Mantén expresiones naturales como \"recordar\", \"necesito\", \"falta por\" o \"pendiente de\", pero evita triggers conversacionales sueltos como \"llama\", \"dile\" o \"pregunta\".",
+                                "Base recomendada: conserva pocas expresiones inequívocas como \"recuérdame\", \"nota mental\", \"falta por\" o \"pendiente de\". Evita palabras sueltas como \"llama\", \"dile\" o \"pregunta\".",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -2265,7 +2330,7 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(12.dp))
 
                     // Test + Add buttons
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(
                             onClick = { showTestDialog = true },
                             shape = RoundedCornerShape(10.dp)
@@ -2278,6 +2343,9 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Nueva categoria")
                         }
+                        TextButton(
+                            onClick = { scope.launch { settings.resetRecommendedCaptureSettings() } }
+                        ) { Text("Restaurar") }
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -2383,6 +2451,8 @@ fun SettingsScreen(
     if (showTestDialog) {
         TestPhraseDialog(
             patterns = intentPatterns,
+            customKeywords = customKeywords,
+            captureProfile = captureProfile,
             onDismiss = { showTestDialog = false }
         )
     }
@@ -2815,7 +2885,7 @@ private fun IntentPatternCard(
                 }
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
-                    "${pattern.triggers.size}",
+                    "${pattern.triggers.size} frases",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                 )
@@ -2870,7 +2940,7 @@ private fun IntentPatternCard(
 private fun patternDescription(pattern: IntentPattern): String {
     return when (pattern.id) {
         "recordatorios" -> "Frases explicitas para recordar algo."
-        "tareas" -> "Pendientes generales como hacer, deber o necesitar."
+        "tareas" -> "Gramática personal + vocabulario de acciones; aquí solo se muestran excepciones explícitas."
         "comunicacion" -> "Acciones de llamar, escribir o mandar un mensaje."
         else -> if (pattern.isCustom) {
             "Categoria creada por ti para un caso concreto."
@@ -3035,12 +3105,18 @@ private fun NewPatternDialog(
 @Composable
 private fun TestPhraseDialog(
     patterns: List<IntentPattern>,
+    customKeywords: List<String>,
+    captureProfile: CaptureProfile,
     onDismiss: () -> Unit
 ) {
     var testPhrase by remember { mutableStateOf("") }
     var result by remember { mutableStateOf<String?>(null) }
-    val detector = remember(patterns) {
-        com.trama.app.speech.IntentDetector().apply { setPatterns(patterns) }
+    val detector = remember(patterns, customKeywords, captureProfile) {
+        com.trama.app.speech.IntentDetector().apply {
+            setPatterns(patterns)
+            setCustomKeywords(customKeywords)
+            setCaptureProfile(captureProfile)
+        }
     }
 
     AlertDialog(
@@ -3053,15 +3129,29 @@ private fun TestPhraseDialog(
                     onValueChange = {
                         testPhrase = it
                         val detection = detector.detect(it)
-                        result = if (detection != null) "Capturado por: ${detection.label}"
-                                 else if (it.length >= 4) "No detectado" else null
+                        result = if (detection != null) {
+                            val weak = detection.scoreReasons.contains("weak_ownership")
+                            val route = if (
+                                detection.confidence >= com.trama.app.service.IntentAcceptancePolicy.DIRECT_SAVE_CONFIDENCE &&
+                                !weak
+                            ) "Pendiente" else "Sugerida"
+                            buildString {
+                                append("Gate: ${detection.label}")
+                                append("\nTrigger: ${detection.matchedTrigger ?: "—"}")
+                                append("\nConfianza: ${"%.0f".format(detection.confidence * 100)}%")
+                                append("\nDestino previsto: $route")
+                                if (detection.scoreReasons.isNotEmpty()) {
+                                    append("\nRazones: ${detection.scoreReasons.joinToString(", ")}")
+                                }
+                            }
+                        } else if (it.length >= 4) "No detectado" else null
                     },
                     label = { Text("Escribe una frase") },
                     modifier = Modifier.fillMaxWidth(), singleLine = true,
                     shape = RoundedCornerShape(12.dp)
                 )
                 result?.let { res ->
-                    val isMatch = res.startsWith("Capturado")
+                    val isMatch = res.startsWith("Gate:")
                     Surface(shape = RoundedCornerShape(10.dp),
                         color = if (isMatch) MaterialTheme.colorScheme.primaryContainer
                                else MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)) {
@@ -3111,6 +3201,7 @@ private fun CaptureDiagnosticsCard(
         )
         order.map { (g, r) -> Triple(g, r, grouped[g to r] ?: 0) }
     }
+    val metrics = remember(events) { CaptureMetrics.from(events) }
 
     val labels = mapOf(
         "ASR_GATE" to "OK" to "Gate aceptado/fallback",
@@ -3162,6 +3253,42 @@ private fun CaptureDiagnosticsCard(
                         enabled = !exportInProgress
                     ) {
                         Text(if (exportInProgress) "Exportando..." else "Exportar 72h")
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        "Línea base local",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        "${metrics.whisperTranscriptions} transcripciones · ${metrics.savedEntries} guardadas · " +
+                            "${metrics.likelyNoiseDeletes} borrados sospechosos · ${metrics.shadowCandidates} candidatos en sombra",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    if (metrics.observationHours >= 0.25) {
+                        Text(
+                            "Ruido observado: ${"%.2f".format(metrics.suspiciousCapturesPerHour)} por hora " +
+                                "(${"%.1f".format(metrics.observationHours)} h observadas)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (metrics.topTriggers.isNotEmpty()) {
+                        Text(
+                            "Triggers principales: " + metrics.topTriggers.joinToString { "${it.first} (${it.second})" },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }

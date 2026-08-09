@@ -9,6 +9,7 @@ import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
 import com.trama.app.audio.SherpaWhisperAsrEngine
+import com.trama.app.audio.PcmRecordingStorage
 import com.trama.app.speech.EntryValidator
 import com.trama.app.speech.PersonalDictionary
 import com.trama.app.ui.SettingsDataStore
@@ -26,6 +27,7 @@ import com.trama.shared.model.WatchAudioSyncMetadata
 import com.trama.shared.util.DayRange
 import com.trama.app.summary.ActionItemProcessor
 import com.trama.app.summary.RecordingProcessor
+import com.trama.app.summary.RecordingTranscriptionWorker
 import com.trama.shared.model.DiaryEntry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +37,7 @@ import kotlin.math.sqrt
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
+import java.io.FileOutputStream
 
 /**
  * Receives diary entries and mic coordination from the watch.
@@ -246,6 +249,83 @@ class WatchDataReceiverService : WearableListenerService() {
                     .inputStream
                     ?: return@launch
 
+                if (metadata.kind != "CONTEXTUAL_TRIGGER") {
+                    val pendingFile = PcmRecordingStorage.createPendingFile(
+                        applicationContext,
+                        metadata.createdAt
+                    )
+                    val recordingId = repository.insertRecording(
+                        Recording(
+                            transcription = "",
+                            durationSeconds = 0,
+                            source = runCatching { Source.valueOf(metadata.source) }
+                                .getOrDefault(Source.WATCH),
+                            createdAt = metadata.createdAt,
+                            processingStatus = RecordingStatus.CAPTURING,
+                            isSynced = true,
+                            audioFilePath = pendingFile.absolutePath,
+                            audioSampleRateHz = metadata.sampleRateHz
+                        )
+                    )
+                    assetInput.use { input ->
+                        FileOutputStream(pendingFile).buffered().use { output ->
+                            input.copyTo(output)
+                            output.flush()
+                        }
+                    }
+                    FileOutputStream(pendingFile, true).use { it.fd.sync() }
+                    val finalFile = PcmRecordingStorage.finalizePending(pendingFile)
+                    val stats = PcmRecordingStorage.audioStats(finalFile)
+                    if (stats.sampleCount == 0L) {
+                        Log.w(TAG, "Empty watch PCM payload")
+                        finalFile.delete()
+                        repository.updateRecordingStatus(recordingId, RecordingStatus.FAILED)
+                        return@launch
+                    }
+
+                    val byteCount = finalFile.length()
+                    val durationSec = stats.sampleCount.toFloat() / metadata.sampleRateHz
+                    val byteDelta = metadata.pcmByteCount?.let { byteCount - it }
+                    val sampleDelta = metadata.pcmSampleCount?.let { stats.sampleCount - it }
+                    Log.i(
+                        TAG,
+                        "Watch audio persisted: ${stats.sampleCount} samples " +
+                            "(${"%.1f".format(durationSec)}s) @${metadata.sampleRateHz}Hz, " +
+                            "$byteCount bytes, RMS=${"%.1f".format(stats.rms)}, " +
+                            "peak=${stats.peak}, kind=${metadata.kind}, source=${metadata.source}"
+                    )
+                    if (byteDelta != null && byteDelta != 0L ||
+                        sampleDelta != null && sampleDelta != 0L
+                    ) {
+                        Log.w(
+                            TAG,
+                            "Watch PCM payload size mismatch: byteDelta=${byteDelta ?: "?"}, " +
+                                "sampleDelta=${sampleDelta ?: "?"}"
+                        )
+                    }
+
+                    val usableAudio = stats.rms >= MIN_AUDIO_RMS
+                    repository.updateCapturedRecordingAudio(
+                        id = recordingId,
+                        audioFilePath = finalFile.absolutePath,
+                        durationSeconds = PcmRecordingStorage.durationSeconds(
+                            finalFile,
+                            metadata.sampleRateHz
+                        ),
+                        status = if (usableAudio) {
+                            RecordingStatus.TRANSCRIBING
+                        } else {
+                            RecordingStatus.FAILED
+                        },
+                        audioSampleRateHz = metadata.sampleRateHz
+                    )
+                    if (usableAudio) {
+                        RecordingTranscriptionWorker.enqueue(applicationContext, recordingId)
+                    }
+                    Log.i(TAG, "Persisted watch PCM as recording $recordingId before transcription")
+                    return@launch
+                }
+
                 val pcmBytes = assetInput.use { it.readBytes() }
                 val pcm = bytesToShortArray(pcmBytes)
                 if (pcm.isEmpty()) {
@@ -325,29 +405,6 @@ class WatchDataReceiverService : WearableListenerService() {
                     return@launch
                 }
 
-                val effectiveTranscript = transcript.ifBlank { metadata.triggerText.orEmpty() }
-
-                val recordingId = repository.insertRecording(
-                    Recording(
-                        transcription = effectiveTranscript.ifBlank { "[Audio del reloj pendiente de transcripcion]" },
-                        durationSeconds = metadata.durationSeconds,
-                        source = Source.valueOf(metadata.source),
-                        createdAt = metadata.createdAt,
-                        processingStatus = if (effectiveTranscript.isBlank()) RecordingStatus.FAILED else RecordingStatus.PENDING,
-                        isSynced = true
-                    )
-                )
-
-                if (effectiveTranscript.isNotBlank()) {
-                    try {
-                        RecordingProcessor(applicationContext).process(recordingId, repository)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to process imported watch audio $recordingId", e)
-                        repository.updateRecordingStatus(recordingId, RecordingStatus.FAILED)
-                    }
-                }
-
-                Log.i(TAG, "Imported watch audio recording (id=$recordingId)")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to process watch audio payload", e)
             }
@@ -406,13 +463,23 @@ class WatchDataReceiverService : WearableListenerService() {
 
         val detector = com.trama.shared.speech.IntentDetector()
         val detection = detector.detect(text)
-        val intentId = detection?.pattern?.id
+        val fallbackIntentId = detection?.pattern?.id
             ?: detection?.customKeyword
             ?: metadata.intentId
             ?: "nota"
-        val label = detection?.label
+        val fallbackLabel = detection?.label
             ?: metadata.label
             ?: "Reloj"
+        val classification = if (detection?.customKeyword != null) {
+            com.trama.shared.speech.CaptureIntentRules.Classification(fallbackIntentId, fallbackLabel)
+        } else {
+            com.trama.shared.speech.CaptureIntentRules.classify(
+                text,
+                com.trama.shared.speech.CaptureIntentRules.Classification(fallbackIntentId, fallbackLabel)
+            )
+        }
+        val intentId = classification.id
+        val label = classification.label
 
         val validation = runCatching {
             // Cap the validator at 5s so a slow/unreachable Gemini call can't stall

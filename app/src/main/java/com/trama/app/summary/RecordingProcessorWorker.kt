@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.Data
+import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
@@ -31,7 +32,11 @@ class RecordingProcessorWorker(
                 .setInputData(data)
                 .build()
 
-            WorkManager.getInstance(context).enqueue(request)
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                "recording-processing-$recordingId",
+                ExistingWorkPolicy.KEEP,
+                request
+            )
             Log.i(TAG, "Enqueued processing for recording $recordingId")
         }
     }

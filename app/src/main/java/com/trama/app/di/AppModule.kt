@@ -2,6 +2,8 @@ package com.trama.app.di
 
 import android.content.Context
 import com.trama.app.ui.SettingsDataStore
+import com.trama.app.speech.PersonalDictionary
+import com.trama.app.speech.speaker.SherpaSpeakerVerificationManager
 import com.trama.shared.data.DatabaseProvider
 import com.trama.shared.data.DiaryDatabase
 import com.trama.shared.data.DiaryRepository
@@ -33,4 +35,16 @@ object AppModule {
     fun provideSettingsDataStore(
         @ApplicationContext context: Context
     ): SettingsDataStore = SettingsDataStore(context)
+
+    @Provides
+    @Singleton
+    fun providePersonalDictionary(
+        @ApplicationContext context: Context
+    ): PersonalDictionary = PersonalDictionary(context)
+
+    @Provides
+    @Singleton
+    fun provideSpeakerVerificationManager(
+        @ApplicationContext context: Context
+    ): SherpaSpeakerVerificationManager = SherpaSpeakerVerificationManager(context)
 }

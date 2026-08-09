@@ -40,7 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle as collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -82,8 +82,8 @@ fun PlaceDetailScreen(
     val opinionSummarizer = remember { PlaceOpinionSummarizer(context) }
     val whisperEngine = remember { SherpaWhisperAsrEngine(context) }
     val scope = rememberCoroutineScope()
-    val place by repository.getPlaceById(placeId).collectAsState(initial = null)
-    val events by repository.getTimelineEventsByPlaceId(placeId).collectAsState(initial = emptyList())
+    val place by repository.getPlaceById(placeId).collectAsState(initialValue = null)
+    val events by repository.getTimelineEventsByPlaceId(placeId).collectAsState(initialValue = emptyList())
     val dateFormat = remember { SimpleDateFormat("d MMM yyyy, HH:mm", Locale("es")) }
 
     val currentPlace = place
@@ -144,7 +144,7 @@ fun PlaceDetailScreen(
         opinionInputError = null
         opinionSummaryError = null
 
-        val capture = OfflineDictationCapture()
+        val capture = OfflineDictationCapture(context)
         activeDictationCapture = capture
         scope.launch {
             isDictating = true

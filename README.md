@@ -4,12 +4,13 @@ Trama es una app Android local-first para capturar recordatorios, tareas, grabac
 
 ## Estado actual del proyecto
 
-Situacion a fecha `2026-05-04`:
+Situacion a fecha `2026-08-10`:
 
 - proyecto Android multi-modulo con `app`, `shared` y `wear`
 - movil en Jetpack Compose + Room + WorkManager + Wear Data Layer
 - reloj en Wear Compose con escucha continua, grabadora y handoff al telefono
 - `Vosk` es el gate ASR ligero compartido entre telefono y reloj
+- `Vosk Android 0.3.75` y `JNA 5.18.1` mantienen compatibles con paginas de 16 KB los binarios ARM64 de movil y reloj
 - `SherpaWhisperAsrEngine` es la ruta principal de transcripcion final en movil
 - el movil no usa `SpeechRecognizer`: si el ASR offline no esta disponible, la captura se marca como degradada y se diagnostica explicitamente
 - `Gemini` cloud y `Gemma` local se usan para estructurar acciones, resumir grabaciones y generar memoria diaria
@@ -20,6 +21,8 @@ Situacion a fecha `2026-05-04`:
 - Home puede mostrar estados tecnicos de escucha solo si el ajuste `Estado tecnico en inicio` esta activado
 - la UI principal vive en `Home`, `Calendar`, `Agenda`, `Chat`, `Recordings`, `PlaceDetail` y `Settings`
 - `DailyPage` y el markdown privado por fecha funcionan como memoria tecnica persistida
+- Room esta en la version 15, con esquemas versionados y prueba de la cadena de migraciones
+- CI compila, ejecuta tests y lint, valida migraciones y comprueba la alineacion nativa de 16 KB
 
 ## Que hace hoy la app
 
@@ -129,7 +132,7 @@ Trama combina varias rutas:
 - la deduplicacion normaliza variantes y errores frecuentes de triggers (`tenemos que`, `tenemso que`, `tenes/tenés que`) antes de comparar
 - `ActionQualityGateProductTest` genera miles de ejemplos sinteticos accionables/no accionables para vigilar precision antes de publicar
 
-La clave de Gemini todavia se guarda en `SharedPreferences`, por lo que moverla a almacenamiento seguro sigue siendo deuda prioritaria.
+La clave de Gemini se cifra con AES-GCM mediante una clave no exportable de Android Keystore. La base Room todavia no esta cifrada.
 
 ## Privacidad
 
@@ -138,7 +141,7 @@ La clave de Gemini todavia se guarda en `SharedPreferences`, por lo que moverla 
 - los patrones aprendidos de eliminaciones se guardan localmente en `filesDir/diagnostics/deletion_feedback.json` y se pueden borrar desde ajustes
 - la base Room no esta cifrada todavia
 - los backups son JSON y dependen del destino elegido por el usuario
-- las claves externas y tokens locales necesitan endurecimiento
+- la clave de Gemini se cifra con AES-GCM y Android Keystore; otros secretos deben seguir el mismo patron antes de persistirse
 
 ## Build
 
@@ -154,20 +157,39 @@ Tests unitarios:
 ./gradlew testDebugUnitTest
 ```
 
+Validacion completa habitual:
+
+```bash
+./gradlew testDebugUnitTest lintDebug :shared:assembleDebugAndroidTest :app:assembleDebug :wear:assembleDebug
+```
+
+Compatibilidad Android con paginas de memoria de 16 KB:
+
+```bash
+./scripts/check-16kb-alignment.sh \
+  app/build/outputs/apk/debug/app-debug.apk \
+  wear/build/outputs/apk/debug/wear-debug.apk
+```
+
+La comprobacion valida tanto los segmentos ELF de `arm64-v8a`/`x86_64` como la
+alineacion ZIP del APK. El telefono y el reloj ARM64 son compatibles. Wear conserva
+`armeabi-v7a` deliberadamente para relojes antiguos; esa ABI no forma parte del
+requisito Android de paginas de 16 KB. Diagnostico y decisiones detalladas:
+[`docs/ANDROID_16KB_COMPATIBILITY.md`](docs/ANDROID_16KB_COMPATIBILITY.md).
+
+La integracion continua vive en `.github/workflows/android-ci.yml` y ejecuta estas
+comprobaciones en cada push a `main`, pull request o lanzamiento manual.
+
 ## Deuda tecnica prioritaria
 
 ### P0
 
-- introducir DI (`Hilt` o equivalente)
-- crear ViewModels para las pantallas principales
-- mover claves y tokens a almacenamiento seguro
-- documentar mejor estados degradados del pipeline ASR
 - definir el contrato final de paridad entre movil y Wear OS
+- completar una politica de retencion y borrado verificable para audio y datos derivados
 
 ### P1
 
 - onboarding minimo
-- CI en `.github/workflows`
 - UI tests Compose mantenidos
 - test de integracion `audio -> ASR -> intent -> persistencia`
 - observabilidad unica de salud ASR / IA / sync
@@ -184,3 +206,11 @@ Tests unitarios:
 ## Nota para colaboradores
 
 La mejor forma de avanzar sin romper el producto es estabilizar fronteras: DI, ViewModels, testabilidad del pipeline de captura, observabilidad y contrato Wear. Las features nuevas deberian apoyarse en esas bases, no ampliar todavia la mezcla de logica en Compose, servicios y singletons.
+
+## Documentacion de referencia
+
+- [`ARCHITECTURE.md`](ARCHITECTURE.md): arquitectura actual, flujos y deuda vigente.
+- [`IMPROVEMENT_PLAN.md`](IMPROVEMENT_PLAN.md): fases ejecutadas y calibracion fisica pendiente.
+- [`docs/ANDROID_16KB_COMPATIBILITY.md`](docs/ANDROID_16KB_COMPATIBILITY.md): diagnostico, decisiones y verificacion de bibliotecas nativas.
+- [`docs/TRAMA_LITE_PROPOSAL.md`](docs/TRAMA_LITE_PROPOSAL.md): propuesta de producto TRAMA Lite.
+- [`docs/TRAMA_LITE_EXECUTION_SPEC.md`](docs/TRAMA_LITE_EXECUTION_SPEC.md): especificacion ejecutable de TRAMA Lite.

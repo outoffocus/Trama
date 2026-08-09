@@ -9,6 +9,7 @@ import com.trama.app.speech.PersonalDictionary
 import com.trama.app.speech.speaker.SherpaSpeakerVerificationManager
 import com.trama.app.ui.SettingsDataStore
 import com.trama.shared.data.DiaryRepository
+import com.trama.shared.speech.CaptureProfile
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -20,11 +21,10 @@ import kotlinx.coroutines.flow.asStateFlow
 class SettingsViewModel @Inject constructor(
     private val settingsStore: SettingsDataStore,
     val repository: DiaryRepository,
+    val personalDictionary: PersonalDictionary,
+    val speakerVerificationManager: SherpaSpeakerVerificationManager,
     @param:ApplicationContext private val appContext: Context
 ) : ViewModel() {
-
-    val personalDictionary = PersonalDictionary(appContext)
-    val speakerVerificationManager = SherpaSpeakerVerificationManager(appContext)
 
     val autoStart = settingsStore.autoStart
     val recordingDuration = settingsStore.recordingDuration
@@ -32,6 +32,8 @@ class SettingsViewModel @Inject constructor(
     val summaryHour = settingsStore.summaryHour
     val visibleCalendarIds = settingsStore.visibleCalendarIds
     val intentPatterns = settingsStore.intentPatterns
+    val customKeywords = settingsStore.customKeywords
+    val captureProfile = settingsStore.captureProfile
     val backupEnabled = settingsStore.backupEnabled
     val backupHour = settingsStore.backupHour
     val contextPreRollSeconds = settingsStore.contextPreRollSeconds
@@ -65,14 +67,15 @@ class SettingsViewModel @Inject constructor(
     val weeklyAgendaDayOfWeek = settingsStore.weeklyAgendaDayOfWeek
     val weeklyAgendaHour = settingsStore.weeklyAgendaHour
 
-    private val summaryPrefs = appContext.getSharedPreferences("daily_summary", Context.MODE_PRIVATE)
-    private val _geminiApiKey = MutableStateFlow(summaryPrefs.getString("gemini_api_key", "") ?: "")
+    private val _geminiApiKey = MutableStateFlow(
+        com.trama.app.security.SecureSecretStore.getGeminiApiKey(appContext).orEmpty()
+    )
     val geminiApiKey: StateFlow<String> = _geminiApiKey.asStateFlow()
 
     fun setGeminiApiKey(value: String) {
         val trimmed = value.trim()
         _geminiApiKey.value = value
-        summaryPrefs.edit().putString("gemini_api_key", trimmed).apply()
+        com.trama.app.security.SecureSecretStore.setGeminiApiKey(appContext, trimmed)
     }
 
     suspend fun setAutoStart(enabled: Boolean) = settingsStore.setAutoStart(enabled)
@@ -84,6 +87,8 @@ class SettingsViewModel @Inject constructor(
     suspend fun setBackupHour(hour: Int) = settingsStore.setBackupHour(hour)
     suspend fun setContextPreRollSeconds(seconds: Int) = settingsStore.setContextPreRollSeconds(seconds)
     suspend fun setContextPostRollSeconds(seconds: Int) = settingsStore.setContextPostRollSeconds(seconds)
+    suspend fun setCaptureProfile(profile: CaptureProfile) = settingsStore.setCaptureProfile(profile)
+    suspend fun resetRecommendedCaptureSettings() = settingsStore.resetRecommendedCaptureSettings()
     suspend fun setAsrDebugEnabled(enabled: Boolean) = settingsStore.setAsrDebugEnabled(enabled)
     suspend fun setListeningStatusOnHome(enabled: Boolean) = settingsStore.setListeningStatusOnHome(enabled)
     suspend fun setThemeMode(mode: Int) = settingsStore.setThemeMode(mode)

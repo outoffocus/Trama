@@ -9,19 +9,44 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.trama.app.speech.IntentPattern
+import com.trama.shared.speech.CaptureProfile
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
 class SettingsDataStore(private val context: Context) {
 
+    init {
+        if (secretMigrationStarted.compareAndSet(false, true)) {
+            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                val stored = context.dataStore.data.first()[GOOGLE_PLACES_API_KEY]
+                if (!stored.isNullOrBlank() &&
+                    !com.trama.app.security.SecretCipher.isEncrypted(stored)
+                ) {
+                    runCatching { com.trama.app.security.SecretCipher.encrypt(stored) }
+                        .onSuccess { encrypted ->
+                            context.dataStore.edit { it[GOOGLE_PLACES_API_KEY] = encrypted }
+                        }
+                }
+            }
+        }
+    }
+
     companion object {
+        private val secretMigrationStarted = AtomicBoolean(false)
         val RECORDING_DURATION = intPreferencesKey("recording_duration")
         val AUTO_START = booleanPreferencesKey("auto_start")
         val KEYWORDS = stringPreferencesKey("keyword_mappings") // legacy key
         val INTENT_PATTERNS = stringPreferencesKey("intent_patterns_json")
         val CUSTOM_KEYWORDS = stringPreferencesKey("custom_keywords")
+        val CAPTURE_PROFILE = stringPreferencesKey("capture_profile")
         val SUMMARY_ENABLED = booleanPreferencesKey("summary_enabled")
         val SUMMARY_HOUR = intPreferencesKey("summary_hour")
         val BACKUP_ENABLED = booleanPreferencesKey("backup_enabled")
@@ -64,8 +89,8 @@ class SettingsDataStore(private val context: Context) {
         const val DEFAULT_DURATION = 60  // Manual recording limit in MINUTES (not for continuous listening)
         const val DEFAULT_SUMMARY_HOUR = 21
         const val DEFAULT_BACKUP_HOUR = 3  // 3:00 AM
-        const val DEFAULT_CONTEXT_PRE_ROLL = 2  // Continuous listening pre-roll in SECONDS
-        const val DEFAULT_CONTEXT_POST_ROLL = 8  // Continuous listening post-roll in SECONDS
+        const val DEFAULT_CONTEXT_PRE_ROLL = 5  // Continuous listening pre-roll in SECONDS
+        const val DEFAULT_CONTEXT_POST_ROLL = 10  // Maximum post-trigger context in SECONDS
         const val GATE_ENGINE_VOSK = "vosk"
         const val DEFAULT_LOCATION_INTERVAL_MINUTES = 3
         const val DEFAULT_LOCATION_DWELL_MINUTES = 10
@@ -113,6 +138,12 @@ class SettingsDataStore(private val context: Context) {
         }
     }
 
+    val captureProfile: Flow<CaptureProfile> = context.dataStore.data.map { prefs ->
+        prefs[CAPTURE_PROFILE]
+            ?.let { stored -> runCatching { CaptureProfile.valueOf(stored) }.getOrNull() }
+            ?: CaptureProfile.STRICT
+    }
+
     val summaryEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[SUMMARY_ENABLED] ?: true
     }
@@ -122,7 +153,7 @@ class SettingsDataStore(private val context: Context) {
     }
 
     val backupEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[BACKUP_ENABLED] ?: true
+        prefs[BACKUP_ENABLED] ?: false
     }
 
     val backupHour: Flow<Int> = context.dataStore.data.map { prefs ->
@@ -206,7 +237,7 @@ class SettingsDataStore(private val context: Context) {
     }
 
     val googlePlacesApiKey: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[GOOGLE_PLACES_API_KEY] ?: ""
+        com.trama.app.security.SecretCipher.decryptOrPlain(prefs[GOOGLE_PLACES_API_KEY])
     }
 
     val timelineColorPending: Flow<Int> = context.dataStore.data.map { prefs ->
@@ -357,7 +388,11 @@ class SettingsDataStore(private val context: Context) {
     }
 
     suspend fun setGooglePlacesApiKey(apiKey: String) {
-        context.dataStore.edit { it[GOOGLE_PLACES_API_KEY] = apiKey.trim() }
+        val trimmed = apiKey.trim()
+        context.dataStore.edit {
+            if (trimmed.isBlank()) it.remove(GOOGLE_PLACES_API_KEY)
+            else it[GOOGLE_PLACES_API_KEY] = com.trama.app.security.SecretCipher.encrypt(trimmed)
+        }
     }
 
     suspend fun setTimelineColorPending(index: Int) {
@@ -414,6 +449,16 @@ class SettingsDataStore(private val context: Context) {
         context.dataStore.edit { it[INTENT_PATTERNS] = IntentPattern.serialize(patterns) }
     }
 
+    suspend fun resetRecommendedCaptureSettings() {
+        val customPatterns = intentPatterns.first().filter { it.isCustom }
+        context.dataStore.edit { prefs ->
+            prefs[INTENT_PATTERNS] = IntentPattern.serialize(IntentPattern.DEFAULTS + customPatterns)
+            prefs[CAPTURE_PROFILE] = CaptureProfile.STRICT.name
+            prefs[CONTEXT_PRE_ROLL] = DEFAULT_CONTEXT_PRE_ROLL
+            prefs[CONTEXT_POST_ROLL] = DEFAULT_CONTEXT_POST_ROLL
+        }
+    }
+
     /**
      * Convenience: update a single pattern in the list.
      */
@@ -439,6 +484,10 @@ class SettingsDataStore(private val context: Context) {
     suspend fun setCustomKeywords(keywordList: List<String>) {
         val raw = keywordList.joinToString(",") { it.trim().lowercase() }
         context.dataStore.edit { it[CUSTOM_KEYWORDS] = raw }
+    }
+
+    suspend fun setCaptureProfile(profile: CaptureProfile) {
+        context.dataStore.edit { it[CAPTURE_PROFILE] = profile.name }
     }
 
     suspend fun setKeywords(keywordList: List<String>) = setCustomKeywords(keywordList)

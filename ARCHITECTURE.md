@@ -14,12 +14,12 @@ Trama debe leerse como una memoria operativa local-first:
 
 El objetivo del producto es capturar con poca friccion, estructurar despues y permitir recuperar contexto sin convertir al usuario en editor permanente.
 
-## 2. Estado a 2026-05-09
+## 2. Estado a 2026-08-10
 
 ### Movil
 
 - Android app en Kotlin, Compose, Material 3 y Navigation Compose
-- Room compartido en `shared`, version 12
+- Room compartido en `shared`, version 15, con esquemas exportados y migraciones probadas
 - escucha continua con pipeline dedicado
 - captura con `AudioSource.VOICE_RECOGNITION` y fallback a `MIC` si el dispositivo lo rechaza
 - `VoskGateAsr` como gate ligero
@@ -82,7 +82,8 @@ Dependencias relevantes:
 - Compose BOM, Navigation Compose, Wear Compose, Horologist
 - Room, WorkManager, DataStore Preferences
 - Play Services Wearable
-- Vosk Android, sherpa-onnx JNI/assets, MediaPipe GenAI, LiteRT-LM, Gemini SDK
+- Vosk Android 0.3.75, JNA 5.18.1, sherpa-onnx JNI/assets, MediaPipe GenAI, LiteRT-LM, Gemini SDK
+- AGP 9 empaqueta las bibliotecas nativas con alineacion ZIP de 16 KB; CI valida tambien los segmentos ELF ARM64/x86_64
 
 ## 4. UI y navegacion
 
@@ -248,7 +249,7 @@ El chat interpreta preguntas sobre dias, lugares, duraciones, orden de visitas, 
 
 ## 9. Persistencia
 
-Base Room compartida en `shared/data`, version 12.
+Base Room compartida en `shared/data`, version 15.
 
 Entidades:
 
@@ -406,14 +407,13 @@ Estado actual:
 - audio del reloj se transfiere al telefono para procesado local
 - feedback de eliminaciones se guarda localmente en `filesDir/diagnostics/deletion_feedback.json` y se puede borrar desde ajustes
 - Room no esta cifrado
-- Gemini API key se guarda en `SharedPreferences`
-- tokens/model URL de Gemma tambien requieren endurecimiento
+- Gemini API key se cifra con AES-GCM usando una clave no exportable de Android Keystore
+- cualquier otro secreto persistente debe adoptar el mismo patron antes de considerarse endurecido
 - backup JSON depende del destino elegido por el usuario
 
 Deuda:
 
-- almacenamiento seguro para secretos
-- cifrado at-rest
+- cifrado de Room si el modelo de amenaza exige proteccion at-rest adicional al sandbox de Android
 - borrado total/exportado mas visible
 - documentacion clara de retencion de audio y datos
 
@@ -431,33 +431,31 @@ Hay tests unitarios en `app/src/test`, `shared/src/test` y `wear/src/test`, espe
 - chat
 - UI logic helpers
 
-No hay:
-
-- `.github/workflows`
-- suite real de `androidTest`
-- UI tests Compose mantenidos
-- test end-to-end del pipeline completo de audio a persistencia
+La integracion continua en `.github/workflows/android-ci.yml` ejecuta tests
+unitarios, lint, builds de telefono/reloj, control de deriva de esquemas Room, la
+cadena de migraciones en emulador y la comprobacion de bibliotecas nativas de
+16 KB. Existe una suite `shared/src/androidTest` para migraciones. Siguen
+pendientes UI tests Compose mantenidos y un test end-to-end del pipeline completo
+de audio a persistencia.
 
 Comandos utiles:
 
 ```bash
 ./gradlew :shared:compileDebugKotlin :app:compileDebugKotlin :wear:compileDebugKotlin
 ./gradlew testDebugUnitTest
+./gradlew :app:assembleDebug :wear:assembleDebug
+./scripts/check-16kb-alignment.sh app/build/outputs/apk/debug/app-debug.apk wear/build/outputs/apk/debug/wear-debug.apk
 ```
 
 ## 16. Deuda vigente
 
 ### P0
 
-- DI para repositorios, servicios, managers y motores ASR/IA
-- ViewModels para `Home`, `Calendar`, `Chat`, `Settings`, `Recordings`
-- almacenamiento seguro de claves/tokens
 - observabilidad consolidada de salud ASR/IA/sync
 - contrato final de paridad Wear vs movil
 
 ### P1
 
-- CI
 - onboarding
 - UI tests Compose
 - test de integracion del pipeline de captura

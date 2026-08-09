@@ -18,6 +18,7 @@ class SherpaSpeakerVerificationManager(
 
         const val REQUIRED_SAMPLES = 3
         const val MAX_SAMPLES = 5
+        const val RECOMMENDED_SAMPLES = 5
         const val DEFAULT_THRESHOLD = 0.60f
         private const val MIN_ENROLLMENT_DURATION_MS = 1_500L
         private const val MIN_VERIFY_DURATION_MS = 800L

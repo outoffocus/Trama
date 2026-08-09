@@ -90,7 +90,7 @@ class IntentDetectorTest {
 
     @Test
     fun `captureAll true captures full utterance`() {
-        val fullText = "recordar las llaves del coche"
+        val fullText = "recordar llevar las llaves del coche"
         val result = detector.detect(fullText)
         assertNotNull(result)
         assertEquals(fullText, result!!.capturedText)
@@ -109,7 +109,7 @@ class IntentDetectorTest {
 
     @Test
     fun `detectPartial detects intent in longer text`() {
-        val result = detector.detectPartial("recordar comprar")
+        val result = detector.detectPartial("recordar comprar leche")
         assertNotNull(result)
     }
 
@@ -143,14 +143,14 @@ class IntentDetectorTest {
         assertNull(detector.detect("tienes que llamar a Pedro"))
         assertNull(detector.detect("tenemos que tener el mismo formato"))
         assertNull(detector.detect("hay que hacerlo"))
-        assertEquals("tareas", detector.detect("mañana tengo de compra")?.pattern?.id)
-        assertEquals("tareas", detector.detect("tengo de llama a mamá")?.pattern?.id)
-        assertEquals("tareas", detector.detect("tenemos de prepara la reunión")?.pattern?.id)
-        assertEquals("tareas", detector.detect("tengo que recoge el coche")?.pattern?.id)
+        assertNull(detector.detect("mañana tengo de compra"))
+        assertNull(detector.detect("tengo de llama a mamá"))
+        assertNull(detector.detect("tenemos de prepara la reunión"))
+        assertNull(detector.detect("tengo que recoge el coche"))
         assertEquals("tareas", detector.detect("tenemos que comprar jabón")?.pattern?.id)
         assertEquals("tareas", detector.detect("tenemos que ir a Ourense mañana")?.pattern?.id)
-        assertEquals("comunicacion", detector.detect("tenemos que hablar con Tony")?.pattern?.id)
-        assertEquals("tareas", detector.detect("hay que ir a Ourense mañana")?.pattern?.id)
+        assertEquals("tareas", detector.detect("tenemos que hablar con Tony")?.pattern?.id)
+        assertNull(detector.detect("hay que ir a Ourense mañana"))
         assertEquals("tareas", detector.detect("tengo que firmar el contrato")?.pattern?.id)
         assertEquals("tareas", detector.detect("tenemos que verificar el pago")?.pattern?.id)
         assertEquals("tareas", detector.detect("tengo que reservar la comida para el domingo")?.pattern?.id)
@@ -166,7 +166,7 @@ class IntentDetectorTest {
         assertEquals("compromisos", detector.detect("pasado mañana tengo ITV")?.pattern?.id)
         assertEquals("compromisos", detector.detect("tenemos reunión por la tarde")?.pattern?.id)
         assertNull(detector.detect("quedé con Elena el viernes"))
-        assertEquals("compromisos", detector.detect("Lara tiene médico mañana")?.pattern?.id)
-        assertEquals("compromisos", detector.detect("tiene dentista el lunes")?.pattern?.id)
+        assertNull(detector.detect("Lara tiene médico mañana"))
+        assertNull(detector.detect("tiene dentista el lunes"))
     }
 }

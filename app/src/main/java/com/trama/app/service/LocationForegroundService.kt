@@ -1,5 +1,6 @@
 package com.trama.app.service
 
+import android.annotation.SuppressLint
 import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
@@ -117,6 +118,7 @@ class LocationForegroundService : LifecycleService() {
         return null
     }
 
+    @SuppressLint("MissingPermission")
     private fun requestUpdates() {
         if (!hasFineLocationPermission()) {
             Log.w(TAG, "No location permission, stopping service")

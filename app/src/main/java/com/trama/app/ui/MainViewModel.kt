@@ -29,7 +29,8 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch(Dispatchers.IO) {
             val customKeywords = settings.customKeywords.first()
             val intentPatterns = settings.intentPatterns.first()
-            SettingsSyncer(appContext).syncPatterns(intentPatterns, customKeywords)
+            val captureProfile = settings.captureProfile.first()
+            SettingsSyncer(appContext).syncPatterns(intentPatterns, customKeywords, captureProfile)
         }
     }
 

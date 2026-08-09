@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.content.Intent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -11,9 +12,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle as collectAsState
 import androidx.compose.runtime.getValue
 import com.trama.app.service.ServiceController
+import com.trama.app.service.ListenerRecoveryNotifier
+import com.trama.app.summary.RecordingRecoveryWorker
 import com.trama.app.ui.MainViewModel
 import com.trama.app.ui.NavGraph
 import com.trama.app.ui.Routes
@@ -43,9 +46,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        RecordingRecoveryWorker.enqueue(applicationContext)
         val mainViewModel = viewModel
 
-        val shouldStartMicro = ServiceController.shouldBeRunning(this)
+        val shouldStartMicro = ServiceController.shouldBeRunning(this) ||
+            intent?.getBooleanExtra(ListenerRecoveryNotifier.EXTRA_REACTIVATE_LISTENER, false) == true
         if (hasAudioPermission()) {
             if (shouldStartMicro) {
                 startListenerService()
@@ -63,7 +68,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val themeMode by mainViewModel.themeMode.collectAsState(
-                initial = com.trama.app.ui.SettingsDataStore.DEFAULT_THEME_MODE
+                initialValue = com.trama.app.ui.SettingsDataStore.DEFAULT_THEME_MODE
             )
             val darkTheme = when (themeMode) {
                 1 -> false
@@ -78,6 +83,17 @@ class MainActivity : ComponentActivity() {
             TramaTheme(darkTheme = darkTheme) {
                 NavGraph(startDestination = startDestination)
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (!intent.getBooleanExtra(ListenerRecoveryNotifier.EXTRA_REACTIVATE_LISTENER, false)) return
+        if (hasAudioPermission()) {
+            startListenerService()
+        } else {
+            requestPermissions()
         }
     }
 

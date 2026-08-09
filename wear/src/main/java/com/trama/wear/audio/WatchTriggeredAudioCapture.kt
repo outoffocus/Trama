@@ -1,14 +1,18 @@
 package com.trama.wear.audio
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.SystemClock
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 
-class WatchTriggeredAudioCapture {
+class WatchTriggeredAudioCapture(context: Context) {
     companion object {
         private const val SAMPLE_RATE_HZ = 16_000
         private const val READ_SIZE = 1024
@@ -21,7 +25,14 @@ class WatchTriggeredAudioCapture {
         private const val MIN_CAPTURE_RMS = 300.0
     }
 
+    private val appContext = context.applicationContext
+
     suspend fun capture(): ShortArray = withContext(Dispatchers.IO) {
+        if (ContextCompat.checkSelfPermission(appContext, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return@withContext shortArrayOf()
+        }
         val minBufferSize = AudioRecord.getMinBufferSize(
             SAMPLE_RATE_HZ,
             AudioFormat.CHANNEL_IN_MONO,

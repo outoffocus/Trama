@@ -288,8 +288,7 @@ class SummaryGenerator(private val context: Context) {
     }
 
     private fun getApiKey(): String? {
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_API_KEY, null)
+        return com.trama.app.security.SecureSecretStore.getGeminiApiKey(context)
     }
 }
 

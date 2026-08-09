@@ -14,6 +14,9 @@ interface TimelineEventDao {
     @Query("SELECT * FROM timeline_events ORDER BY timestamp DESC")
     fun getAll(): Flow<List<TimelineEvent>>
 
+    @Query("SELECT * FROM timeline_events ORDER BY timestamp DESC")
+    suspend fun getAllOnce(): List<TimelineEvent>
+
     @Query("SELECT * FROM timeline_events WHERE timestamp BETWEEN :startTime AND :endTime ORDER BY timestamp ASC")
     fun byDateRange(startTime: Long, endTime: Long): Flow<List<TimelineEvent>>
 
@@ -25,6 +28,9 @@ interface TimelineEventDao {
 
     @Query("SELECT * FROM timeline_events WHERE type = :type AND source = :source AND dataJson = :dataJson LIMIT 1")
     suspend fun getByTypeSourceAndDataJson(type: String, source: String, dataJson: String): TimelineEvent?
+
+    @Query("SELECT * FROM timeline_events WHERE type = :type AND timestamp = :timestamp AND title = :title LIMIT 1")
+    suspend fun getByNaturalKey(type: String, timestamp: Long, title: String): TimelineEvent?
 
     @Query("SELECT * FROM timeline_events WHERE placeId = :placeId ORDER BY timestamp DESC")
     fun getByPlaceId(placeId: Long): Flow<List<TimelineEvent>>

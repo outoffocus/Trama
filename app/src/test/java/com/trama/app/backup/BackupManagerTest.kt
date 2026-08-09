@@ -173,9 +173,9 @@ class BackupManagerTest {
     }
 
     @Test
-    fun `Backup version defaults to 2`() {
+    fun `Backup version defaults to 3`() {
         val backup = Backup(entries = emptyList())
-        assertEquals(2, backup.version)
+        assertEquals(3, backup.version)
     }
 
     @Test
@@ -186,6 +186,51 @@ class BackupManagerTest {
 
         assertTrue(decoded.entries.isEmpty())
         assertTrue(decoded.recordings.isEmpty())
+    }
+
+    @Test
+    fun `Backup round-trip includes every persisted entity type`() {
+        val backup = Backup(
+            entries = emptyList(),
+            timelineEvents = listOf(
+                BackupManager.BackupTimelineEvent(
+                    id = 3,
+                    type = "DWELL",
+                    timestamp = 10,
+                    title = "Casa",
+                    placeId = 2,
+                    createdAt = 11
+                )
+            ),
+            places = listOf(
+                BackupManager.BackupPlace(
+                    id = 2,
+                    name = "Casa",
+                    latitude = 42.0,
+                    longitude = -8.0,
+                    createdAt = 10,
+                    updatedAt = 11
+                )
+            ),
+            dwellDetectionState = BackupManager.BackupDwellDetectionState(updatedAt = 12),
+            dailyPages = listOf(
+                BackupManager.BackupDailyPage(
+                    dayStartMillis = 1,
+                    date = "2026-08-09",
+                    status = "FINAL",
+                    generatedAt = 2,
+                    updatedAt = 3
+                )
+            )
+        )
+
+        val decoded = json.decodeFromString<Backup>(json.encodeToString(backup))
+
+        assertEquals(1, decoded.timelineEvents.size)
+        assertEquals(2L, decoded.timelineEvents.single().placeId)
+        assertEquals("Casa", decoded.places.single().name)
+        assertNotNull(decoded.dwellDetectionState)
+        assertEquals("2026-08-09", decoded.dailyPages.single().date)
     }
 
     // ── getBackupFileName ──

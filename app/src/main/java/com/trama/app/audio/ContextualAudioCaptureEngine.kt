@@ -16,11 +16,15 @@ import com.trama.shared.audio.LightweightGateAsr
 import com.trama.shared.audio.NoOpLightweightGateAsr
 import com.trama.shared.speech.SimpleVAD
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.max
 
 /**
@@ -28,6 +32,7 @@ import kotlin.math.max
  * bounded windows around detected voice activity.
  *
  * Gate ASR runs in separate coroutines so the audio read loop is never blocked.
+ * Results are returned to the read loop before they may mutate capture state.
  * Audio is never persisted. Windows are assembled entirely in RAM and handed off to the ASR layer.
  */
 class ContextualAudioCaptureEngine(
@@ -52,7 +57,6 @@ class ContextualAudioCaptureEngine(
         private const val MAX_CONSECUTIVE_EMPTY_READS = 120
         private const val ADAPTIVE_TRIGGER_SILENCE_MS = 2_500L
         private const val ADAPTIVE_SHORT_PHRASE_SILENCE_MS = 3_000L
-        private const val PERIODIC_FALLBACK_WINDOW_MS = 10_000L
         private const val GATE_EVAL_BACKOFF_THRESHOLD = 3
         private const val GATE_EVAL_SKIP_THRESHOLD = 6
         // Pre-filter for periodic gate evals: require this much sustained VAD-speech
@@ -64,14 +68,15 @@ class ContextualAudioCaptureEngine(
         // This is the dominant cost saver in continuous-speech environments where
         // the energy-based VAD pre-filter cannot help.
         private const val AMBIENT_BACKOFF_THRESHOLD = 1
+        private val nextCaptureId = AtomicLong(0L)
     }
 
     private data class ActiveCapture(
+        val captureId: Long,
         val config: ContextualCaptureConfig,
         val assembler: ContextualCaptureAssembler,
         val preRollWindow: CapturedAudioWindow,
         var triggerMatched: Boolean = false,
-        var triggerAlreadyDetected: Boolean = false,
         var lastGateTranscript: String = "",
         var firstTriggerAtSample: Int = -1,
         var lastGateCheckSample: Int = 0,
@@ -82,17 +87,25 @@ class ContextualAudioCaptureEngine(
         var consecutiveEmptyGateEvals: Int = 0
     )
 
+    private data class PeriodicGateResult(
+        val captureId: Long,
+        val coveredThroughSample: Int,
+        val snapshot: CapturedAudioWindow,
+        val evaluation: GateEvaluation?,
+        val error: Throwable? = null
+    )
+
     @Volatile
     private var config: ContextualCaptureConfig = sanitize(initialConfig)
 
     @Volatile
     private var running = false
 
-    var onWindowCaptured: ((CapturedAudioWindow, String) -> Unit)? = null
+    var onWindowCaptured: ((ContextualCaptureEnvelope) -> Unit)? = null
     var onStatusChanged: ((String) -> Unit)? = null
-    var onGateMatch: ((String) -> Unit)? = null
-    var onGateEvaluated: ((String, Boolean, String) -> Unit)? = null
-    var onSegmentFinalized: ((String, Long, Int, Boolean) -> Unit)? = null
+    var onGateMatch: ((Long, String) -> Unit)? = null
+    var onGateEvaluated: ((Long, String, Boolean, String) -> Unit)? = null
+    var onSegmentFinalized: ((Long, String, Long, Int, Boolean) -> Unit)? = null
     var onGateEvalSkipped: ((reason: String, speechMs: Long, thresholdMs: Long) -> Unit)? = null
     var shouldCaptureUnmatchedFinalWindow: ((CapturedAudioWindow, String, String) -> Boolean)? = null
     var shouldCaptureUnmatchedGateWindow: ((Long, String, String, Boolean) -> Boolean)? = null
@@ -129,62 +142,84 @@ class ContextualAudioCaptureEngine(
         )
         val vad = SimpleVAD()
         var activeCapture: ActiveCapture? = null
+        val periodicGateResults = Channel<PeriodicGateResult>(Channel.UNLIMITED)
+        val finalizationSequencer = CaptureProcessingSequencer()
         // Engine-level: counts captures finalized without a trigger match.
         // Resets to 0 on the first match. Drives the ambient-speech backoff.
-        var consecutiveCapsWithoutMatch = 0
+        val consecutiveCapsWithoutMatch = AtomicInteger(0)
 
-        fun launchGateEval(capture: ActiveCapture, isFinal: Boolean) {
+        fun launchGateEval(capture: ActiveCapture) {
             if (capture.gateJob?.isActive == true) return
             val coveredThroughSample = capture.capturedSamples
             val snapshot = capture.assembler.finalizeWindow(capture.preRollWindow)
+            val captureId = capture.captureId
+            val captureConfig = capture.config
             capture.gateJob = scope.launch(Dispatchers.IO) {
                 try {
                     val eval = evaluateGateWindows(
                         snapshot,
-                        isFinal = isFinal,
-                        config = capture.config,
-                        includeFullWindow = isFinal
+                        isFinal = false,
+                        config = captureConfig,
+                        includeFullWindow = false
                     )
-                    onGateEvaluated?.invoke(eval.bestTranscript, eval.matched, eval.debugSummary)
-                    capture.lastGateTranscript = eval.bestTranscript
-                    if (!isFinal) {
-                        capture.lastGateEvalCoveredSample = maxOf(
-                            capture.lastGateEvalCoveredSample,
-                            coveredThroughSample
-                        )
-                        if (eval.bestTranscript.isBlank()) {
-                            capture.consecutiveEmptyGateEvals += 1
-                        } else {
-                            capture.consecutiveEmptyGateEvals = 0
-                        }
-                    }
-                    if (eval.matched && !capture.triggerAlreadyDetected) {
-                        capture.triggerAlreadyDetected = true
-                        if (!capture.triggerMatched) {
-                            capture.triggerMatched = true
-                            capture.firstTriggerAtSample = capture.capturedSamples
-                            onGateMatch?.invoke(eval.bestTranscript)
-                            onStatusChanged?.invoke("trigger_detected")
-                        }
-                    } else if (!eval.matched && !isFinal) {
-                        val fallbackWindowMs = minOf(snapshot.durationMs(), PERIODIC_FALLBACK_WINDOW_MS)
-                        if (shouldCaptureUnmatchedGateWindow?.invoke(
-                                fallbackWindowMs,
-                                eval.bestTranscript,
-                                eval.debugSummary,
-                                false
-                            ) == true
-                        ) {
-                            val fallbackWindow = snapshot.tailWindow(PERIODIC_FALLBACK_WINDOW_MS)
-                            onStatusChanged?.invoke("trigger_uncertain")
-                            onWindowCaptured?.invoke(fallbackWindow, "uncertain_fallback")
-                        }
-                    }
+                    periodicGateResults.trySend(
+                        PeriodicGateResult(captureId, coveredThroughSample, snapshot, eval)
+                    )
                 } catch (ce: kotlinx.coroutines.CancellationException) {
                     throw ce
                 } catch (t: Throwable) {
-                    Log.w(TAG, "Gate eval failed", t)
-                    if (isFinal) onGateEvaluated?.invoke("(error: ${t.message})", false, "exception")
+                    periodicGateResults.trySend(
+                        PeriodicGateResult(captureId, coveredThroughSample, snapshot, null, t)
+                    )
+                }
+            }
+        }
+
+        fun applyPeriodicGateResults() {
+            while (true) {
+                val result = periodicGateResults.tryReceive().getOrNull() ?: break
+                val capture = activeCapture
+                if (capture == null || !CaptureGateResultPolicy.belongsToActiveCapture(
+                        capture.captureId,
+                        result.captureId
+                    )
+                ) {
+                    Log.d(TAG, "Ignoring stale gate result captureId=${result.captureId}")
+                    continue
+                }
+                val error = result.error
+                if (error != null) {
+                    Log.w(TAG, "Gate eval failed captureId=${result.captureId}", error)
+                    continue
+                }
+                val eval = result.evaluation ?: continue
+                onGateEvaluated?.invoke(
+                    capture.captureId,
+                    eval.bestTranscript,
+                    eval.matched,
+                    eval.debugSummary
+                )
+                capture.lastGateTranscript = eval.bestTranscript
+                capture.lastGateEvalCoveredSample = maxOf(
+                    capture.lastGateEvalCoveredSample,
+                    result.coveredThroughSample
+                )
+                capture.consecutiveEmptyGateEvals = if (eval.bestTranscript.isBlank()) {
+                    capture.consecutiveEmptyGateEvals + 1
+                } else {
+                    0
+                }
+                if (eval.matched && !capture.triggerMatched) {
+                    capture.triggerMatched = true
+                    // Correlate the trigger with the immutable audio snapshot that
+                    // was actually evaluated, not with a later read-loop position.
+                    capture.firstTriggerAtSample = CaptureGateResultPolicy.firstTriggerAtSample(
+                        currentValue = capture.firstTriggerAtSample,
+                        matched = true,
+                        coveredThroughSample = result.coveredThroughSample
+                    )
+                    onGateMatch?.invoke(capture.captureId, eval.bestTranscript)
+                    onStatusChanged?.invoke("trigger_detected")
                 }
             }
         }
@@ -193,11 +228,18 @@ class ContextualAudioCaptureEngine(
             val captureConfig = config
             val assembler = ContextualCaptureAssembler(captureConfig)
             activeCapture = ActiveCapture(
+                captureId = nextCaptureId.incrementAndGet(),
                 config = captureConfig,
                 assembler = assembler,
                 preRollWindow = assembler.beginCapture(rollingBuffer)
             )
             onStatusChanged?.invoke(if (gateAsr.isAvailable) "gating" else "capturing")
+        }
+
+        fun enqueueFinalization(block: suspend () -> Unit) {
+            scope.launch(Dispatchers.IO, start = CoroutineStart.UNDISPATCHED) {
+                finalizationSequencer.process(block)
+            }
         }
 
         fun finalizeCapture(reason: String) {
@@ -207,6 +249,7 @@ class ContextualAudioCaptureEngine(
             val finalWindow = capture.assembler.finalizeWindow(capture.preRollWindow)
             val dropped = capture.assembler.droppedSampleCount
             onSegmentFinalized?.invoke(
+                capture.captureId,
                 reason,
                 finalWindow.durationMs(),
                 dropped,
@@ -231,11 +274,13 @@ class ContextualAudioCaptureEngine(
 
             if (gateAsr.isAvailable) {
                 if (capture.triggerMatched) {
-                    consecutiveCapsWithoutMatch = 0
-                    onStatusChanged?.invoke("trigger_detected")
-                    onWindowCaptured?.invoke(finalWindow, "trigger")
-                    onStatusChanged?.invoke("rearmed")
-                    onStatusChanged?.invoke("listening")
+                    enqueueFinalization {
+                        consecutiveCapsWithoutMatch.set(0)
+                        onStatusChanged?.invoke("trigger_detected")
+                        onWindowCaptured?.invoke(capture.toEnvelope(finalWindow, "trigger"))
+                        onStatusChanged?.invoke("rearmed")
+                        onStatusChanged?.invoke("listening")
+                    }
                     return
                 }
 
@@ -248,7 +293,7 @@ class ContextualAudioCaptureEngine(
                 val periodicCoverageReachesFinalTail =
                     capture.lastGateEvalCoveredSample > 0 &&
                         capture.capturedSamples - capture.lastGateEvalCoveredSample <= finalTailSamples
-                scope.launch(Dispatchers.IO) {
+                enqueueFinalization {
                     try {
                         val eval = evaluateGateWindows(
                             finalWindow,
@@ -256,14 +301,25 @@ class ContextualAudioCaptureEngine(
                             config = capture.config,
                             includeFullWindow = !periodicCoverageReachesFinalTail
                         )
-                        onGateEvaluated?.invoke(eval.bestTranscript, eval.matched, eval.debugSummary)
+                        onGateEvaluated?.invoke(
+                            capture.captureId,
+                            eval.bestTranscript,
+                            eval.matched,
+                            eval.debugSummary
+                        )
                         if (eval.matched || capture.triggerMatched) {
-                            consecutiveCapsWithoutMatch = 0
+                            consecutiveCapsWithoutMatch.set(0)
                             if (eval.matched) {
-                                onGateMatch?.invoke(eval.bestTranscript)
+                                onGateMatch?.invoke(capture.captureId, eval.bestTranscript)
                             }
                             onStatusChanged?.invoke("trigger_detected")
-                            onWindowCaptured?.invoke(finalWindow, "trigger")
+                            onWindowCaptured?.invoke(
+                                capture.toEnvelope(
+                                    finalWindow,
+                                    "trigger",
+                                    eval.bestTranscript.takeIf { eval.matched }
+                                )
+                            )
                         } else if (shouldCaptureUnmatchedFinalWindow?.invoke(
                                 finalWindow,
                                 eval.bestTranscript,
@@ -276,26 +332,39 @@ class ContextualAudioCaptureEngine(
                                 true
                             ) == true
                         ) {
-                            consecutiveCapsWithoutMatch += 1
+                            consecutiveCapsWithoutMatch.incrementAndGet()
                             onStatusChanged?.invoke("trigger_uncertain")
-                            onWindowCaptured?.invoke(finalWindow, "uncertain_fallback")
+                            onWindowCaptured?.invoke(
+                                capture.toEnvelope(
+                                    finalWindow,
+                                    "uncertain_fallback",
+                                    eval.bestTranscript
+                                )
+                            )
                         } else {
-                            consecutiveCapsWithoutMatch += 1
+                            consecutiveCapsWithoutMatch.incrementAndGet()
                         }
                     } catch (ce: kotlinx.coroutines.CancellationException) {
                         throw ce
                     } catch (t: Throwable) {
                         Log.w(TAG, "Final gate eval failed", t)
-                        onGateEvaluated?.invoke("(error: ${t.message})", false, "exception")
+                        onGateEvaluated?.invoke(
+                            capture.captureId,
+                            "(error: ${t.message})",
+                            false,
+                            "exception"
+                        )
                     } finally {
                         onStatusChanged?.invoke("rearmed")
                         onStatusChanged?.invoke("listening")
                     }
                 }
             } else {
-                onWindowCaptured?.invoke(finalWindow, "no_gate")
-                onStatusChanged?.invoke("rearmed")
-                onStatusChanged?.invoke("listening")
+                enqueueFinalization {
+                    onWindowCaptured?.invoke(capture.toEnvelope(finalWindow, "no_gate"))
+                    onStatusChanged?.invoke("rearmed")
+                    onStatusChanged?.invoke("listening")
+                }
             }
         }
 
@@ -343,6 +412,7 @@ class ContextualAudioCaptureEngine(
                     continue
                 }
                 consecutiveEmptyReads = 0
+                applyPeriodicGateResults()
 
                 vad.processFrame(buffer, read)
                 val frameDurationMs = (read.toLong() * 1000L) / loopConfig.sampleRateHz
@@ -355,7 +425,8 @@ class ContextualAudioCaptureEngine(
 
                     if (gateAsr.isAvailable && capture.postRollRemainingSamples < 0) {
                         val minCheckSamples = ((MIN_TRIGGER_CHECK_MS * capture.config.sampleRateHz) / 1000L).toInt()
-                        val ambientBackoff = consecutiveCapsWithoutMatch >= AMBIENT_BACKOFF_THRESHOLD
+                        val ambientBackoff =
+                            consecutiveCapsWithoutMatch.get() >= AMBIENT_BACKOFF_THRESHOLD
                         val thermalThrottled = isThrottled()
                         val backoffFactor = when {
                             thermalThrottled -> Int.MAX_VALUE
@@ -379,7 +450,7 @@ class ContextualAudioCaptureEngine(
                             capture.lastGateCheckSample = capture.capturedSamples
                             onGateEvalSkipped?.invoke(
                                 "ambient_backoff",
-                                consecutiveCapsWithoutMatch.toLong(),
+                                consecutiveCapsWithoutMatch.get().toLong(),
                                 AMBIENT_BACKOFF_THRESHOLD.toLong()
                             )
                         }
@@ -394,7 +465,7 @@ class ContextualAudioCaptureEngine(
                                 if (speechMs >= MIN_SPEECH_MS_BEFORE_GATE_EVAL) {
                                     vad.consumeSpeechMs()
                                     capture.lastGateCheckSample = capture.capturedSamples
-                                    launchGateEval(capture, isFinal = false)
+                                    launchGateEval(capture)
                                 } else {
                                     // Advance the cursor anyway so we re-check on the next interval
                                     // instead of spinning every frame.
@@ -444,6 +515,7 @@ class ContextualAudioCaptureEngine(
             }
         } finally {
             running = false
+            periodicGateResults.close()
             try {
                 audioRecord.stop()
             } catch (_: Exception) {
@@ -567,6 +639,26 @@ class ContextualAudioCaptureEngine(
         } else {
             triggerAware
         }
+    }
+
+    private fun ActiveCapture.toEnvelope(
+        window: CapturedAudioWindow,
+        source: String,
+        gateTranscriptOverride: String? = null
+    ): ContextualCaptureEnvelope {
+        return ContextualCaptureEnvelope(
+            captureId = captureId,
+            window = window.copy(
+                preRollPcm = window.preRollPcm.copyOf(),
+                livePcm = window.livePcm.copyOf()
+            ),
+            source = source,
+            gateTranscript = gateTranscriptOverride
+                ?.takeIf { it.isNotBlank() }
+                ?: lastGateTranscript.takeIf { it.isNotBlank() },
+            triggerAtSample = firstTriggerAtSample.takeIf { it >= 0 },
+            capturedSamples = capturedSamples
+        )
     }
 
     private data class GateEvaluation(

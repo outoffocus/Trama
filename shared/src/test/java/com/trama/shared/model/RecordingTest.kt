@@ -41,6 +41,7 @@ class RecordingTest {
         assertNull(r.title)
         assertNull(r.summary)
         assertNull(r.keyPoints)
+        assertNull(r.audioFilePath)
     }
 
     @Test
@@ -71,6 +72,8 @@ class RecordingStatusTest {
 
     @Test
     fun `status constants have correct values`() {
+        assertEquals("CAPTURING", RecordingStatus.CAPTURING)
+        assertEquals("TRANSCRIBING", RecordingStatus.TRANSCRIBING)
         assertEquals("PENDING", RecordingStatus.PENDING)
         assertEquals("PROCESSING", RecordingStatus.PROCESSING)
         assertEquals("COMPLETED", RecordingStatus.COMPLETED)
@@ -78,13 +81,15 @@ class RecordingStatusTest {
     }
 
     @Test
-    fun `all four statuses are distinct`() {
+    fun `all statuses are distinct`() {
         val statuses = setOf(
+            RecordingStatus.CAPTURING,
+            RecordingStatus.TRANSCRIBING,
             RecordingStatus.PENDING,
             RecordingStatus.PROCESSING,
             RecordingStatus.COMPLETED,
             RecordingStatus.FAILED
         )
-        assertEquals(4, statuses.size)
+        assertEquals(6, statuses.size)
     }
 }

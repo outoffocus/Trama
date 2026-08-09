@@ -30,6 +30,21 @@ object ServiceController {
         WATCH
     }
 
+    /**
+     * Runtime state reported by [KeywordListenerService].
+     *
+     * `shouldBeRunning()` remains the persisted user preference. This state is
+     * deliberately runtime-only: after process recreation the service itself
+     * must report that it has started again instead of the UI assuming it did.
+     */
+    enum class ListenerState {
+        STOPPED,
+        STARTING,
+        LISTENING,
+        PAUSED,
+        FAILED
+    }
+
     private enum class ServiceMode {
         IDLE,
         LISTENING,
@@ -38,13 +53,6 @@ object ServiceController {
     }
 
     private const val START_DEBOUNCE_MS = 1_500L
-
-    data class WatchdogStartResult(
-        val started: Boolean,
-        val errorType: String? = null,
-        val message: String? = null,
-        val stack: String? = null
-    )
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val transitionLock = Any()
@@ -79,6 +87,9 @@ object ServiceController {
     private val _isRunning = MutableStateFlow(false)
     val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()
 
+    private val _listenerState = MutableStateFlow(ListenerState.STOPPED)
+    val listenerState: StateFlow<ListenerState> = _listenerState.asStateFlow()
+
     private val _isWatchActive = MutableStateFlow(false)
     val isWatchActive: StateFlow<Boolean> = _isWatchActive.asStateFlow()
 
@@ -106,8 +117,7 @@ object ServiceController {
                 text = "service_start_requested"
             )
             val intent = Intent(context, KeywordListenerService::class.java)
-            ContextCompat.startForegroundService(context, intent)
-            _isRunning.value = true
+            requestListenerStart(context, intent, reason = "user_start")
             _isWatchActive.value = false
             modeRef.set(ServiceMode.LISTENING)
         }
@@ -133,7 +143,7 @@ object ServiceController {
             )
             val intent = Intent(context, KeywordListenerService::class.java)
             context.stopService(intent)
-            _isRunning.value = false
+            updateListenerState(ListenerState.STOPPED)
             if (!RecordingState.isRecording.value && !_isWatchActive.value) {
                 modeRef.set(ServiceMode.IDLE)
             }
@@ -158,8 +168,7 @@ object ServiceController {
             )
             val intent = Intent(context, KeywordListenerService::class.java)
                 .putExtra("rearmReason", reason)
-            ContextCompat.startForegroundService(context, intent)
-            _isRunning.value = true
+            requestListenerStart(context, intent, reason = "rearm:$reason")
             _isWatchActive.value = false
             modeRef.set(ServiceMode.LISTENING)
         }
@@ -219,7 +228,7 @@ object ServiceController {
 
         setSuspendReason(context, SuspendReason.RECORDING)
         context.stopService(Intent(context, KeywordListenerService::class.java))
-        _isRunning.value = false
+        updateListenerState(ListenerState.STOPPED)
         CaptureLog.event(
             gate = CaptureLog.Gate.SERVICE,
             result = CaptureLog.Result.OK,
@@ -239,7 +248,7 @@ object ServiceController {
         synchronized(transitionLock) {
             setSuspendReason(context, SuspendReason.WATCH)
             context.stopService(Intent(context, KeywordListenerService::class.java))
-            _isRunning.value = false
+            updateListenerState(ListenerState.STOPPED)
             if (RecordingState.isRecording.value) {
                 RecordingState.stopRecording(context)
             }
@@ -259,7 +268,7 @@ object ServiceController {
             if (_isRunning.value) {
                 setSuspendReason(context, SuspendReason.WATCH)
                 context.stopService(Intent(context, KeywordListenerService::class.java))
-                _isRunning.value = false
+                updateListenerState(ListenerState.STOPPED)
             }
             if (wasRecording) {
                 RecordingState.stopRecording(context)
@@ -297,6 +306,7 @@ object ServiceController {
             SettingsSyncer(appContext).syncPatterns(
                 patterns = settings.intentPatterns.first(),
                 customKeywords = settings.customKeywords.first(),
+                captureProfile = settings.captureProfile.first(),
                 force = true
             )
         }
@@ -308,8 +318,7 @@ object ServiceController {
             if (wasListening && !RecordingState.isRecording.value) {
                 setSuspendReason(context, SuspendReason.NONE)
                 val intent = Intent(context, KeywordListenerService::class.java)
-                ContextCompat.startForegroundService(context, intent)
-                _isRunning.value = true
+                requestListenerStart(context, intent, reason = "watch_transfer_failed")
                 modeRef.set(ServiceMode.LISTENING)
             } else if (!RecordingState.isRecording.value) {
                 modeRef.set(ServiceMode.IDLE)
@@ -330,35 +339,6 @@ object ServiceController {
             .getOrDefault(SuspendReason.NONE)
     }
 
-    fun startFromWatchdog(context: Context, reason: String): WatchdogStartResult {
-        synchronized(transitionLock) {
-            if (!shouldBeRunning(context)) {
-                return WatchdogStartResult(false, errorType = "should_not_run")
-            }
-            val suspendReason = suspendReason(context)
-            if (suspendReason != SuspendReason.NONE) {
-                return WatchdogStartResult(false, errorType = "suspended", message = suspendReason.name)
-            }
-            if (shouldSuppressStart("watchdog:$reason")) return WatchdogStartResult(started = true)
-            return try {
-                val intent = Intent(context, KeywordListenerService::class.java)
-                    .putExtra("watchdogReason", reason)
-                ContextCompat.startForegroundService(context, intent)
-                _isRunning.value = true
-                _isWatchActive.value = false
-                modeRef.set(ServiceMode.LISTENING)
-                WatchdogStartResult(started = true)
-            } catch (t: Throwable) {
-                WatchdogStartResult(
-                    started = false,
-                    errorType = t.javaClass.simpleName,
-                    message = t.message,
-                    stack = android.util.Log.getStackTraceString(t).take(2_000)
-                )
-            }
-        }
-    }
-
     private fun setSuspendReason(context: Context, reason: SuspendReason) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
@@ -366,10 +346,45 @@ object ServiceController {
             .commit()
     }
 
+    fun notifyStarting() = updateListenerState(ListenerState.STARTING)
+
+    fun notifyListening() = updateListenerState(ListenerState.LISTENING)
+
+    fun notifyPaused() = updateListenerState(ListenerState.PAUSED)
+
+    fun notifyFailed() = updateListenerState(ListenerState.FAILED)
+
     fun notifyStopped() {
-        _isRunning.value = false
+        updateListenerState(ListenerState.STOPPED)
         if (!RecordingState.isRecording.value && !_isWatchActive.value) {
             modeRef.set(ServiceMode.IDLE)
+        }
+    }
+
+    private fun updateListenerState(state: ListenerState) {
+        _listenerState.value = state
+        _isRunning.value = state != ListenerState.STOPPED
+    }
+
+    private fun requestListenerStart(context: Context, intent: Intent, reason: String): Boolean {
+        return try {
+            ContextCompat.startForegroundService(context, intent)
+            updateListenerState(ListenerState.STARTING)
+            true
+        } catch (error: RuntimeException) {
+            updateListenerState(ListenerState.STOPPED)
+            val notified = ListenerRecoveryNotifier.show(context, reason)
+            CaptureLog.event(
+                gate = CaptureLog.Gate.SERVICE,
+                result = CaptureLog.Result.REJECT,
+                text = "service_start_deferred_to_user",
+                meta = mapOf(
+                    "reason" to reason,
+                    "error" to error.javaClass.simpleName,
+                    "notificationShown" to notified
+                )
+            )
+            false
         }
     }
 

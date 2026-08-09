@@ -31,6 +31,9 @@ object NotificationConfig {
     /** Foreground notification for passive location tracking. */
     const val CHANNEL_LOCATION = "trama_location"
 
+    /** Prompt shown when Android requires user interaction to restore the microphone. */
+    const val CHANNEL_LISTENER_RECOVERY = "trama_listener_recovery"
+
     // ── Notification IDs ──
 
     /** Foreground notification ID for KeywordListenerService. */
@@ -50,4 +53,7 @@ object NotificationConfig {
 
     /** Foreground notification ID for location tracking. */
     const val ID_LOCATION = 3
+
+    /** Notification asking the user to restore continuous listening. */
+    const val ID_LISTENER_RECOVERY = 4
 }

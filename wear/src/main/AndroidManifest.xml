@@ -6,6 +6,7 @@
 
     <!-- Microphone for speech recognition -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Foreground service for always-on keyword listening -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -16,12 +17,16 @@
 
     <application
         android:name=".TramaWearApplication"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.DeviceDefault">
+
+        <meta-data
+            android:name="com.google.android.wearable.standalone"
+            android:value="false" />
 
         <activity
             android:name=".ui.WatchMainActivity"

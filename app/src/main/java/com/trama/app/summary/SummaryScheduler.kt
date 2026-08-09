@@ -54,7 +54,11 @@ object SummaryScheduler {
     fun runNow(context: Context) {
         val workRequest = androidx.work.OneTimeWorkRequestBuilder<DailySummaryWorker>()
             .build()
-        WorkManager.getInstance(context).enqueue(workRequest)
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "daily-summary-now",
+            androidx.work.ExistingWorkPolicy.REPLACE,
+            workRequest
+        )
         Log.i(TAG, "Daily summary triggered immediately")
     }
 

@@ -99,7 +99,7 @@ class IntentPatternTest {
     @Test
     fun `DEFAULTS contains expected pattern IDs`() {
         val ids = IntentPattern.DEFAULTS.map { it.id }
-        assertEquals(listOf("recordatorios", "tareas", "comunicacion", "compromisos"), ids)
+        assertEquals(listOf("recordatorios", "tareas", "compromisos"), ids)
     }
 
     @Test
@@ -122,5 +122,52 @@ class IntentPatternTest {
         for (pattern in IntentPattern.DEFAULTS) {
             assertTrue("${pattern.id} should capture all", pattern.captureAll)
         }
+    }
+
+    @Test
+    fun `compact preset stays below twenty five explicit phrases`() {
+        val explicitPhrases = IntentPattern.DEFAULTS.sumOf { it.normalizedTriggers.size }
+
+        assertTrue("explicitPhrases=$explicitPhrases", explicitPhrases <= 25)
+        assertEquals(
+            explicitPhrases,
+            IntentPattern.DEFAULTS.flatMap { it.normalizedTriggers }.distinct().size
+        )
+    }
+
+    @Test
+    fun `compiled trigger regex respects lexical boundaries`() {
+        val regex = IntentPattern.buildRegex(listOf("cita", "app"))
+
+        assertTrue(regex.containsMatchIn("tengo cita mañana"))
+        assertFalse(regex.containsMatchIn("necesitar más tiempo"))
+        assertFalse(regex.containsMatchIn("mensaje por whatsapp"))
+    }
+
+    @Test
+    fun `current preset preserves removed built-in trigger`() {
+        val reminders = IntentPattern.DEFAULTS.first { it.id == "recordatorios" }
+            .copy(triggers = listOf("nota mental"))
+
+        val restored = IntentPattern.deserialize(IntentPattern.serialize(listOf(reminders)))
+
+        assertEquals(listOf("nota mental"), restored.first { it.id == "recordatorios" }.triggers)
+    }
+
+    @Test
+    fun `legacy expanded preset is compacted while custom additions survive`() {
+        val legacy = IntentPattern(
+            id = "tareas",
+            label = "Tareas",
+            triggers = listOf("tengo que comprar", "tengo de compra", "mi frase privada")
+        )
+
+        val restored = IntentPattern.deserialize(IntentPattern.serialize(listOf(legacy)))
+            .first { it.id == "tareas" }
+
+        assertEquals(IntentPattern.CURRENT_PRESET_VERSION, restored.presetVersion)
+        assertTrue(restored.triggers.contains("mi frase privada"))
+        assertFalse(restored.triggers.contains("tengo de compra"))
+        assertTrue(restored.triggers.size < 10)
     }
 }

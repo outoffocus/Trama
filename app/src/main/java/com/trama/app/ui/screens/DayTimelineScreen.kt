@@ -16,7 +16,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle as collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,28 +51,28 @@ fun DayTimelineScreen(
     val dayEndMillis = remember(dayStartMillis) {
         com.trama.shared.util.DayRange.of(dayStartMillis).endExclusiveMs
     }
-    val entries by repository.byDateRange(dayStartMillis, dayEndMillis).collectAsState(initial = emptyList())
-    val recordings by repository.getAllRecordings().collectAsState(initial = emptyList())
+    val entries by repository.byDateRange(dayStartMillis, dayEndMillis).collectAsState(initialValue = emptyList())
+    val recordings by repository.getAllRecordings().collectAsState(initialValue = emptyList())
     val storedTimelineEvents by repository.getTimelineEventsByDateRange(
         dayStartMillis,
         dayEndMillis
-    ).collectAsState(initial = emptyList())
+    ).collectAsState(initialValue = emptyList())
     val processingEntryIds by EntryProcessingState.processingIds.collectAsState()
     val processingBackends by EntryProcessingState.processingBackends.collectAsState()
     val pendingColorIndex by settings.timelineColorPending.collectAsState(
-        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PENDING
+        initialValue = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PENDING
     )
     val completedColorIndex by settings.timelineColorCompleted.collectAsState(
-        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_COMPLETED
+        initialValue = SettingsDataStore.DEFAULT_TIMELINE_COLOR_COMPLETED
     )
     val recordingColorIndex by settings.timelineColorRecording.collectAsState(
-        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_RECORDING
+        initialValue = SettingsDataStore.DEFAULT_TIMELINE_COLOR_RECORDING
     )
     val placeColorIndex by settings.timelineColorPlace.collectAsState(
-        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PLACE
+        initialValue = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PLACE
     )
     val calendarColorIndex by settings.timelineColorCalendar.collectAsState(
-        initial = SettingsDataStore.DEFAULT_TIMELINE_COLOR_CALENDAR
+        initialValue = SettingsDataStore.DEFAULT_TIMELINE_COLOR_CALENDAR
     )
     val timelineAccentConfig = remember(
         pendingColorIndex,

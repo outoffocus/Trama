@@ -37,7 +37,7 @@ class IntentDetectorTest {
 
     @Test
     fun `detects normalized trigger when ASR drops accents`() {
-        val result = detector.detect("acuerdate de pagar el recibo")
+        val result = detector.detect("recuerdame pagar el recibo")
         assertNotNull(result)
         assertEquals("recordatorios", result!!.pattern?.id)
     }
@@ -73,14 +73,59 @@ class IntentDetectorTest {
         assertNull(result!!.pattern)
         assertEquals("proyecto alpha", result.customKeyword)
         assertEquals("proyecto alpha", result.label)
+        assertTrue(result.confidence >= 0.75f)
+        assertEquals("proyecto alpha", result.matchedTrigger)
+        assertTrue(result.scoreReasons.contains("user_keyword"))
+    }
+
+    @Test
+    fun `word boundaries prevent matches inside larger words`() {
+        detector.setCustomKeywords(listOf("app", "cita", "recordar"))
+
+        assertNull(detector.detect("he contestado por whatsapp"))
+        assertNull(detector.detect("necesariamente revisar el diseño"))
+        assertNull(detector.detect("los recordatorios están desactivados"))
+    }
+
+    @Test
+    fun `strongest candidate wins instead of first configured candidate`() {
+        detector.setPatterns(
+            listOf(
+                IntentPattern("generic", "Genérico", listOf("proyecto")),
+                IntentPattern("specific", "Específico", listOf("proyecto atlas"))
+            )
+        )
+
+        val result = detector.detect("revisar proyecto atlas mañana")
+
+        assertEquals("specific", result?.pattern?.id)
+        assertEquals("proyecto atlas", result?.matchedTrigger)
+    }
+
+    @Test
+    fun `capture from trigger uses offsets from original punctuated text`() {
+        detector.setPatterns(
+            listOf(
+                IntentPattern(
+                    id = "project",
+                    label = "Proyecto",
+                    triggers = listOf("proyecto alpha"),
+                    captureAll = false
+                )
+            )
+        )
+
+        val result = detector.detect("oye, proyecto alpha mañana")
+
+        assertEquals("proyecto alpha mañana", result?.capturedText)
     }
 
     @Test
     fun `custom keyword matching is case insensitive`() {
-        detector.setCustomKeywords(listOf("IMPORTANTE"))
-        val result = detector.detect("esto es importante para el equipo")
+        detector.setCustomKeywords(listOf("PROYECTO IMPORTANTE"))
+        val result = detector.detect("esto es proyecto importante para el equipo")
         assertNotNull(result)
-        assertEquals("IMPORTANTE", result!!.customKeyword)
+        assertEquals("PROYECTO IMPORTANTE", result!!.customKeyword)
     }
 
     @Test
@@ -94,10 +139,10 @@ class IntentDetectorTest {
 
     @Test
     fun `setCustomKeywords filters blank entries`() {
-        detector.setCustomKeywords(listOf("", "  ", "valid"))
-        val result = detector.detect("esto es valid para nosotros")
+        detector.setCustomKeywords(listOf("", "  ", "valid key"))
+        val result = detector.detect("esto es valid key para nosotros")
         assertNotNull(result)
-        assertEquals("valid", result!!.customKeyword)
+        assertEquals("valid key", result!!.customKeyword)
     }
 
     @Test
@@ -143,32 +188,43 @@ class IntentDetectorTest {
     }
 
     @Test
-    fun `detects explicit actionable forms and rejects weak ownership`() {
-        assertEquals("tareas", detector.detect("hay que llamar a Elena mañana")?.pattern?.id)
-        assertEquals("tareas", detector.detect("hay que ir a la oficina")?.pattern?.id)
-        assertEquals("tareas", detector.detect("hay que comprar pan")?.pattern?.id)
-        assertEquals("tareas", detector.detect("mañana tengo de compra")?.pattern?.id)
-        assertEquals("tareas", detector.detect("tengo de llama a mamá")?.pattern?.id)
-        assertEquals("tareas", detector.detect("tenemos de prepara la reunión")?.pattern?.id)
-        assertEquals("tareas", detector.detect("tengo que recoge el coche")?.pattern?.id)
+    fun `strict profile accepts owned grammar and rejects weak or drifted forms`() {
+        assertNull(detector.detect("hay que llamar a Elena mañana"))
+        assertNull(detector.detect("hay que ir a la oficina"))
+        assertNull(detector.detect("mañana tengo de compra"))
+        assertNull(detector.detect("tengo de llama a mamá"))
+        assertNull(detector.detect("tenemos de prepara la reunión"))
+        assertNull(detector.detect("tengo que recoge el coche"))
         assertEquals("tareas", detector.detect("tengo que comprar calcetines")?.pattern?.id)
         assertEquals("tareas", detector.detect("tengo que felicitar a Eva")?.pattern?.id)
         assertEquals("tareas", detector.detect("tenemos que comprar jabón")?.pattern?.id)
         assertEquals("tareas", detector.detect("tenemos que felicitar a Eva")?.pattern?.id)
         assertEquals("tareas", detector.detect("tenemos que ir a Ourense mañana")?.pattern?.id)
-        assertEquals("comunicacion", detector.detect("tenemos que hablar con Tony")?.pattern?.id)
-        assertEquals("tareas", detector.detect("hay que felicitar a Eva")?.pattern?.id)
+        assertEquals("tareas", detector.detect("tenemos que hablar con Tony")?.pattern?.id)
+        assertNull(detector.detect("hay que felicitar a Eva"))
         assertNull(detector.detect("tenemos que tener el mismo formato"))
         assertNull(detector.detect("tienes que pedir el test"))
         assertNull(detector.detect("hay que hacerlo"))
     }
 
     @Test
-    fun `detects felicitar when gate ASR prepends no`() {
+    fun `balanced profile accepts ASR drift and routes impersonal grammar as weak ownership`() {
+        detector.setCaptureProfile(CaptureProfile.BALANCED)
+
+        val drifted = detector.detect("tengo que recoge el coche mañana")
+        val impersonal = detector.detect("hay que comprar pan mañana")
+
+        assertEquals("tareas", drifted?.pattern?.id)
+        assertTrue(drifted?.scoreReasons?.contains("asr_missing_final_r") == true)
+        assertEquals("tareas", impersonal?.pattern?.id)
+        assertTrue(impersonal?.scoreReasons?.contains("weak_ownership") == true)
+    }
+
+    @Test
+    fun `rejects explicitly negated action`() {
         val result = detector.detect("no tengo que felicitar a eva")
 
-        assertNotNull(result)
-        assertEquals("tareas", result!!.pattern?.id)
+        assertNull(result)
     }
 
     @Test
@@ -197,7 +253,7 @@ class IntentDetectorTest {
     fun `detects explicit memory forms`() {
         assertEquals("recordatorios", detector.detect("tengo que acordarme de llevar las llaves")?.pattern?.id)
         assertEquals("recordatorios", detector.detect("recuérdame que llame a Marta")?.pattern?.id)
-        assertEquals("recordatorios", detector.detect("acuérdate de pagar el recibo")?.pattern?.id)
+        assertNull(detector.detect("acuérdate de pagar el recibo"))
     }
 
     @Test
@@ -205,7 +261,7 @@ class IntentDetectorTest {
         assertEquals("compromisos", detector.detect("mañana tengo la ITV")?.pattern?.id)
         assertEquals("compromisos", detector.detect("tengo cita con el medico")?.pattern?.id)
         assertEquals("compromisos", detector.detect("he quedado con Fabio esta noche")?.pattern?.id)
-        assertEquals("compromisos", detector.detect("mañana tiene médico por la tarde")?.pattern?.id)
-        assertEquals("compromisos", detector.detect("tiene cita en el dentista")?.pattern?.id)
+        assertNull(detector.detect("mañana tiene médico por la tarde"))
+        assertNull(detector.detect("tiene cita en el dentista"))
     }
 }

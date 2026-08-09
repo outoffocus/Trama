@@ -1,21 +1,26 @@
 package com.trama.app.audio
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.SystemClock
+import androidx.core.content.ContextCompat
 import com.trama.shared.audio.CapturedAudioWindow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
 
-class OfflineDictationCapture {
+class OfflineDictationCapture(context: Context) {
     companion object {
         private const val SAMPLE_RATE_HZ = 16_000
         private const val READ_SIZE = 1024
     }
 
     private val stopRequested = AtomicBoolean(false)
+    private val appContext = context.applicationContext
 
     fun requestStop() {
         stopRequested.set(true)
@@ -23,6 +28,12 @@ class OfflineDictationCapture {
 
     suspend fun capture(maxDurationMs: Long = 12_000L): CapturedAudioWindow? = withContext(Dispatchers.IO) {
         stopRequested.set(false)
+
+        if (ContextCompat.checkSelfPermission(appContext, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return@withContext null
+        }
 
         val minBufferSize = AudioRecord.getMinBufferSize(
             SAMPLE_RATE_HZ,

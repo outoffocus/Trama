@@ -39,7 +39,8 @@ class DiaryAssistant(
     private val prefs
         get() = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    private fun getApiKey(): String? = prefs.getString(KEY_API_KEY, null)
+    private fun getApiKey(): String? =
+        com.trama.app.security.SecureSecretStore.getGeminiApiKey(context)
 
     fun hasApiKey(): Boolean = !getApiKey().isNullOrBlank()
 

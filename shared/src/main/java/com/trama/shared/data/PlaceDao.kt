@@ -23,6 +23,9 @@ interface PlaceDao {
     @Query("SELECT * FROM places WHERE id = :id")
     suspend fun getByIdOnce(id: Long): Place?
 
+    @Query("SELECT * FROM places WHERE name = :name AND latitude = :latitude AND longitude = :longitude LIMIT 1")
+    suspend fun getByNaturalKey(name: String, latitude: Double, longitude: Double): Place?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(place: Place): Long
 

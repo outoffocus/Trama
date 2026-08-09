@@ -5,7 +5,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle as collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,7 +40,7 @@ fun WatchAllEntriesScreen() {
         }
     }
 
-    val entries by repository?.getPending()?.collectAsState(initial = emptyList())
+    val entries by repository?.getPending()?.collectAsState(initialValue = emptyList())
         ?: remember { mutableStateOf(emptyList<DiaryEntry>()) }
 
     val timeFormat = SimpleDateFormat("dd MMM HH:mm", Locale("es"))

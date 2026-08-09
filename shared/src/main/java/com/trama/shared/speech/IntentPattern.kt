@@ -5,48 +5,34 @@ import kotlinx.serialization.Transient
 import kotlinx.serialization.json.Json
 import java.text.Normalizer
 
-/**
- * A capture category that groups multiple trigger phrases under one intent.
- *
- * Users can edit the trigger phrases (add, remove) and the regex is auto-compiled.
- * For example, the "recordatorios" category can include phrases like "recordar"
- * or "acordarme de".
- *
- * Shared between phone and watch modules.
- */
+/** A user-visible capture category and its explicit high-intent phrases. */
 @Serializable
 data class IntentPattern(
-    /** Unique identifier, e.g. "recordatorios", "trabajo", "salud" */
     val id: String,
-    /** Human-readable label shown in UI and notifications */
     val label: String,
-    /** Trigger phrases — matched with flexible whitespace */
     val triggers: List<String>,
-    /** If true, capture the full utterance. If false, capture from the match onward */
     val captureAll: Boolean = true,
-    /** Whether this pattern is enabled by the user */
     val enabled: Boolean = true,
-    /** Whether this is a user-created pattern (vs built-in) */
-    val isCustom: Boolean = false
+    val isCustom: Boolean = false,
+    /** Built-in preset revision. Zero identifies settings written by older releases. */
+    val presetVersion: Int = 0
 ) {
-    /** Compiled regex from triggers. Cached per instance. */
     @Transient
     val regex: Regex = buildRegex(triggers)
 
     @Transient
-    val normalizedTriggers: List<String> = triggers.map(::normalizeTrigger).filter { it.isNotBlank() }
+    val normalizedTriggers: List<String> = triggers
+        .map(::normalizeTrigger)
+        .filter { it.isNotBlank() }
+        .distinct()
 
     companion object {
+        const val CURRENT_PRESET_VERSION = 2
+
         private val json = Json { ignoreUnknownKeys = true }
 
-        /**
-         * Build a regex from trigger phrases.
-         * Each phrase is matched with flexible whitespace between words.
-         * Sorted longest-first so "tengo que ir" matches before "tengo que".
-         */
         fun buildRegex(triggers: List<String>): Regex {
-            if (triggers.isEmpty()) return Regex("(?!)")  // Never matches
-
+            if (triggers.none { it.isNotBlank() }) return Regex("(?!)")
             val pattern = triggers
                 .filter { it.isNotBlank() }
                 .sortedByDescending { it.length }
@@ -55,438 +41,152 @@ data class IntentPattern(
                         .split("\\s+".toRegex())
                         .joinToString("\\s+") { word -> Regex.escape(word) }
                 }
-
-            return try {
-                Regex("($pattern)", RegexOption.IGNORE_CASE)
-            } catch (_: Exception) {
-                Regex("(?!)") // Fallback: never matches if regex is invalid
-            }
+            return runCatching {
+                Regex("(?<![\\p{L}\\p{N}])($pattern)(?![\\p{L}\\p{N}])", RegexOption.IGNORE_CASE)
+            }.getOrElse { Regex("(?!)") }
         }
 
-        /**
-         * Serialize a list of patterns to JSON for storage/sync.
-         */
-        fun serialize(patterns: List<IntentPattern>): String {
-            return json.encodeToString(
-                kotlinx.serialization.builtins.ListSerializer(serializer()),
-                patterns
-            )
-        }
-
-        /**
-         * Deserialize categories from JSON.
-         * Keeps current built-in categories and preserves any user-created ones.
-         */
-        fun deserialize(jsonStr: String): List<IntentPattern> {
-            return try {
-                val stored = json.decodeFromString<List<IntentPattern>>(jsonStr)
-                mergeWithDefaults(stored)
-            } catch (_: Exception) {
-                DEFAULTS
-            }
-        }
-
-        /**
-         * Merge stored categories with defaults.
-         * - Keeps user modifications for current built-in categories
-         * - Drops removed built-in categories from older versions
-         * - Preserves user-created categories
-         */
-        private fun mergeWithDefaults(stored: List<IntentPattern>): List<IntentPattern> {
-            val defaultIds = DEFAULTS.map { it.id }.toSet()
-            val storedById = stored.associateBy { it.id }
-            val result = mutableListOf<IntentPattern>()
-
-            for (default in DEFAULTS) {
-                val storedPattern = storedById[default.id]
-                result += if (storedPattern != null) {
-                    mergeBuiltInPattern(default, storedPattern)
-                } else {
-                    default
-                }
-            }
-
-            stored.filterTo(result) { it.isCustom && it.id !in defaultIds }
-            return result
-        }
-
-        private fun mergeBuiltInPattern(default: IntentPattern, stored: IntentPattern): IntentPattern {
-            val legacyDefaults = LEGACY_DEFAULT_TRIGGER_SETS[default.id].orEmpty()
-            val mergedTriggers = linkedSetOf<String>()
-            default.triggers.forEach { trigger ->
-                if (trigger.isNotBlank()) mergedTriggers += trigger
-            }
-            stored.triggers.forEach { trigger ->
-                val normalized = normalizeTrigger(trigger)
-                if (trigger.isNotBlank() && normalized !in legacyDefaults) {
-                    mergedTriggers += trigger
-                }
-            }
-
-            return stored.copy(
-                label = stored.label.ifBlank { default.label },
-                triggers = mergedTriggers.toList()
-            )
-        }
-
-        private val ACTIONABLE_TENER_QUE_VERBS = listOf(
-            "abrir",
-            "actualizar",
-            "añadir",
-            "anotar",
-            "apagar",
-            "apuntar",
-            "arreglar",
-            "avisar",
-            "bajar",
-            "bloquear",
-            "borrar",
-            "buscar",
-            "cambiar",
-            "cancelar",
-            "cargar",
-            "cerrar",
-            "cobrar",
-            "coger",
-            "comprar",
-            "comprobar",
-            "confirmar",
-            "contestar",
-            "copiar",
-            "corregir",
-            "crear",
-            "dejar",
-            "descargar",
-            "devolver",
-            "enviar",
-            "escribir",
-            "felicitar",
-            "firmar",
-            "guardar",
-            "hacer",
-            "imprimir",
-            "instalar",
-            "limpiar",
-            "llamar",
-            "llevar",
-            "mandar",
-            "mirar",
-            "pagar",
-            "pasar",
-            "pedir",
-            "preparar",
-            "programar",
-            "recoger",
-            "reclamar",
-            "recordar",
-            "renovar",
-            "reparar",
-            "responder",
-            "reservar",
-            "revisar",
-            "sacar",
-            "subir",
-            "terminar",
-            "traer",
-            "tramitar",
-            "validar",
-            "verificar"
+        fun serialize(patterns: List<IntentPattern>): String = json.encodeToString(
+            kotlinx.serialization.builtins.ListSerializer(serializer()),
+            patterns
         )
 
-        private fun tenerQueTriggers(): List<String> {
-            val triggers = linkedSetOf<String>()
-            ACTIONABLE_TENER_QUE_VERBS.forEach { verb ->
-                triggers += "tengo que $verb"
-                triggers += "tenemos que $verb"
-                asrDriftVerbForms(verb).forEach { driftVerb ->
-                    triggers += "tengo de $driftVerb"
-                    triggers += "tenemos de $driftVerb"
-                    triggers += "tengo que $driftVerb"
-                    triggers += "tenemos que $driftVerb"
+        /**
+         * Reads user settings and performs a one-way migration from the old expanded preset.
+         * Once migrated, built-in trigger lists are authoritative: removing a phrase stays removed.
+         */
+        fun deserialize(jsonStr: String): List<IntentPattern> = runCatching {
+            mergeWithDefaults(json.decodeFromString<List<IntentPattern>>(jsonStr))
+        }.getOrElse { DEFAULTS }
+
+        private fun mergeWithDefaults(stored: List<IntentPattern>): List<IntentPattern> {
+            val defaultIds = DEFAULTS.mapTo(mutableSetOf()) { it.id }
+            val storedById = stored.associateBy { it.id }
+            return buildList {
+                DEFAULTS.forEach { default ->
+                    add(storedById[default.id]?.let { migrateBuiltIn(default, it) } ?: default)
                 }
+                stored.filterTo(this) { it.isCustom && it.id !in defaultIds }
             }
-            triggers += "tengo que ir a"
-            triggers += "tengo que ir al"
-            triggers += "tengo de ir a"
-            triggers += "tengo de ir al"
-            triggers += "tenemos que ir a"
-            triggers += "tenemos que ir al"
-            triggers += "tenemos de ir a"
-            triggers += "tenemos de ir al"
-            return triggers.toList()
         }
 
-        private fun asrDriftVerbForms(verb: String): List<String> {
-            val forms = linkedSetOf<String>()
-            if (verb.length > 4 && verb.last() == 'r') {
-                forms += verb.dropLast(1)
+        private fun migrateBuiltIn(default: IntentPattern, stored: IntentPattern): IntentPattern {
+            if (stored.presetVersion >= CURRENT_PRESET_VERSION) {
+                return stored.copy(
+                    label = stored.label.ifBlank { default.label },
+                    triggers = stored.triggers.distinctBy(::normalizeTrigger)
+                )
             }
-            return forms.toList()
+
+            val knownLegacy = legacyTriggersFor(default.id)
+            val userAdditions = stored.triggers.filter { trigger ->
+                trigger.isNotBlank() && normalizeTrigger(trigger) !in knownLegacy
+            }
+            return stored.copy(
+                label = stored.label.ifBlank { default.label },
+                triggers = (default.triggers + userAdditions).distinctBy(::normalizeTrigger),
+                presetVersion = CURRENT_PRESET_VERSION
+            )
         }
 
-        // ── Default patterns ────────────────────────────────────────────────
-
+        /** Compact preset: grammar and action vocabulary live in CaptureIntentRules. */
         val DEFAULTS: List<IntentPattern> = listOf(
             IntentPattern(
                 id = "recordatorios",
                 label = "Recordatorios",
                 triggers = listOf(
-                    "recordar",
-                    "recuerdame",
                     "recuérdame",
                     "acordarme de",
                     "acordarnos de",
-                    "me olvide",
-                    "me olvidé",
-                    "tengo que acordarme de",
-                    "tengo que acordarme que",
-                    "tenemos que acordarnos de",
                     "me tengo que acordar de",
-                    "tienes que acordarte de",
-                    "acuérdate de",
-                    "acuerdate de",
+                    "tengo que acordarme de",
                     "no olvidar",
                     "no olvidarme de",
                     "no olvidarnos de",
                     "nota mental"
-                )
+                ),
+                presetVersion = CURRENT_PRESET_VERSION
             ),
             IntentPattern(
                 id = "tareas",
                 label = "Tareas",
-                triggers = tenerQueTriggers() + listOf(
-                    "hay que ir a",
-                    "hay que ir al",
-                    "hay que llamar a",
-                    "hay que escribir a",
-                    "hay que felicitar a",
-                    "hay que mandar",
-                    "hay que enviar",
-                    "hay que comprar",
-                    "hay que pagar",
-                    "hay que recoger",
-                    "hay que llevar",
-                    "hay que traer",
-                    "hay que pedir",
-                    "hay que reservar",
-                    "hay que revisar",
-                    "hay que preparar",
-                    "necesito comprar",
-                    "necesito llamar",
-                    "necesito enviar",
-                    "necesito mandar",
-                    "necesito escribir",
-                    "necesito felicitar",
-                    "necesito recoger",
-                    "necesito pagar",
-                    "necesito reservar",
-                    "necesito pedir",
-                    "necesito revisar",
-                    "necesito buscar",
+                triggers = listOf(
                     "tengo pendiente",
+                    "queda pendiente",
                     "pendiente de",
                     "falta por"
-                )
-            ),
-            IntentPattern(
-                id = "comunicacion",
-                label = "Comunicacion",
-                triggers = listOf(
-                    "tengo que llamar a",
-                    "tengo que escribir a",
-                    "tengo que felicitar a",
-                    "tengo que mandar mensaje a",
-                    "tengo que contestar a",
-                    "tengo que responder a",
-                    "tenemos que llamar a",
-                    "tenemos que escribir a",
-                    "tenemos que felicitar a",
-                    "tenemos que mandar mensaje a",
-                    "tenemos que contestar a",
-                    "tenemos que responder a",
-                    "tenemos que hablar con",
-                    "tenemos que avisar a",
-                    "hay que llamar a",
-                    "hay que escribir a",
-                    "hay que felicitar a",
-                    "hay que avisar a"
-                )
+                ),
+                presetVersion = CURRENT_PRESET_VERSION
             ),
             IntentPattern(
                 id = "compromisos",
                 label = "Compromisos",
                 triggers = listOf(
                     "tengo cita",
-                    "tiene cita",
                     "tenemos cita",
                     "tengo reunión",
-                    "tengo reunion",
-                    "tiene reunión",
-                    "tiene reunion",
                     "tenemos reunión",
-                    "tenemos reunion",
                     "tengo la itv",
                     "tengo itv",
-                    "tiene la itv",
-                    "tiene itv",
                     "tengo médico",
-                    "tengo medico",
-                    "tiene médico",
-                    "tiene medico",
                     "tengo dentista",
-                    "tiene dentista",
                     "he quedado con"
-                )
+                ),
+                presetVersion = CURRENT_PRESET_VERSION
             )
         )
 
-        private val LEGACY_DEFAULT_TRIGGER_SETS: Map<String, Set<String>> = mapOf(
-            "recordatorios" to listOf(
-                "recordar",
-                "recordar que",
-                "recuerdame",
-                "recuérdame",
-                "recuerdame que",
-                "recuérdame que",
-                "acordarme de",
-                "acordarnos de",
-                "me tengo que acordar de",
-                "tengo que",
-                "tenemos que",
-                "tengo q",
-                "tenemos q",
-                "hay que",
-                "hay q",
-                "he de",
-                "debo",
-                "debemos",
-                "deberia",
-                "debería",
-                "deberiamos",
-                "deberíamos",
-                "necesito",
-                "necesitamos",
-                "no olvidar",
-                "no olvidarme de",
-                "no olvidarnos de",
-                "no te olvides de",
-                "me olvide",
-                "mañana tengo que",
-                "mañana hay que",
-                "esta tarde tengo que",
-                "esta noche tengo que",
-                "el lunes tengo que",
-                "el martes tengo que",
-                "el miércoles tengo que",
-                "el miercoles tengo que",
-                "el jueves tengo que",
-                "el viernes tengo que",
-                "me olvidé",
-                "se me fue la olla",
-                "me acuerdo",
-                "apuntame",
-                "apúntame",
-                "apuntar",
-                "apunta",
-                "anota",
-                "anotar",
-                "recordatorio",
-                "tienes que acordarte"
-            ).map(::normalizeTrigger).toSet(),
-            "tareas" to listOf(
-                "tengo que",
-                "tienes que",
-                "tenemos que",
-                "hay que",
-                "hay que hacer",
-                "hay que ir",
-                "debo",
-                "debemos",
-                "deberia",
-                "debería",
-                "deberiamos",
-                "deberíamos",
-                "necesito",
-                "necesitamos",
-                "necesitaria",
-                "necesitaría",
-                "necesitariamos",
-                "necesitaríamos",
-                "me gustaria",
-                "me gustaría",
-                "nos gustaria",
-                "nos gustaría",
-                "voy a",
-                "vamos a",
-                "podria",
-                "podría",
-                "podriamos",
-                "podríamos",
-                "quiero",
-                "queremos",
-                "quisiera",
-                "quisieramos",
-                "quisiéramos",
-                "haria falta",
-                "haría falta",
-                "he de",
-                "hemos de",
-                "necesitaria",
-                "necesitaría",
-                "necesitariamos",
-                "necesitaríamos",
-                "tengo pendiente",
-                "tenemos pendiente",
-                "pendiente de",
-                "falta por"
-            ).map(::normalizeTrigger).toSet(),
-            "comunicacion" to listOf(
-                "tenemos que llamar a",
-                "tenemos que escribir a",
-                "tenemos que mandar mensaje a",
-                "tenemos que contestar a",
-                "tenemos que responder a",
-                "llamar a",
-                "llama a",
-                "llamame",
-                "llámame",
-                "escribir a",
-                "escribe a",
-                "escribele a",
-                "escríbele a",
-                "mandar mensaje a",
-                "manda mensaje a",
-                "mandar un mensaje a",
-                "manda un mensaje a",
-                "mandar whatsapp a",
-                "manda whatsapp a",
-                "mandar correo a",
-                "manda correo a",
-                "enviar a",
-                "envia a",
-                "envía a",
-                "contestar a",
-                "contesta a",
-                "responder a",
-                "responde a",
-                "decirle a",
-                "dile a",
-                "preguntar a",
-                "pregunta a",
-                "pregúntale a",
-                "preguntale a",
-                "avisar a",
-                "avisa a"
-            ).map(::normalizeTrigger).toSet(),
-            "compromisos" to listOf(
-                "he quedado con",
-                "ha quedado con",
-                "quedé con",
-                "quede con"
-            ).map(::normalizeTrigger).toSet()
+        private val LEGACY_ACTION_VERBS = setOf(
+            "abrir", "actualizar", "añadir", "anotar", "apagar", "apuntar", "arreglar",
+            "avisar", "bajar", "bloquear", "borrar", "buscar", "cambiar", "cancelar",
+            "cargar", "cerrar", "cobrar", "coger", "comprar", "comprobar", "confirmar",
+            "contestar", "copiar", "corregir", "crear", "dejar", "descargar", "devolver",
+            "enviar", "escribir", "felicitar", "firmar", "guardar", "hacer", "imprimir",
+            "instalar", "limpiar", "llamar", "llevar", "mandar", "mirar", "pagar", "pasar",
+            "pedir", "preparar", "programar", "recoger", "reclamar", "recordar", "renovar",
+            "reparar", "responder", "reservar", "revisar", "sacar", "subir", "terminar",
+            "traer", "tramitar", "validar", "verificar"
         )
 
-        private fun normalizeTrigger(trigger: String): String {
+        private val LEGACY_SHARED = setOf(
+            "tengo que", "tenemos que", "tienes que", "hay que", "he de", "debo", "debemos",
+            "necesito", "necesitamos", "quiero", "queremos", "voy a", "vamos a",
+            "recordar", "recordar que", "recordatorio", "apunta", "apúntame", "anota",
+            "recuerdame", "recuérdame", "acuerdate de", "acuérdate de", "me olvide",
+            "me olvidé", "tengo que acordarme que", "tenemos que acordarnos de",
+            "tienes que acordarte de", "no te olvides de",
+            "recordar que", "recuerdame que", "recuérdame que", "acordarme de",
+            "acordarnos de", "me tengo que acordar de", "no olvidar", "no olvidarme de",
+            "no olvidarnos de", "se me fue la olla", "me acuerdo", "apuntame", "apúntame",
+            "apuntar", "anotar", "nota mental", "mañana tengo que", "mañana hay que",
+            "esta tarde tengo que", "esta noche tengo que", "el lunes tengo que",
+            "el martes tengo que", "el miercoles tengo que", "el miércoles tengo que",
+            "el jueves tengo que", "el viernes tengo que",
+            "llamar a", "escribir a", "mandar mensaje a", "contestar a", "responder a",
+            "avisar a", "tiene cita", "tiene reunión", "tiene medico", "tiene médico",
+            "tiene dentista", "tiene itv", "tiene la itv", "quedé con", "quede con",
+            "ha quedado con"
+        ).mapTo(mutableSetOf(), ::normalizeTrigger)
+
+        private fun legacyTriggersFor(id: String): Set<String> = buildSet {
+            addAll(LEGACY_SHARED)
+            DEFAULTS.firstOrNull { it.id == id }?.triggers?.mapTo(this, ::normalizeTrigger)
+            if (id == "tareas") {
+                LEGACY_ACTION_VERBS.forEach { verb ->
+                    val drift = verb.dropLast(1)
+                    listOf(
+                        "tengo que $verb", "tenemos que $verb",
+                        "tengo de $drift", "tenemos de $drift",
+                        "tengo que $drift", "tenemos que $drift",
+                        "hay que $verb", "necesito $verb",
+                        "tengo que $verb a", "tenemos que $verb a",
+                        "hay que $verb a", "necesito $verb a"
+                    ).mapTo(this, ::normalizeTrigger)
+                }
+            }
+        }
+
+        fun normalizeTrigger(trigger: String): String {
             val decomposed = Normalizer.normalize(trigger.lowercase(), Normalizer.Form.NFD)
             return decomposed
                 .replace("\\p{M}+".toRegex(), "")

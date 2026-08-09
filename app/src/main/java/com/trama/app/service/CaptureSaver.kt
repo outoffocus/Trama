@@ -39,7 +39,8 @@ class CaptureSaver(
         llmConfidence: Float,
         wasReviewed: Boolean,
         confidence: Float,
-        preferSuggested: Boolean = false
+        preferSuggested: Boolean = false,
+        suggestedReasons: List<String> = emptyList()
     ) {
         scope.launch(Dispatchers.IO) {
             val repo = repoProvider() ?: return@launch
@@ -93,7 +94,9 @@ class CaptureSaver(
                     "id" to entryId,
                     "intent" to intentId,
                     "label" to label,
+                    "detectorConfidence" to confidence,
                     "preferSuggested" to preferSuggested,
+                    "suggestedReasons" to suggestedReasons.joinToString(","),
                     "outcome" to CaptureLog.CaptureOutcome.INTENT_CANDIDATE
                 )
             )
@@ -119,7 +122,9 @@ class CaptureSaver(
                         "entryId" to entryId,
                         "decision" to "accepted_but_suggested",
                         "route" to "SUGGESTED",
-                        "reason" to "speaker_profile_missing_or_degraded",
+                        "reason" to suggestedReasons.joinToString(",").ifBlank {
+                            "low_confidence_candidate"
+                        },
                         "qualityBucket" to "ambiguous_suggested",
                         "outcome" to CaptureLog.CaptureOutcome.LOW_CONFIDENCE_SUGGESTED
                     )

@@ -42,15 +42,21 @@ class PhoneToWatchReceiver : WearableListenerService() {
                     path == SETTINGS_PATH -> {
                         val patternsJson = dataMap.getString("intent_patterns_json")
                         val keywordsStr = dataMap.getString("keyword_mappings")
+                        val captureProfile = dataMap.getString("capture_profile")
                         val accelGate = dataMap.getBoolean("wear_accelerometer_gate", false)
-                        handleSettings(patternsJson, keywordsStr, accelGate)
+                        handleSettings(patternsJson, keywordsStr, captureProfile, accelGate)
                     }
                 }
             }
         }
     }
 
-    private fun handleSettings(patternsJson: String?, keywordsStr: String?, accelGate: Boolean) {
+    private fun handleSettings(
+        patternsJson: String?,
+        keywordsStr: String?,
+        captureProfile: String?,
+        accelGate: Boolean
+    ) {
         val prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
 
         if (!patternsJson.isNullOrBlank()) {
@@ -61,11 +67,15 @@ class PhoneToWatchReceiver : WearableListenerService() {
         if (!keywordsStr.isNullOrBlank()) {
             prefs.putString("keyword_mappings", keywordsStr)
         }
+        if (!captureProfile.isNullOrBlank()) prefs.putString("capture_profile", captureProfile)
 
         prefs.putBoolean("wear_accelerometer_gate", accelGate)
         prefs.apply()
 
-        sendBroadcast(android.content.Intent("com.trama.wear.SETTINGS_UPDATED"))
+        sendBroadcast(
+            android.content.Intent("com.trama.wear.SETTINGS_UPDATED")
+                .setPackage(packageName)
+        )
     }
 
     // ── MessageClient: mic coordination ───────────────────────────────────

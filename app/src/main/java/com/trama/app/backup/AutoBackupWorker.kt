@@ -7,10 +7,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.trama.shared.data.DatabaseProvider
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 
 /**
  * WorkManager worker that auto-exports diary entries to a user-selected file
@@ -84,11 +81,13 @@ class AutoBackupWorker(
         fun runNow(context: Context) {
             val request = androidx.work.OneTimeWorkRequestBuilder<AutoBackupWorker>()
                 .build()
-            androidx.work.WorkManager.getInstance(context).enqueue(request)
+            androidx.work.WorkManager.getInstance(context).enqueueUniqueWork(
+                "backup-now",
+                androidx.work.ExistingWorkPolicy.REPLACE,
+                request
+            )
         }
     }
-
-    private val json = Json { prettyPrint = true; ignoreUnknownKeys = true }
 
     override suspend fun doWork(): Result {
         return withContext(Dispatchers.IO) {
@@ -102,71 +101,15 @@ class AutoBackupWorker(
                     return@withContext Result.success()
                 }
 
-                // Check URI permissions
-                try {
-                    applicationContext.contentResolver.openOutputStream(fileUri, "w")?.close()
-                } catch (e: SecurityException) {
-                    Log.e(TAG, "Lost write permission to backup file: $fileUri", e)
-                    saveLastError(applicationContext, "Permiso de escritura perdido. Reconfigura la ubicación del backup.")
-                    return@withContext Result.failure()
-                } catch (e: Exception) {
-                    Log.e(TAG, "Cannot write to backup file: $fileUri", e)
-                    saveLastError(applicationContext, "No se puede escribir al archivo: ${e.message?.take(80)}")
-                    return@withContext Result.failure()
-                }
-
                 val repository = DatabaseProvider.getRepository(applicationContext)
-                val entries = repository.getAll().first()
+                val backup = BackupManager.createBackup(repository)
+                DurableBackupWriter.write(
+                    applicationContext,
+                    fileUri,
+                    BackupManager.encode(backup)
+                )
 
-                if (entries.isEmpty()) {
-                    Log.i(TAG, "No entries to backup")
-                    return@withContext Result.success()
-                }
-
-                val backupEntries = entries.map { entry ->
-                    BackupManager.BackupEntry(
-                        text = entry.text,
-                        keyword = entry.keyword,
-                        category = entry.category,
-                        confidence = entry.confidence,
-                        source = entry.source.name,
-                        duration = entry.duration,
-                        createdAt = entry.createdAt,
-                        correctedText = entry.correctedText,
-                        wasReviewedByLLM = entry.wasReviewedByLLM,
-                        llmConfidence = entry.llmConfidence,
-                        status = entry.status,
-                        actionType = entry.actionType,
-                        cleanText = entry.cleanText,
-                        dueDate = entry.dueDate,
-                        completedAt = entry.completedAt,
-                        priority = entry.priority,
-                        isManual = entry.isManual
-                    )
-                }
-
-                val recordings = try { repository.getAllRecordingsOnce() } catch (_: Exception) { emptyList() }
-                val backupRecordings = recordings.map { rec ->
-                    BackupManager.BackupRecording(
-                        title = rec.title,
-                        transcription = rec.transcription,
-                        summary = rec.summary,
-                        keyPoints = rec.keyPoints,
-                        durationSeconds = rec.durationSeconds,
-                        source = rec.source.name,
-                        createdAt = rec.createdAt,
-                        processingStatus = rec.processingStatus,
-                        processedLocally = rec.processedLocally,
-                        processedBy = rec.processedBy
-                    )
-                }
-
-                val backup = BackupManager.Backup(entries = backupEntries, recordings = backupRecordings)
-                val jsonStr = json.encodeToString(backup)
-
-                saveToFile(fileUri, jsonStr)
-
-                val totalCount = entries.size + recordings.size
+                val totalCount = BackupManager.entityCount(backup)
                 applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .edit()
                     .putLong("last_backup", System.currentTimeMillis())
@@ -174,25 +117,21 @@ class AutoBackupWorker(
                     .apply()
 
                 clearLastError(applicationContext)
-                Log.i(TAG, "Auto-backup complete: ${entries.size} entries + ${recordings.size} recordings")
+                Log.i(TAG, "Auto-backup complete: $totalCount entities")
                 Result.success()
+            } catch (e: SecurityException) {
+                Log.e(TAG, "Auto-backup permission lost", e)
+                saveLastError(
+                    applicationContext,
+                    "Permiso de escritura perdido. Reconfigura la ubicación del backup."
+                )
+                Result.failure()
             } catch (e: Exception) {
                 Log.e(TAG, "Auto-backup failed", e)
                 saveLastError(applicationContext, "Error: ${e.message?.take(100)}")
-                Result.retry()
+                if (runAttemptCount < 3) Result.retry() else Result.failure()
             }
         }
     }
 
-    /**
-     * Overwrite the user-selected backup file with new data.
-     */
-    private fun saveToFile(fileUri: Uri, jsonStr: String) {
-        val resolver = applicationContext.contentResolver
-        resolver.openOutputStream(fileUri, "w")?.use { stream ->
-            stream.write(jsonStr.toByteArray(Charsets.UTF_8))
-        } ?: throw Exception("Cannot write to backup file")
-
-        Log.i(TAG, "Backup saved to $fileUri")
-    }
 }

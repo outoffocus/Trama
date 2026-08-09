@@ -42,7 +42,11 @@ object WeeklyAgendaScheduler {
     /** Fire the worker once, immediately. Useful for "Probar ahora". */
     fun runNow(context: Context) {
         val request = OneTimeWorkRequestBuilder<WeeklyAgendaWorker>().build()
-        WorkManager.getInstance(context).enqueue(request)
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "weekly-agenda-now",
+            androidx.work.ExistingWorkPolicy.REPLACE,
+            request
+        )
         Log.i(TAG, "Weekly agenda triggered immediately")
     }
 
