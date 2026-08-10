@@ -89,8 +89,7 @@ Dependencias relevantes:
 
 `app/ui/NavGraph.kt` define las rutas visibles:
 
-- `HomeScreen`
-- `CalendarScreen`
+- `CalendarScreen` como Home y calendario diario
 - `AgendaScreen`
 - `ChatScreen`
 - `SearchScreen`
@@ -100,7 +99,9 @@ Dependencias relevantes:
 - `RecordingsListScreen`
 - `PlaceDetailScreen`
 
-La UI todavia obtiene dependencias directamente con `DatabaseProvider`, `SettingsDataStore` y managers concretos dentro de composables. Existen comentarios TODO en pantallas principales para extraer repositorio y estado a ViewModels.
+`CalendarScreen` todavía obtiene repositorio y ajustes directamente; `SettingsScreen`
+usa `SettingsViewModel` con Hilt. La extracción de estado de Home continúa siendo
+deuda estructural.
 
 ## 5. Pipeline de captura en movil
 
@@ -360,7 +361,10 @@ Tipos sincronizados:
 
 ## 13. Ajustes, backup y diagnostico
 
-`SettingsScreen` concentra mucha superficie:
+`SettingsScreen` conserva toda la superficie funcional, pero la presenta en dos
+niveles. El básico contiene `Captura y frases`, `Agenda y calendarios`, `Privacidad
+y copias` y `Apariencia`. Un interruptor persistente revela `IA y modelos` y
+`Audio y diagnóstico`:
 
 - patrones y diccionario personal
 - permisos y ubicacion
@@ -397,7 +401,8 @@ Diagnostico:
 - contadores de segmentos cerrados por silencio/cap, fallbacks inciertos, fallbacks bloqueados, paradas explicitas y destrucciones inesperadas del servicio
 - `CaptureLog.logUserDelete` registra razon de borrado y si el aprendizaje estaba activo
 
-Esta pantalla es una de las principales candidatas a refactor por ViewModels y secciones mas aisladas.
+La jerarquía de producto ya está separada; sigue pendiente dividir el archivo en
+composables por sección para reducir su tamaño sin volver a mezclar conceptos.
 
 ## 14. Seguridad y privacidad
 

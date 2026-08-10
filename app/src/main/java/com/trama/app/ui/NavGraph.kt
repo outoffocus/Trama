@@ -29,6 +29,15 @@ object Routes {
     const val RECORDING_DETAIL = "recording/{recordingId}"
     const val PLACE_DETAIL = "place/{placeId}"
 
+    /** Public destinations that Home must expose directly or through its calendar content. */
+    val HOME_REACHABLE_DESTINATIONS = setOf(
+        SETTINGS,
+        SEARCH,
+        CHAT,
+        AGENDA,
+        RECORDINGS_LIST
+    )
+
     fun detail(entryId: Long) = "detail/$entryId"
     fun settings(section: SettingsSection) =
         if (section == SettingsSection.ROOT) SETTINGS else "settings/${section.route}"
@@ -51,6 +60,8 @@ fun NavGraph(startDestination: String) {
                 onEntryClick = { entryId -> navController.navigate(Routes.detail(entryId)) },
                 onSettingsClick = { navController.navigate(Routes.SETTINGS) },
                 onChatClick = { navController.navigate(Routes.CHAT) },
+                onSearchClick = { navController.navigate(Routes.SEARCH) },
+                onRecordingsListClick = { navController.navigate(Routes.RECORDINGS_LIST) },
                 onAgendaClick = { navController.navigate(Routes.AGENDA) },
                 onRecordingClick = { recordingId ->
                     navController.navigate(Routes.recordingDetail(recordingId))

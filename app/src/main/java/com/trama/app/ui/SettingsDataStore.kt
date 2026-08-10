@@ -79,7 +79,9 @@ class SettingsDataStore(private val context: Context) {
         val VISIBLE_CALENDAR_IDS = stringPreferencesKey("visible_calendar_ids")
         val THEME_MODE = intPreferencesKey("theme_mode") // 0=system, 1=light, 2=dark
         const val DEFAULT_THEME_MODE = 2
+        const val DEFAULT_SHOW_ADVANCED_OPTIONS = false
         val SHOW_OLD_ENTRIES_EXPANDED = booleanPreferencesKey("show_old_entries_expanded")
+        val SHOW_ADVANCED_OPTIONS = booleanPreferencesKey("show_advanced_options")
         val LEARN_FROM_DELETIONS = booleanPreferencesKey("learn_from_deletions")
         val WEEKLY_AGENDA_ENABLED = booleanPreferencesKey("weekly_agenda_enabled")
         val WEEKLY_AGENDA_DAY_OF_WEEK = intPreferencesKey("weekly_agenda_day_of_week") // java.util.Calendar.SUNDAY..SATURDAY
@@ -268,6 +270,10 @@ class SettingsDataStore(private val context: Context) {
         prefs[SHOW_OLD_ENTRIES_EXPANDED] ?: false
     }
 
+    val showAdvancedOptions: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[SHOW_ADVANCED_OPTIONS] ?: DEFAULT_SHOW_ADVANCED_OPTIONS
+    }
+
     val learnFromDeletions: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[LEARN_FROM_DELETIONS] ?: true
     }
@@ -313,6 +319,10 @@ class SettingsDataStore(private val context: Context) {
 
     suspend fun setShowOldEntriesExpanded(expanded: Boolean) {
         context.dataStore.edit { it[SHOW_OLD_ENTRIES_EXPANDED] = expanded }
+    }
+
+    suspend fun setShowAdvancedOptions(visible: Boolean) {
+        context.dataStore.edit { it[SHOW_ADVANCED_OPTIONS] = visible }
     }
 
     suspend fun setVisibleCalendarIds(ids: Set<Long>) {

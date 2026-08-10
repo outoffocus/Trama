@@ -100,4 +100,9 @@ class SettingsEnforcementTest {
         // Theme modes: 0=system, 1=light, 2=dark
         assertTrue(SettingsDataStore.DEFAULT_THEME_MODE in 0..2)
     }
+
+    @Test
+    fun `advanced options are hidden by default`() {
+        assertFalse(SettingsDataStore.DEFAULT_SHOW_ADVANCED_OPTIONS)
+    }
 }

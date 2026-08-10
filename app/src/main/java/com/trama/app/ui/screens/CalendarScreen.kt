@@ -55,6 +55,7 @@ import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Search
@@ -72,6 +73,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -99,6 +102,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -157,6 +161,8 @@ fun CalendarScreen(
     onRecordingClick: (Long) -> Unit = {},
     onPlaceClick: (Long) -> Unit = {},
     onChatClick: () -> Unit = {},
+    onSearchClick: () -> Unit = {},
+    onRecordingsListClick: () -> Unit = {},
     onSettingsClick: () -> Unit = {},
     onAgendaClick: () -> Unit = {}
 ) {
@@ -175,8 +181,8 @@ fun CalendarScreen(
         initialSelectedDayStart ?: todayStart
     }
 
-    var selectedDayStart by remember { mutableStateOf(initialDayStart) }
-    var displayMonth by remember {
+    var selectedDayStart by rememberSaveable { mutableStateOf(initialDayStart) }
+    var displayMonth by rememberSaveable {
         mutableStateOf(
             Calendar.getInstance().apply {
                 timeInMillis = initialDayStart
@@ -809,6 +815,8 @@ fun CalendarScreen(
                     locationRunning = locationRunning,
                     onAddClick = { showAddDialog = true },
                     onChatClick = onChatClick,
+                    onSearchClick = onSearchClick,
+                    onRecordingsListClick = onRecordingsListClick,
                     onSettingsClick = onSettingsClick,
                 )
             }
@@ -1774,9 +1782,12 @@ private fun HomeHeader(
     locationRunning: Boolean,
     onAddClick: () -> Unit,
     onChatClick: () -> Unit,
+    onSearchClick: () -> Unit,
+    onRecordingsListClick: () -> Unit,
     onSettingsClick: () -> Unit,
 ) {
     val t = LocalTramaColors.current
+    var overflowExpanded by remember { mutableStateOf(false) }
     Surface(color = MaterialTheme.colorScheme.background) {
         Column(
             modifier = Modifier
@@ -1808,23 +1819,25 @@ private fun HomeHeader(
                     Spacer(Modifier.width(10.dp))
                     Column {
                         Text(
-                            text = "Trama",
+                            text = heroDayTitle,
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onBackground,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            text = heroDayTitle,
+                            text = "Trama · Calendario diario",
                             style = MaterialTheme.typography.labelMedium,
                             color = t.mutedText,
                         )
                     }
                 }
                 HeaderIconButton(
-                    icon = Icons.Default.Add,
-                    contentDescription = "Añadir nota",
-                    onClick = onAddClick,
-                    tint = t.amber
+                    icon = Icons.Default.Search,
+                    contentDescription = "Buscar en Trama",
+                    onClick = onSearchClick,
+                    tint = t.teal
                 )
                 HeaderIconButton(
                     icon = Icons.AutoMirrored.Filled.Chat,
@@ -1832,12 +1845,43 @@ private fun HomeHeader(
                     onClick = onChatClick,
                     tint = t.teal
                 )
-                HeaderIconButton(
-                    icon = Icons.Default.Settings,
-                    contentDescription = "Ajustes",
-                    onClick = onSettingsClick,
-                    tint = t.mutedText
-                )
+                Box {
+                    HeaderIconButton(
+                        icon = Icons.Default.MoreVert,
+                        contentDescription = "Más opciones",
+                        onClick = { overflowExpanded = true },
+                        tint = t.mutedText
+                    )
+                    DropdownMenu(
+                        expanded = overflowExpanded,
+                        onDismissRequest = { overflowExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Añadir nota") },
+                            leadingIcon = { Icon(Icons.Default.Add, contentDescription = null) },
+                            onClick = {
+                                overflowExpanded = false
+                                onAddClick()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Ver grabaciones") },
+                            leadingIcon = { Icon(Icons.Default.Mic, contentDescription = null) },
+                            onClick = {
+                                overflowExpanded = false
+                                onRecordingsListClick()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Ajustes") },
+                            leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                            onClick = {
+                                overflowExpanded = false
+                                onSettingsClick()
+                            }
+                        )
+                    }
+                }
             }
             FlowRow(
                 modifier = Modifier

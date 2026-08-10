@@ -62,6 +62,7 @@ class SettingsViewModel @Inject constructor(
     val timelineColorCalendar = settingsStore.timelineColorCalendar
     val themeMode = settingsStore.themeMode
     val showOldEntriesExpanded = settingsStore.showOldEntriesExpanded
+    val showAdvancedOptions = settingsStore.showAdvancedOptions
     val learnFromDeletions = settingsStore.learnFromDeletions
     val weeklyAgendaEnabled = settingsStore.weeklyAgendaEnabled
     val weeklyAgendaDayOfWeek = settingsStore.weeklyAgendaDayOfWeek
@@ -93,6 +94,7 @@ class SettingsViewModel @Inject constructor(
     suspend fun setListeningStatusOnHome(enabled: Boolean) = settingsStore.setListeningStatusOnHome(enabled)
     suspend fun setThemeMode(mode: Int) = settingsStore.setThemeMode(mode)
     suspend fun setShowOldEntriesExpanded(expanded: Boolean) = settingsStore.setShowOldEntriesExpanded(expanded)
+    suspend fun setShowAdvancedOptions(visible: Boolean) = settingsStore.setShowAdvancedOptions(visible)
     suspend fun setLearnFromDeletions(enabled: Boolean) = settingsStore.setLearnFromDeletions(enabled)
     suspend fun setWeeklyAgendaEnabled(enabled: Boolean) = settingsStore.setWeeklyAgendaEnabled(enabled)
     suspend fun setWeeklyAgendaDayOfWeek(dayOfWeek: Int) = settingsStore.setWeeklyAgendaDayOfWeek(dayOfWeek)

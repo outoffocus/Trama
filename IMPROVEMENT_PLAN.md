@@ -138,3 +138,21 @@ más, y ambos APK superan `zipalign -P 16`. Wear mantiene `armeabi-v7a` para no
 retirar soporte a relojes antiguos; el requisito de 16 KB cubre `arm64-v8a` y
 `x86_64`. El script `scripts/check-16kb-alignment.sh` documenta la comprobación y
 el workflow de CI la ejecuta después de construir ambos APK.
+
+## Fase 9 — Claridad de navegación y ajustes (implementada; validación visual pendiente)
+
+- Conservar `CalendarScreen` como Home y mantener la navegación por días y meses.
+- Garantizar un acceso visible a todas las rutas públicas.
+- Separar ajustes cotidianos de controles técnicos sin eliminar funcionalidad.
+- Reagrupar las opciones según objetivos del usuario, no según componentes
+  internos.
+- Sustituir vocabulario técnico por consecuencias comprensibles.
+
+Implementado: la fecha seleccionada pasa a ser el título de Home, Búsqueda y Chat
+son acciones visibles y el menú ofrece notas, lista de grabaciones y Ajustes.
+Agenda conserva su acceso en la barra temporal. El día y mes seleccionados usan
+estado restaurable al navegar a detalles. Ajustes presenta Captura y frases,
+Agenda y calendarios, Privacidad y copias y Apariencia; IA/modelos, audio,
+ubicación y diagnóstico requieren activar `Mostrar opciones avanzadas`. Backup y
+reconocimiento de la propia voz dejan de estar enterrados en Avanzado. Queda
+pendiente validar densidad, truncado y comprensión en dispositivos físicos.

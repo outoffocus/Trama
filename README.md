@@ -23,6 +23,8 @@ Situacion a fecha `2026-08-10`:
 - `DailyPage` y el markdown privado por fecha funcionan como memoria tecnica persistida
 - Room esta en la version 15, con esquemas versionados y prueba de la cadena de migraciones
 - CI compila, ejecuta tests y lint, valida migraciones y comprueba la alineacion nativa de 16 KB
+- Home conserva el calendario como eje de navegación; búsqueda, Chat, Agenda, grabaciones y Ajustes tienen accesos explícitos sin añadir pestañas
+- Ajustes separa cuatro áreas básicas de IA, audio, ubicación y diagnóstico avanzados
 
 ## Que hace hoy la app
 
@@ -199,7 +201,7 @@ comprobaciones en cada push a `main`, pull request o lanzamiento manual.
 
 - cifrado de Room
 - paginacion o reduccion de recomposiciones en listas grandes
-- simplificacion de `SettingsScreen`
+- dividir internamente `SettingsScreen` en composables por sección sin cambiar su jerarquía visible
 - borrado total/exportado de datos mas visible
 - alternativa ligera de visualizacion de mapas si se quiere reintroducir mapa embebido
 
@@ -212,5 +214,6 @@ La mejor forma de avanzar sin romper el producto es estabilizar fronteras: DI, V
 - [`ARCHITECTURE.md`](ARCHITECTURE.md): arquitectura actual, flujos y deuda vigente.
 - [`IMPROVEMENT_PLAN.md`](IMPROVEMENT_PLAN.md): fases ejecutadas y calibracion fisica pendiente.
 - [`docs/ANDROID_16KB_COMPATIBILITY.md`](docs/ANDROID_16KB_COMPATIBILITY.md): diagnostico, decisiones y verificacion de bibliotecas nativas.
+- [`docs/UX_NAVIGATION.md`](docs/UX_NAVIGATION.md): navegación preservada, accesos y jerarquía básico/avanzado.
 - [`docs/TRAMA_LITE_PROPOSAL.md`](docs/TRAMA_LITE_PROPOSAL.md): propuesta de producto TRAMA Lite.
 - [`docs/TRAMA_LITE_EXECUTION_SPEC.md`](docs/TRAMA_LITE_EXECUTION_SPEC.md): especificacion ejecutable de TRAMA Lite.

@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
@@ -42,6 +43,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -121,10 +123,12 @@ import kotlin.math.roundToInt
 
 enum class SettingsSection(val route: String, val title: String, val subtitle: String) {
     ROOT("root", "Ajustes", "Control general de la app"),
-    CAPTURE_MEMORY("capture-memory", "Captura y memoria", "Categorías, diccionario y ubicación"),
-    IA("ia", "IA y resumen", "Resumen diario y automatización inteligente"),
+    CAPTURE_MEMORY("capture-memory", "Captura y frases", "Escucha, categorías y expresiones"),
+    AGENDA_CALENDARS("agenda-calendars", "Agenda y calendarios", "Fuentes, avisos y resúmenes"),
+    PRIVACY_DATA("privacy-data", "Privacidad y copias", "Voz, respaldo e importación"),
     APPEARANCE("appearance", "Apariencia", "Color y lectura del timeline"),
-    ADVANCED("advanced", "Avanzado", "Diagnóstico, modelos, prompts y backup");
+    IA("ia", "IA y modelos", "Gemini, modelo local y prompts"),
+    ADVANCED("advanced", "Audio y diagnóstico", "Captura, ubicación y herramientas técnicas");
 
     companion object {
         fun fromRoute(route: String?): SettingsSection =
@@ -203,7 +207,6 @@ fun SettingsScreen(
     val locationExitRadiusMeters by settings.locationExitRadiusMeters.collectAsState(
         initialValue = SettingsDataStore.DEFAULT_LOCATION_EXIT_RADIUS_METERS
     )
-    val googlePlacesApiKey by settings.googlePlacesApiKey.collectAsState(initialValue = "")
     val timelinePendingColorIndex by settings.timelineColorPending.collectAsState(
         initialValue = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PENDING
     )
@@ -221,6 +224,9 @@ fun SettingsScreen(
     )
     val themeMode by settings.themeMode.collectAsState(initialValue = SettingsDataStore.DEFAULT_THEME_MODE)
     val showOldEntriesExpanded by settings.showOldEntriesExpanded.collectAsState(initialValue = false)
+    val showAdvancedOptions by settings.showAdvancedOptions.collectAsState(
+        initialValue = SettingsDataStore.DEFAULT_SHOW_ADVANCED_OPTIONS
+    )
     val learnFromDeletions by settings.learnFromDeletions.collectAsState(initialValue = false)
     var deletionFeedbackCount by remember { mutableStateOf(com.trama.app.summary.DeletionFeedbackStore.count(context)) }
     val locationDebugStatus by LocationDebugState.status.collectAsState()
@@ -242,6 +248,7 @@ fun SettingsScreen(
 
     // Sections expanded state
     var patternsExpanded by remember { mutableStateOf(false) }
+    var correctionsExpanded by remember { mutableStateOf(false) }
     var promptsExpanded by remember { mutableStateOf(false) }
     var modelExpanded by remember { mutableStateOf(false) }
     // Auto-expand the speaker section when no enrollment exists yet, so users
@@ -505,7 +512,7 @@ fun SettingsScreen(
                     Surface(
                         shape = RoundedCornerShape(18.dp),
                         color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f),
-                        onClick = { onOpenSection(SettingsSection.ADVANCED) }
+                        onClick = { onOpenSection(SettingsSection.PRIVACY_DATA) }
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
@@ -519,14 +526,14 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Enrola tu voz",
+                                    text = "Configura el reconocimiento de tu voz",
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.onTertiaryContainer
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = "Sin enrolar, las voces de otras personas se tratan como tuyas. Recomendamos cinco muestras variadas.",
+                                    text = "Sin un perfil, Trama no puede distinguir tu voz de la de otras personas. Recomendamos cinco muestras variadas.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.85f)
                                 )
@@ -542,11 +549,11 @@ fun SettingsScreen(
 
                 Spacer(modifier = Modifier.height(18.dp))
 
-                SectionHeader("General")
+                SectionHeader("Escucha automática")
 
                 SettingToggle(
-                    title = "Recordar escucha al reiniciar",
-                    subtitle = "Mostrar un aviso para reactivarla después de encender el dispositivo",
+                    title = "Avisarme para reactivar la escucha",
+                    subtitle = "Después de reiniciar el dispositivo, Trama mostrará una notificación; Android no permite encender el micrófono sin tu confirmación",
                     checked = autoStart,
                     onCheckedChange = { scope.launch { settings.setAutoStart(it) } }
                 )
@@ -558,18 +565,27 @@ fun SettingsScreen(
                     icon = Icons.Default.Mic,
                     title = SettingsSection.CAPTURE_MEMORY.title,
                     subtitle = SettingsSection.CAPTURE_MEMORY.subtitle,
-                    summary = "Triggers, diccionario aprendido y ubicación pasiva",
+                    summary = "${intentPatterns.count { it.enabled }} categorías activas · perfil ${captureProfile.displayName()}",
                     onClick = { onOpenSection(SettingsSection.CAPTURE_MEMORY) },
                     accent = tramaColors.amber,
                 )
                 Spacer(modifier = Modifier.height(10.dp))
                 SettingsNavigationCard(
-                    icon = Icons.Default.AutoAwesome,
-                    title = SettingsSection.IA.title,
-                    subtitle = SettingsSection.IA.subtitle,
-                    summary = "Resumen diario, Gemini y modelo local",
-                    onClick = { onOpenSection(SettingsSection.IA) },
+                    icon = Icons.Default.CalendarMonth,
+                    title = SettingsSection.AGENDA_CALENDARS.title,
+                    subtitle = SettingsSection.AGENDA_CALENDARS.subtitle,
+                    summary = "Resumen diario ${if (summaryEnabled) "a las ${summaryHour}:00" else "desactivado"} · agenda semanal ${if (weeklyAgendaEnabled) "activa" else "desactivada"}",
+                    onClick = { onOpenSection(SettingsSection.AGENDA_CALENDARS) },
                     accent = tramaColors.teal,
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                SettingsNavigationCard(
+                    icon = Icons.Default.Security,
+                    title = SettingsSection.PRIVACY_DATA.title,
+                    subtitle = SettingsSection.PRIVACY_DATA.subtitle,
+                    summary = "Mi voz ${if (speakerConfigured) "configurada" else "sin configurar"} · copia diaria ${if (backupEnabled) "activa" else "desactivada"}",
+                    onClick = { onOpenSection(SettingsSection.PRIVACY_DATA) },
+                    accent = tramaColors.watch,
                 )
                 Spacer(modifier = Modifier.height(10.dp))
                 SettingsNavigationCard(
@@ -580,15 +596,37 @@ fun SettingsScreen(
                     onClick = { onOpenSection(SettingsSection.APPEARANCE) },
                     accent = tramaColors.warn,
                 )
-                Spacer(modifier = Modifier.height(10.dp))
-                SettingsNavigationCard(
-                    icon = Icons.Default.Tune,
-                    title = SettingsSection.ADVANCED.title,
-                    subtitle = SettingsSection.ADVANCED.subtitle,
-                    summary = "Diagnóstico, prompts, backup y control fino",
-                    onClick = { onOpenSection(SettingsSection.ADVANCED) },
-                    accent = tramaColors.watch,
+                Spacer(modifier = Modifier.height(20.dp))
+
+                SettingToggle(
+                    title = "Mostrar opciones avanzadas",
+                    subtitle = "Motores, modelos, prompts, ubicación y diagnóstico técnico",
+                    checked = showAdvancedOptions,
+                    onCheckedChange = { scope.launch { settings.setShowAdvancedOptions(it) } }
                 )
+
+                AnimatedVisibility(visible = showAdvancedOptions) {
+                    Column {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        SettingsNavigationCard(
+                            icon = Icons.Default.AutoAwesome,
+                            title = SettingsSection.IA.title,
+                            subtitle = SettingsSection.IA.subtitle,
+                            summary = "Gemini, modelo local, umbral de aceptación y prompts",
+                            onClick = { onOpenSection(SettingsSection.IA) },
+                            accent = tramaColors.teal,
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        SettingsNavigationCard(
+                            icon = Icons.Default.Tune,
+                            title = SettingsSection.ADVANCED.title,
+                            subtitle = SettingsSection.ADVANCED.subtitle,
+                            summary = "Contexto de audio, ubicación y métricas de captura",
+                            onClick = { onOpenSection(SettingsSection.ADVANCED) },
+                            accent = tramaColors.watch,
+                        )
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(32.dp))
             } else {
@@ -600,13 +638,13 @@ fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
                     Text(
-                        text = "Herramientas de laboratorio",
+                        text = "Controles técnicos",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Aquí viven los ajustes finos del pipeline, el diagnóstico y el mantenimiento del sistema. No son necesarios para usar Trama en el día a día.",
+                        text = "Ajusta el audio, la ubicación y el diagnóstico. Los valores recomendados ya funcionan sin modificar esta pantalla.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -616,7 +654,7 @@ fun SettingsScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         PatternLegendChip(
-                            text = "Captura",
+                            text = "Audio",
                             color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
                             contentColor = MaterialTheme.colorScheme.primary
                         )
@@ -626,14 +664,9 @@ fun SettingsScreen(
                             contentColor = MaterialTheme.colorScheme.tertiary
                         )
                         PatternLegendChip(
-                            text = "Modelos",
+                            text = "Ubicación",
                             color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.14f),
                             contentColor = MaterialTheme.colorScheme.secondary
-                        )
-                        PatternLegendChip(
-                            text = "Mantenimiento",
-                            color = MaterialTheme.colorScheme.error.copy(alpha = 0.12f),
-                            contentColor = MaterialTheme.colorScheme.error
                         )
                     }
                 }
@@ -644,7 +677,7 @@ fun SettingsScreen(
             // ═══════════════════════════════════════════════════════════════
             // CAPTURA
             // ═══════════════════════════════════════════════════════════════
-            SectionHeader("Captura")
+            SectionHeader("Audio y reconocimiento")
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -655,54 +688,16 @@ fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        "Captura de voz",
+                        "Contexto de audio",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        "Vosk hace de filtro ligero y, si detecta una frase relevante, Whisper transcribe la captura completa. Estos dos controles solo ajustan cuánto contexto se conserva antes y después.",
+                        "Vosk filtra el audio y Whisper transcribe únicamente las ventanas relevantes. Estos controles cambian cuánto audio se conserva y el coste de procesarlo.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Text(
-                        "Precisión de captura",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    val profileOptions = listOf(
-                        CaptureProfile.STRICT to "Estricto",
-                        CaptureProfile.BALANCED to "Equilibrado",
-                        CaptureProfile.SENSITIVE to "Sensible"
-                    )
-                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                        profileOptions.forEachIndexed { index, (profile, label) ->
-                            SegmentedButton(
-                                selected = captureProfile == profile,
-                                onClick = { scope.launch { settings.setCaptureProfile(profile) } },
-                                shape = when (index) {
-                                    0 -> RoundedCornerShape(topStart = 10.dp, bottomStart = 10.dp)
-                                    profileOptions.lastIndex -> RoundedCornerShape(topEnd = 10.dp, bottomEnd = 10.dp)
-                                    else -> RoundedCornerShape(0.dp)
-                                }
-                            ) { Text(label, style = MaterialTheme.typography.labelSmall) }
-                        }
-                    }
-                    Text(
-                        when (captureProfile) {
-                            CaptureProfile.STRICT -> "Recomendado: exige intención personal, verbo accionable y contexto suficiente."
-                            CaptureProfile.BALANCED -> "Tolera algunos errores del reconocimiento y expresiones impersonales; las dudas van a Sugeridas."
-                            CaptureProfile.SENSITIVE -> "Prioriza no perder frases y puede activar más transcripciones ambientales."
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 6.dp)
-                    )
-
-                    Spacer(modifier = Modifier.height(14.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -743,7 +738,7 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "Audio anterior a la frase",
+                            "Conservar el inicio",
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.weight(1f)
                         )
@@ -770,7 +765,7 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "Máximo después de la frase",
+                            "Conservar contexto posterior",
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.weight(1f)
                         )
@@ -799,8 +794,8 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(12.dp))
 
                     SettingToggle(
-                        title = "Modo diagnostico ASR",
-                        subtitle = "Muestra motor activo y ultima transcripcion",
+                        title = "Diagnóstico de escucha",
+                        subtitle = "Muestra el motor, los motivos de descarte y la última transcripción",
                         checked = asrDebugEnabled,
                         onCheckedChange = { scope.launch { settings.setAsrDebugEnabled(it) } }
                     )
@@ -808,8 +803,8 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(12.dp))
 
                     SettingToggle(
-                        title = "Estado tecnico en inicio",
-                        subtitle = "Sustituye \"Escuchando\" por el estado real de captura solo para diagnostico",
+                        title = "Mostrar estado técnico en Home",
+                        subtitle = "Sustituye el estado sencillo por información interna de captura",
                         checked = listeningStatusOnHome,
                         onCheckedChange = { scope.launch { settings.setListeningStatusOnHome(it) } }
                     )
@@ -1074,7 +1069,7 @@ fun SettingsScreen(
             SectionDivider()
             }
 
-            if (section == SettingsSection.CAPTURE_MEMORY) {
+            if (section == SettingsSection.ADVANCED) {
             SectionHeader("Ubicacion")
 
             SettingToggle(
@@ -1186,19 +1181,8 @@ fun SettingsScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    OutlinedTextField(
-                        value = googlePlacesApiKey,
-                        onValueChange = { scope.launch { settings.setGooglePlacesApiKey(it) } },
-                        label = { Text("Google Places API key") },
-                        supportingText = { Text("Opcional. Se usará más adelante como fallback.") },
-                        visualTransformation = PasswordVisualTransformation(),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-
                     Text(
-                        "Por ahora las estancias aparecen como \"Lugar sin identificar\" y se enriquecerán en la siguiente fase.",
+                        "Los intervalos cortos y radios pequeños detectan más visitas, pero consumen más batería y pueden generar estancias falsas.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1235,8 +1219,29 @@ fun SettingsScreen(
             // DICCIONARIO
             // ═══════════════════════════════════════════════════════════════
             if (section == SettingsSection.CAPTURE_MEMORY) {
-            SectionHeader("Diccionario aprendido")
+            SectionHeader("Qué debe capturar Trama")
 
+            CaptureProfileCard(
+                selectedProfile = captureProfile,
+                onProfileSelected = { profile ->
+                    scope.launch { settings.setCaptureProfile(profile) }
+                }
+            )
+
+            SectionDivider()
+
+            CollapsibleSectionHeader(
+                title = "Correcciones aprendidas",
+                subtitle = "${learnedCorrections.size} sustituciones creadas al editar entradas",
+                expanded = correctionsExpanded,
+                onToggle = { correctionsExpanded = !correctionsExpanded }
+            )
+
+            AnimatedVisibility(
+                visible = correctionsExpanded,
+                enter = expandVertically(),
+                exit = shrinkVertically()
+            ) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -1324,6 +1329,7 @@ fun SettingsScreen(
                     }
                 }
             }
+            }
 
             SectionDivider()
             }
@@ -1331,12 +1337,12 @@ fun SettingsScreen(
             // ═══════════════════════════════════════════════════════════════
             // IA Y RESUMEN
             // ═══════════════════════════════════════════════════════════════
-            if (section == SettingsSection.IA) {
-            SectionHeader("IA y resumen")
+            if (section == SettingsSection.AGENDA_CALENDARS) {
+            SectionHeader("Agenda y automatizaciones")
 
             SettingToggle(
                 title = "Resumen diario",
-                subtitle = "Genera acciones sugeridas con Gemini",
+                subtitle = "Procesa el día y prepara su resumen y acciones sugeridas",
                 checked = summaryEnabled,
                 onCheckedChange = {
                     scope.launch {
@@ -1372,41 +1378,6 @@ fun SettingsScreen(
                         valueRange = 6f..23f, steps = 16,
                         modifier = Modifier.fillMaxWidth()
                     )
-
-                    OutlinedTextField(
-                        value = geminiApiKey,
-                        onValueChange = {
-                            viewModel.setGeminiApiKey(it)
-                        },
-                        label = { Text("Clave API Gemini") },
-                        supportingText = { Text("Gratis en aistudio.google.com") },
-                        visualTransformation = PasswordVisualTransformation(),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Text(
-                        "Umbral de aceptación: ${"%.0f".format(actionableThreshold * 100)}%",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Text(
-                        "Más bajo = más notas aceptadas (recall ↑, ruido ↑). Las que queden entre 30% y este umbral pasan a Sugeridas en vez de descartarse.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Slider(
-                        value = actionableThreshold,
-                        onValueChange = {
-                            actionableThreshold = it
-                            ActionItemProcessor.setActionableConfidenceThreshold(context, it)
-                        },
-                        valueRange = ActionItemProcessor.ACTIONABLE_THRESHOLD_RANGE,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp))
 
                     SectionHeader("Google Calendar")
 
@@ -1669,7 +1640,52 @@ fun SettingsScreen(
             SectionDivider()
             }
 
-            if (section == SettingsSection.ADVANCED) {
+            if (section == SettingsSection.IA) {
+            SectionHeader("Procesamiento inteligente")
+
+            Text(
+                "Control técnico de la ruta local y en la nube. Estos valores no son necesarios para la captura cotidiana.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            OutlinedTextField(
+                value = geminiApiKey,
+                onValueChange = { viewModel.setGeminiApiKey(it) },
+                label = { Text("Clave API Gemini") },
+                supportingText = { Text("Cifrada con Android Keystore") },
+                visualTransformation = PasswordVisualTransformation(),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            )
+
+            Spacer(modifier = Modifier.height(14.dp))
+            Text(
+                "Exigencia para crear una tarea: ${"%.0f".format(actionableThreshold * 100)}%",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                "Un valor bajo conserva más posibles acciones; uno alto descarta más ruido. El perfil Preciso sigue aplicando sus propias reglas de intención.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Slider(
+                value = actionableThreshold,
+                onValueChange = {
+                    actionableThreshold = it
+                    ActionItemProcessor.setActionableConfidenceThreshold(context, it)
+                },
+                valueRange = ActionItemProcessor.ACTIONABLE_THRESHOLD_RANGE,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            SectionDivider()
+            }
+
+            if (section == SettingsSection.IA) {
             CollapsibleSectionHeader(
                 title = "Prompts",
                 subtitle = "Edita los prompts del sistema sin tocar código",
@@ -1701,7 +1717,7 @@ fun SettingsScreen(
             // ═══════════════════════════════════════════════════════════════
             // MODELO LOCAL
             // ═══════════════════════════════════════════════════════════════
-            if (section == SettingsSection.ADVANCED) {
+            if (section == SettingsSection.IA) {
             CollapsibleSectionHeader(
                 title = "Modelo local",
                 subtitle = "Descarga, activa y configura el modelo en el dispositivo",
@@ -1919,7 +1935,7 @@ fun SettingsScreen(
             // ═══════════════════════════════════════════════════════════════
             // SOLO MI VOZ
             // ═══════════════════════════════════════════════════════════════
-            if (section == SettingsSection.ADVANCED) {
+            if (section == SettingsSection.PRIVACY_DATA) {
             CollapsibleSectionHeader(
                 title = "Solo mi voz",
                 subtitle = "Verificacion offline despues de Whisper",
@@ -2081,7 +2097,7 @@ fun SettingsScreen(
             // ═══════════════════════════════════════════════════════════════
             // BACKUP
             // ═══════════════════════════════════════════════════════════════
-            if (section == SettingsSection.ADVANCED) {
+            if (section == SettingsSection.PRIVACY_DATA) {
             CollapsibleSectionHeader(
                 title = "Copia de seguridad",
                 subtitle = "Exporta o automatiza el respaldo de tus datos",
@@ -2555,6 +2571,71 @@ private fun SectionHeader(title: String) {
         fontWeight = FontWeight.Bold,
         modifier = Modifier.padding(bottom = 8.dp)
     )
+}
+
+private fun CaptureProfile.displayName(): String = when (this) {
+    CaptureProfile.STRICT -> "Preciso"
+    CaptureProfile.BALANCED -> "Equilibrado"
+    CaptureProfile.SENSITIVE -> "Exhaustivo"
+}
+
+@Composable
+private fun CaptureProfileCard(
+    selectedProfile: CaptureProfile,
+    onProfileSelected: (CaptureProfile) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+        ),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Tolerancia al ruido",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                "Decide cuánto debe arriesgar Trama para no perder una posible tarea o compromiso.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp, bottom = 10.dp)
+            )
+
+            val profileOptions = listOf(
+                CaptureProfile.STRICT,
+                CaptureProfile.BALANCED,
+                CaptureProfile.SENSITIVE
+            )
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                profileOptions.forEachIndexed { index, profile ->
+                    SegmentedButton(
+                        selected = selectedProfile == profile,
+                        onClick = { onProfileSelected(profile) },
+                        shape = when (index) {
+                            0 -> RoundedCornerShape(topStart = 10.dp, bottomStart = 10.dp)
+                            profileOptions.lastIndex -> RoundedCornerShape(topEnd = 10.dp, bottomEnd = 10.dp)
+                            else -> RoundedCornerShape(0.dp)
+                        }
+                    ) {
+                        Text(profile.displayName(), style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+            Text(
+                when (selectedProfile) {
+                    CaptureProfile.STRICT -> "Recomendado para tu uso: descarta las dudas y exige una intención personal clara."
+                    CaptureProfile.BALANCED -> "Tolera errores del reconocimiento; algunos casos dudosos pueden quedar como sugerencias."
+                    CaptureProfile.SENSITIVE -> "Prioriza no perder frases, a cambio de procesar y guardar más ruido ambiental."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        }
+    }
 }
 
 @Composable
