@@ -29,7 +29,9 @@ data class DiaryEntry(
     val completedAt: Long? = null,                 // when it was marked completed
     val priority: String = EntryPriority.NORMAL,   // LOW, NORMAL, HIGH, URGENT
     val duplicateOfId: Long? = null,                // ID of original entry if this is a duplicate
-    val sourceRecordingId: Long? = null              // ID of the Recording this action was extracted from
+    val sourceRecordingId: Long? = null,             // ID of the Recording this action was extracted from
+    val userConfirmedAt: Long? = null,               // explicit human confirmation timestamp
+    val verificationSource: String? = null           // where the human confirmation happened
 ) {
     /** Display text: cleanText > raw Whisper text */
     val displayText: String
@@ -56,9 +58,15 @@ data class DiaryEntry(
 }
 
 object EntryProcessingBackend {
-    const val CLOUD = "CLOUD"
     const val LOCAL = "LOCAL"
     const val HEURISTIC = "HEURISTIC"
+}
+
+object EntryVerificationSource {
+    const val CALENDAR = "CALENDAR"
+    const val AGENDA = "AGENDA"
+    const val RECORDING = "RECORDING"
+    const val DETAIL = "DETAIL"
 }
 
 /** Entry lifecycle status */

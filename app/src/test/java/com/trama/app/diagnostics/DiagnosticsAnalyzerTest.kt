@@ -118,6 +118,34 @@ class DiagnosticsAnalyzerTest {
         )
     }
 
+    @Test
+    fun `battery analysis ignores startup spikes and charging samples`() {
+        fun battery(ts: Long, pct: Int, charging: Boolean) = CaptureLog.Event(
+            ts = ts,
+            gate = "SERVICE",
+            result = "OK",
+            text = "heartbeat",
+            meta = mapOf(
+                "batteryPct" to pct.toString(),
+                "charging" to charging.toString(),
+                "batteryTempC" to "30,5"
+            )
+        )
+        val events = listOf(
+            battery(0L, 100, false),
+            battery(100L, 56, true),
+            battery(3_600_000L, 100, false),
+            battery(7_200_000L, 95, false),
+            battery(10_800_000L, 90, false)
+        )
+
+        val power = DiagnosticsAnalyzer.analyze(events, emptyList(), emptyList()).power
+
+        assertEquals(10, power.observedBatteryDropPct)
+        assertEquals(5f, power.observedBatteryDropPerHourPct ?: -1f, 0.01f)
+        assertEquals(30.5f, power.avgBatteryTempC ?: -1f, 0.01f)
+    }
+
     private fun event(
         gate: String,
         result: String,

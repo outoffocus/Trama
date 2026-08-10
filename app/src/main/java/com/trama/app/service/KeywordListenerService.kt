@@ -30,6 +30,7 @@ import com.trama.app.speech.IntentPattern
 import com.trama.app.speech.PersonalDictionary
 import com.trama.app.speech.speaker.SherpaSpeakerVerificationManager
 import com.trama.app.summary.ActionItemProcessor
+import com.trama.app.summary.AsrHallucinationDetector
 import com.trama.shared.sync.MicCoordinator
 import com.trama.app.sync.PhoneToWatchSyncer
 import com.trama.app.sync.SettingsSyncer
@@ -60,7 +61,7 @@ import java.util.Locale
  *
  * Integrated features:
  * - Lightweight local gate ASR: checks short speech windows before running Whisper
- * - Entry validation: Heuristics + Gemini to validate/correct transcriptions
+ * - Entry validation: local heuristics + optional on-device model
  *
  * Battery optimizations:
  * - VAD/gate segmentation keeps Whisper off unless speech looks relevant
@@ -648,7 +649,7 @@ class KeywordListenerService : LifecycleService() {
         if (mediaPlaybackActive && reason != "init") return
         mediaPlaybackActive = true
         ServiceController.notifyPaused()
-        Log.i(TAG, "External media playback active; pausing listener")
+        Log.i(TAG, "Media playback on this device active; pausing listener")
         CaptureLog.event(
             gate = CaptureLog.Gate.SERVICE,
             result = CaptureLog.Result.REJECT,
@@ -658,14 +659,14 @@ class KeywordListenerService : LifecycleService() {
                 "outcome" to CaptureLog.CaptureOutcome.MEDIA_PLAYBACK
             )
         )
-        publishAsrDebug(status = "pausado por audio de otra app", triggerReason = "media_playback")
-        notifier.updateForegroundIfChanged("Pausado por audio externo")
+        publishAsrDebug(status = "pausado por audio de este dispositivo", triggerReason = "media_playback")
+        notifier.updateForegroundIfChanged("Pausado por audio de este dispositivo")
         stopContextualCapture()
     }
 
     private fun handleMediaPlaybackInactive() {
         mediaPlaybackActive = false
-        Log.i(TAG, "External media playback inactive; resuming listener")
+        Log.i(TAG, "Media playback on this device inactive; resuming listener")
         CaptureLog.event(
             gate = CaptureLog.Gate.SERVICE,
             result = CaptureLog.Result.OK,
@@ -851,6 +852,29 @@ class KeywordListenerService : LifecycleService() {
                                 "source" to source
                             ) + powerSnapshot()
                         )
+                        val asrNoiseReason = AsrHallucinationDetector.detect(
+                            text,
+                            singleWordIsHallucination = false
+                        )
+                        if (asrNoiseReason != null) {
+                            publishAsrDebug(
+                                status = "audio ambiental filtrado",
+                                lastText = text,
+                                triggerReason = asrNoiseReason
+                            )
+                            CaptureLog.event(
+                                gate = CaptureLog.Gate.INTENT,
+                                result = CaptureLog.Result.NO_MATCH,
+                                text = text.take(160),
+                                meta = mapOf(
+                                    "captureId" to envelope.captureId,
+                                    "rejectStage" to "AsrSanity",
+                                    "intentReason" to asrNoiseReason,
+                                    "outcome" to CaptureLog.CaptureOutcome.NO_INTENT
+                                )
+                            )
+                            return@capture
+                        }
                         val speakerWindow = window
                             .copy(preRollPcm = shortArrayOf())
                             .tailWindow(SPEAKER_VERIFY_WINDOW_MS)
@@ -861,7 +885,7 @@ class KeywordListenerService : LifecycleService() {
                                 engine = asrEngine.name,
                                 status = "rechazado por voz",
                                 lastText = text,
-                                triggerReason = "speaker ${"%.2f".format(speakerVerification.similarity)}/${"%.2f".format(speakerThreshold)}"
+                                triggerReason = "speaker ${metric(speakerVerification.similarity)}/${metric(speakerThreshold)}"
                             )
                             Log.i(
                                 TAG,
@@ -873,8 +897,8 @@ class KeywordListenerService : LifecycleService() {
                                 text = text,
                                 meta = mapOf(
                                     "captureId" to envelope.captureId,
-                                    "sim" to "%.2f".format(speakerVerification.similarity),
-                                    "threshold" to "%.2f".format(speakerThreshold),
+                                    "sim" to metric(speakerVerification.similarity),
+                                    "threshold" to metric(speakerThreshold),
                                     "speakerReason" to speakerVerification.reason,
                                     "rejectStage" to "SpeakerOwnership",
                                     "outcome" to CaptureLog.CaptureOutcome.NOT_OWNER
@@ -887,7 +911,7 @@ class KeywordListenerService : LifecycleService() {
                             result = CaptureLog.Result.OK,
                             meta = mapOf(
                                 "captureId" to envelope.captureId,
-                                "sim" to "%.2f".format(speakerVerification.similarity),
+                                "sim" to metric(speakerVerification.similarity),
                                 "speakerReason" to speakerVerification.reason,
                                 "speakerConfigured" to speakerVerificationManager.isConfigured,
                                 "speakerEnabled" to speakerVerificationManager.isEnabled
@@ -906,25 +930,28 @@ class KeywordListenerService : LifecycleService() {
                             "ASR[${asrEngine.name}] heard (${window.durationMs()}ms window, " +
                                 "${elapsedMs}ms decode): '$text'"
                         )
-                        val ownerIsStrong = speakerVerificationManager.isConfigured &&
-                            speakerVerificationManager.isEnabled &&
-                            speakerVerification.reason !in setOf(
-                                "disabled",
-                                "no_profile",
-                                "backend_unavailable",
-                                "too_short",
-                                "embedding_failed"
-                            )
+                        // An optional voice profile supplies extra evidence; its
+                        // absence is neutral. Only an inconclusive check from an
+                        // enabled/configured profile should demote the capture.
+                        // A real mismatch was already rejected above.
+                        val speakerEvidenceRequiresReview =
+                            speakerVerificationManager.isConfigured &&
+                                speakerVerificationManager.isEnabled &&
+                                speakerVerification.reason in setOf(
+                                    "backend_unavailable",
+                                    "too_short",
+                                    "embedding_failed"
+                                )
                         val saved = processText(
                             text = text,
-                            preferSuggested = !ownerIsStrong,
+                            preferSuggested = speakerEvidenceRequiresReview,
                             captureId = envelope.captureId
                         )
                         val rescued = if (!saved) {
                             processGateResult(
                                 gateText = envelope.gateTranscript,
                                 finalText = text,
-                                preferSuggested = !ownerIsStrong,
+                                preferSuggested = speakerEvidenceRequiresReview,
                                 captureId = envelope.captureId
                             )
                         } else {
@@ -1221,7 +1248,7 @@ class KeywordListenerService : LifecycleService() {
                 "label" to result.label,
                 "pattern" to (result.pattern?.id ?: "custom"),
                 "trigger" to result.matchedTrigger,
-                "detectorConfidence" to "%.2f".format(result.confidence),
+                "detectorConfidence" to metric(result.confidence),
                 "scoreReasons" to result.scoreReasons.joinToString(","),
                 "acceptanceReasons" to acceptance.reasons.joinToString(","),
                 "preferSuggested" to routeToSuggested,
@@ -1484,5 +1511,8 @@ class KeywordListenerService : LifecycleService() {
         return status == BatteryManager.BATTERY_STATUS_CHARGING ||
             status == BatteryManager.BATTERY_STATUS_FULL
     }
+
+    private fun metric(value: Number): String =
+        String.format(Locale.US, "%.2f", value.toDouble())
 
 }

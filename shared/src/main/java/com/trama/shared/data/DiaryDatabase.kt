@@ -21,7 +21,7 @@ import com.trama.shared.model.TimelineEvent
         DwellDetectionState::class,
         DailyPage::class
     ],
-    version = 15,
+    version = 16,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -198,6 +198,12 @@ abstract class DiaryDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE recordings ADD COLUMN audioFilePath TEXT DEFAULT NULL")
                 db.execSQL("ALTER TABLE recordings ADD COLUMN audioSampleRateHz INTEGER NOT NULL DEFAULT 16000")
+            }
+        }
+        val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE diary_entries ADD COLUMN userConfirmedAt INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE diary_entries ADD COLUMN verificationSource TEXT DEFAULT NULL")
             }
         }
     }

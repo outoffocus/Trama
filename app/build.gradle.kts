@@ -98,9 +98,6 @@ dependencies {
     // Wearable Data Layer (for watch sync)
     implementation(libs.play.services.wearable)
 
-    // Google Generative AI (Gemini cloud for daily summary)
-    implementation(libs.generativeai)
-
     // On-device LLM: MediaPipe (.task files) + LiteRT-LM (.litertlm files)
     implementation(libs.mediapipe.tasks.genai)
     implementation(libs.mediapipe.tasks.core)

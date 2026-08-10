@@ -4,7 +4,7 @@ Trama es una app Android local-first para capturar recordatorios, tareas, grabac
 
 ## Estado actual del proyecto
 
-Situacion a fecha `2026-08-10`:
+Situacion a fecha `2026-08-11`:
 
 - proyecto Android multi-modulo con `app`, `shared` y `wear`
 - movil en Jetpack Compose + Room + WorkManager + Wear Data Layer
@@ -13,15 +13,15 @@ Situacion a fecha `2026-08-10`:
 - `Vosk Android 0.3.75` y `JNA 5.18.1` mantienen compatibles con paginas de 16 KB los binarios ARM64 de movil y reloj
 - `SherpaWhisperAsrEngine` es la ruta principal de transcripcion final en movil
 - el movil no usa `SpeechRecognizer`: si el ASR offline no esta disponible, la captura se marca como degradada y se diagnostica explicitamente
-- `Gemini` cloud y `Gemma` local se usan para estructurar acciones, resumir grabaciones y generar memoria diaria
-- la app puede aprender, de forma opt-in, patrones de eliminaciones marcadas como ruido y usarlos como gate pre-LLM
+- `Gemma` local estructura acciones, resume grabaciones y genera memoria diaria; no existe ruta de IA cloud ni configuración de API key
+- la app puede aprender localmente de confirmaciones y descartes, y usar esas decisiones para proteger acciones útiles y filtrar ruido
 - la escucha continua del movil trabaja en segmentos cortos y renovables para evitar ventanas largas/ruidosas atascadas
 - el fallback incierto a Whisper esta limitado por cooldown, carga y bateria para proteger consumo
-- la escucha se pausa cuando Android informa audio activo de otra app, para evitar capturas de YouTube/Spotify
+- la escucha se pausa cuando Android informa audio activo en este dispositivo, para evitar capturas de YouTube/Spotify; una TV externa se filtra por audio e intención
 - Home puede mostrar estados tecnicos de escucha solo si el ajuste `Estado tecnico en inicio` esta activado
 - la UI principal vive en `Home`, `Calendar`, `Agenda`, `Chat`, `Recordings`, `PlaceDetail` y `Settings`
 - `DailyPage` y el markdown privado por fecha funcionan como memoria tecnica persistida
-- Room esta en la version 15, con esquemas versionados y prueba de la cadena de migraciones
+- Room esta en la version 16, con confirmación humana persistida, esquemas versionados y prueba de la cadena de migraciones
 - CI compila, ejecuta tests y lint, valida migraciones y comprueba la alineacion nativa de 16 KB
 - Home conserva el calendario como eje de navegación; búsqueda, Chat, Agenda, grabaciones y Ajustes tienen accesos explícitos sin añadir pestañas
 - Ajustes separa cuatro áreas básicas de IA, audio, ubicación y diagnóstico avanzados
@@ -121,20 +121,22 @@ La app mantiene memoria por fecha en dos capas:
 
 El `Calendar` es la UI principal del historico por dia. `Agenda` concentra lo que viene despues: vencidas, esta/proxima semana, tareas futuras y tareas sin fecha. El `Chat` consulta entradas, lugares y contexto diario para responder preguntas como donde estuviste, que tareas completaste o que lugares visitaste.
 
-## IA
+## IA local
 
-Trama combina varias rutas:
+El contrato detallado de privacidad, fallback y confirmacion humana esta en
+[`docs/LOCAL_AI_AND_CONFIRMATIONS.md`](docs/LOCAL_AI_AND_CONFIRMATIONS.md).
 
-- `Gemini` cloud para tareas de razonamiento y estructuracion cuando hay clave configurada
+Trama procesa el contenido personal exclusivamente en el dispositivo:
+
 - `Gemma` local descargable y configurable desde ajustes
-- heuristicas locales para validacion, deduplicacion y fallback cuando la IA no responde
+- heuristicas locales para validacion, deduplicacion y fallback cuando Gemma no esta disponible
 - el prompt de acciones exige que `cleanText` sea la accion minima autosuficiente, resolviendo pronombres y elipsis dentro de la misma transcripcion
-- si `Aprender de mis eliminaciones` esta activo, `ActionItemProcessor` compara entradas nuevas contra patrones eliminados como ruido antes de llamar al LLM e inyecta ejemplos recientes como `DISCARD`
+- si `Aprender de mis decisiones` esta activo, `ActionItemProcessor` compara entradas nuevas con confirmaciones y descartes locales antes de decidir su superficie
 - el postprocesado recorta prefijos conversacionales cuando el LLM devuelve una frase entera con un trigger accionable dentro
 - la deduplicacion normaliza variantes y errores frecuentes de triggers (`tenemos que`, `tenemso que`, `tenes/tenés que`) antes de comparar
 - `ActionQualityGateProductTest` genera miles de ejemplos sinteticos accionables/no accionables para vigilar precision antes de publicar
 
-La clave de Gemini se cifra con AES-GCM mediante una clave no exportable de Android Keystore. La base Room todavia no esta cifrada.
+Las sugerencias confirmadas conservan por separado la confianza automática y la verificación humana (`userConfirmedAt` y `verificationSource`).
 
 ## Privacidad
 
@@ -143,7 +145,7 @@ La clave de Gemini se cifra con AES-GCM mediante una clave no exportable de Andr
 - los patrones aprendidos de eliminaciones se guardan localmente en `filesDir/diagnostics/deletion_feedback.json` y se pueden borrar desde ajustes
 - la base Room no esta cifrada todavia
 - los backups son JSON y dependen del destino elegido por el usuario
-- la clave de Gemini se cifra con AES-GCM y Android Keystore; otros secretos deben seguir el mismo patron antes de persistirse
+- los textos, grabaciones, resúmenes y contexto del diario no se envían a modelos remotos
 
 ## Build
 
@@ -195,7 +197,7 @@ comprobaciones en cada push a `main`, pull request o lanzamiento manual.
 - UI tests Compose mantenidos
 - test de integracion `audio -> ASR -> intent -> persistencia`
 - observabilidad unica de salud ASR / IA / sync
-- rate limiting y control de coste para Gemini
+- calibración local de confianza a partir de decisiones confirmadas
 
 ### P2
 

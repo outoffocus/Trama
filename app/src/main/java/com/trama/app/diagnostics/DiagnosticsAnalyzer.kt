@@ -270,10 +270,17 @@ object DiagnosticsAnalyzer {
     }
 
     private fun buildPower(events: List<CaptureLog.Event>): Power {
-        val temps = events.mapNotNull { it.meta["batteryTempC"]?.toFloatOrNull() }
+        val temps = events.mapNotNull {
+            it.meta["batteryTempC"]?.replace(',', '.')?.toFloatOrNull()
+        }
         val batterySamples = events
             .mapNotNull { event ->
-                event.meta["batteryPct"]?.toIntOrNull()?.let { pct -> event.ts to pct }
+                event.meta["batteryPct"]
+                    ?.toIntOrNull()
+                    ?.takeIf { it in 0..100 }
+                    ?.let { pct ->
+                        Triple(event.ts, pct, event.meta["charging"]?.toBooleanStrictOrNull())
+                    }
             }
             .sortedBy { it.first }
             .distinctBy { it.first }
@@ -285,14 +292,22 @@ object DiagnosticsAnalyzer {
             val last = dischargeSamples.last()
             val drop = first.second - last.second
             val hours = (last.first - first.first) / 3_600_000f
-            if (drop > 0 && hours > 0f && (bestDrop == null || drop > bestDrop!!.first)) {
+            if (drop > 0 && hours >= 0.5f && (bestDrop == null || drop > bestDrop!!.first)) {
                 bestDrop = drop to (drop / hours)
             }
         }
-        for ((ts, pct) in batterySamples) {
+        for ((ts, pct, isCharging) in batterySamples) {
+            if (isCharging != false) {
+                finishDischargeSession()
+                dischargeSamples.clear()
+                continue
+            }
             val previous = dischargeSamples.lastOrNull()
-            if (previous == null || pct <= previous.second) {
+            if (previous == null) {
                 dischargeSamples += ts to pct
+            } else if (pct <= previous.second + 1) {
+                // Ignore one-point gauge jitter while keeping the session monotonic.
+                dischargeSamples += ts to minOf(pct, previous.second)
             } else {
                 finishDischargeSession()
                 dischargeSamples.clear()
@@ -516,7 +531,7 @@ object DiagnosticsAnalyzer {
             add("Hay fallos de watchdog sin causa exportada: genera un nuevo diagnóstico con la instrumentación actual para ver serviceStartError/estado del servicio.")
         }
         if (analysis.quality.mediaPlaybackPauses > 0 || analysis.quality.mediaPlaybackBlockedWindows > 0) {
-            add("La escucha se pauso por audio de otra app: revisar si coincide con YouTube/Spotify y confirmar que no se guardan eventos de media externa.")
+            add("La escucha se pausó por audio reproducido en este dispositivo: revisar si coincide con YouTube/Spotify. Una TV externa no activa esta señal y se filtra por audio/intención.")
         }
         if (analysis.frequentPhrases.take(5).any { it.value in TV_HINTS }) {
             add("Aparecen términos típicos de TV/ruido: reforzar speaker verification y añadir reglas negativas para habla no dirigida a Trama.")

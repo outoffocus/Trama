@@ -146,6 +146,17 @@ fun AgendaScreen(
 
     fun markEntryCompleted(entry: DiaryEntry) {
         scope.launch {
+            if (entry.status == EntryStatus.SUGGESTED) {
+                repository.confirmSuggested(
+                    entry.id,
+                    com.trama.shared.model.EntryVerificationSource.AGENDA
+                )
+                snackbarHostState.showSnackbar(
+                    message = "Sugerencia confirmada y añadida a pendientes",
+                    duration = SnackbarDuration.Short
+                )
+                return@launch
+            }
             repository.markCompleted(entry.id)
             val result = snackbarHostState.showSnackbar(
                 message = "Marcada como hecha",

@@ -2,9 +2,6 @@ package com.trama.app.summary
 
 import android.content.Context
 import android.util.Log
-import com.google.ai.client.generativeai.GenerativeModel
-import com.trama.app.GeminiConfig
-import com.google.ai.client.generativeai.type.generationConfig
 import com.trama.app.diagnostics.CaptureLog
 import com.trama.shared.data.DiaryRepository
 import com.trama.shared.model.DiaryEntry
@@ -20,12 +17,10 @@ import java.util.Locale
 
 /**
  * Processes a recording transcription:
- * 1. Tries Gemini Cloud
- * 2. Falls back to local on-device model
- * 3. If no LLM available, stays PENDING for later retry
+ * 1. Tries the local on-device model
+ * 2. Falls back to a transcript-only local result
  *
- * Both Cloud and local use the same JSON prompt and produce
- * the same output (title, summary, keyPoints, actionItems).
+ * No transcription is sent to a remote model.
  */
 class RecordingProcessor(private val context: Context) {
 
@@ -68,14 +63,7 @@ class RecordingProcessor(private val context: Context) {
 
         repository.updateRecordingStatus(recordingId, RecordingStatus.PROCESSING)
 
-        // 1. Try Gemini Cloud
-        val apiKey = getApiKey()
-        if (!apiKey.isNullOrBlank()) {
-            val ok = tryCloud(recordingId, recording.transcription, recording.source, apiKey, repository)
-            if (ok) return
-        }
-
-        // 2. If already processed AND has existing actions, keep them.
+        // 1. If already processed AND has existing actions, keep them.
         //    Actions persist until the user completes or deletes them.
         //    But if there are no actions yet (e.g. previous local attempt failed JSON),
         //    the local model must try again.
@@ -86,16 +74,16 @@ class RecordingProcessor(private val context: Context) {
             return
         }
 
-        // 3. Try local on-device model (same prompt & format as Cloud)
+        // 2. Try local on-device model.
         val modelFile = GemmaClient.getModelFile(context)
         if (modelFile.exists()) {
             val ok = tryLocalModel(recordingId, recording.transcription, recording.source, repository)
             if (ok) return
         }
 
-        // 4. Analysis unavailable/failed. Keep the transcription usable instead
+        // 3. Analysis unavailable/failed. Keep the transcription usable instead
         // of leaving the recording trapped in PENDING forever.
-        Log.w(TAG, "No LLM analysis available for recording $recordingId; saving transcript-only result (apiKey blank=${apiKey.isNullOrBlank()}, model exists=${modelFile.exists()})")
+        Log.w(TAG, "Local analysis unavailable for recording $recordingId; saving transcript-only result (model exists=${modelFile.exists()})")
         saveResult(
             recordingId = recordingId,
             result = buildTranscriptOnlyAnalysis(recording.transcription),
@@ -105,55 +93,6 @@ class RecordingProcessor(private val context: Context) {
             confidence = 0.6f,
             repository = repository
         )
-    }
-
-    // ── Cloud ──
-
-    private suspend fun tryCloud(
-        recordingId: Long,
-        transcription: String,
-        source: Source,
-        apiKey: String,
-        repository: DiaryRepository
-    ): Boolean {
-        val prompt = buildPrompt(transcription)
-
-        val model = GenerativeModel(
-            modelName = GeminiConfig.MODEL_NAME,
-            apiKey = apiKey,
-            generationConfig = generationConfig {
-                temperature = 0.2f
-                maxOutputTokens = 4096
-            }
-        )
-
-        return try {
-            val response = model.generateContent(prompt)
-            val responseText = response.text?.trim() ?: throw Exception("Empty Cloud response")
-            Log.d(TAG, "Cloud response: ${responseText.take(200)}")
-
-            val result = parseResponse(responseText)
-            // Delete previous actions only when we have new ones to replace them
-            repository.deleteByRecordingId(recordingId)
-            saveResult(recordingId, result, transcription, source, "CLOUD", 0.9f, repository)
-
-            Log.i(TAG, "Recording $recordingId processed via Cloud: '${result.title}', ${result.actionItems.size} actions")
-            CaptureLog.event(
-                gate = CaptureLog.Gate.RECORDING,
-                result = if (result.actionItems.isNotEmpty()) CaptureLog.Result.OK else CaptureLog.Result.NO_MATCH,
-                text = result.title,
-                meta = mapOf(
-                    "id" to recordingId,
-                    "actions" to result.actionItems.size,
-                    "source" to "CLOUD"
-                )
-            )
-            checkActionsForDuplicates(recordingId, repository)
-            true
-        } catch (e: Exception) {
-            Log.w(TAG, "Cloud failed for recording $recordingId: ${e.javaClass.simpleName}", e)
-            false
-        }
     }
 
     // ── Local on-device model ──
@@ -435,7 +374,6 @@ class RecordingProcessor(private val context: Context) {
                 wasReviewedByLLM = true,
                 llmConfidence = confidence,
                 processingBackend = when (processedBy.lowercase(Locale.getDefault())) {
-                    "cloud", "gemini", "gemini_cloud" -> EntryProcessingBackend.CLOUD
                     "local", "gemma", "gemma_local" -> EntryProcessingBackend.LOCAL
                     else -> null
                 },
@@ -488,7 +426,7 @@ class RecordingProcessor(private val context: Context) {
                     continue
                 }
 
-                // Try LLM dedup (Cloud or Gemma)
+                // Try local-model dedup.
                 val duplicateId = tryLlmDedup(actionText, entriesList, existing)
                 if (duplicateId != null) {
                     repository.markDuplicate(action.id, duplicateId)
@@ -521,24 +459,7 @@ Reglas:
 - Compartir solo el verbo (comprar, llamar, enviar) NO es suficiente para ser duplicado
 - En caso de duda, responde null"""
 
-        // Try Cloud
-        val apiKey = getApiKey()
-        if (!apiKey.isNullOrBlank()) {
-            try {
-                val model = GenerativeModel(
-                    modelName = GeminiConfig.MODEL_NAME,
-                    apiKey = apiKey,
-                    generationConfig = generationConfig { temperature = 0.1f }
-                )
-                val response = model.generateContent(prompt)
-                val result = parseDedupResponse(response.text, existing)
-                if (result != null) return result
-            } catch (e: Exception) {
-                Log.d(TAG, "Cloud dedup failed: ${e.message}")
-            }
-        }
-
-        // Try local model
+        // Try local model.
         if (GemmaClient.isModelAvailable(context)) {
             try {
                 val response = GemmaClient.generate(context, prompt, maxTokens = 64)
@@ -562,9 +483,6 @@ Reglas:
             } else null
         } catch (_: Exception) { null }
     }
-
-    private fun getApiKey(): String? =
-        com.trama.app.security.SecureSecretStore.getGeminiApiKey(context)
 
     private fun validateActionType(type: String): String = when (type.uppercase()) {
         "CALL", "BUY", "SEND", "EVENT", "REVIEW", "TALK_TO", "GENERIC" -> type.uppercase()

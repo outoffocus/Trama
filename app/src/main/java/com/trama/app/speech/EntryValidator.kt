@@ -2,9 +2,6 @@ package com.trama.app.speech
 
 import android.content.Context
 import android.util.Log
-import com.google.ai.client.generativeai.GenerativeModel
-import com.trama.app.GeminiConfig
-import com.google.ai.client.generativeai.type.generationConfig
 import com.trama.app.summary.PromptTemplateStore
 import com.trama.shared.speech.EntryValidatorHeuristics
 import kotlinx.serialization.Serializable
@@ -15,7 +12,7 @@ import kotlinx.serialization.json.Json
  *
  * Two-stage pipeline:
  * 1. Fast heuristic filter (no cost, instant) — rejects obvious noise
- * 2. Gemini Nano / Flash for ambiguous cases — validates + corrects grammar
+ * 2. Local on-device model for ambiguous cases — validates + corrects grammar
  *
  * Rules:
  * - es_nota_personal = true if it sounds like something said by someone
@@ -93,22 +90,12 @@ class EntryValidator(private val context: Context) {
     }
 
     /**
-     * LLM validation using Gemini (Flash API or Nano on-device).
+     * LLM validation using only the local on-device model.
      */
     private suspend fun llmValidate(text: String): ValidationResult {
         val prompt = buildValidationPrompt(text)
 
-        // Try Gemini Cloud first
-        val apiKey = getApiKey()
-        if (!apiKey.isNullOrBlank()) {
-            try {
-                return callCloudGemini(prompt, apiKey)
-            } catch (e: Exception) {
-                Log.w(TAG, "Cloud failed, trying local model", e)
-            }
-        }
-
-        // Try local on-device model
+        // Try local on-device model.
         try {
             val localResult = callLocalModel(prompt)
             if (localResult != null) return localResult
@@ -137,24 +124,6 @@ class EntryValidator(private val context: Context) {
         return SUSPICIOUS_ASR_PATTERNS.any { it.containsMatchIn(lower) }
     }
 
-    private suspend fun callCloudGemini(prompt: String, apiKey: String): ValidationResult {
-        val model = GenerativeModel(
-            modelName = GeminiConfig.MODEL_NAME,
-            apiKey = apiKey,
-            generationConfig = generationConfig {
-                temperature = 0.1f
-                maxOutputTokens = 256
-            }
-        )
-
-        val response = model.generateContent(prompt)
-        val responseText = response.text?.trim()
-            ?: throw Exception("Empty LLM response")
-
-        Log.d(TAG, "Cloud LLM validation response: $responseText")
-        return parseValidationResponse(com.trama.app.summary.JsonRepair.extractJson(responseText))
-    }
-
     private suspend fun callLocalModel(prompt: String): ValidationResult? {
         if (!com.trama.app.summary.GemmaClient.isModelAvailable(context)) return null
 
@@ -164,7 +133,7 @@ class EntryValidator(private val context: Context) {
 
         Log.d(TAG, "Local model validation response: $responseText")
 
-        // Try parsing as JSON (same format as Cloud)
+        // Try parsing as JSON.
         try {
             val cleaned = com.trama.app.summary.JsonRepair.extractJson(responseText)
             return parseValidationResponse(cleaned)
@@ -201,10 +170,6 @@ class EntryValidator(private val context: Context) {
                 reason = "Error parseando respuesta IA"
             )
         }
-    }
-
-    private fun getApiKey(): String? {
-        return com.trama.app.security.SecureSecretStore.getGeminiApiKey(context)
     }
 
     @Serializable

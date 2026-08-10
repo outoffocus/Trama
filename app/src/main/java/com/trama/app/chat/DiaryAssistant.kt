@@ -2,11 +2,6 @@ package com.trama.app.chat
 
 import android.content.Context
 import android.util.Log
-import com.google.ai.client.generativeai.Chat
-import com.google.ai.client.generativeai.GenerativeModel
-import com.google.ai.client.generativeai.type.content
-import com.google.ai.client.generativeai.type.generationConfig
-import com.trama.app.GeminiConfig
 import com.trama.app.summary.GemmaClient
 import com.trama.shared.data.DiaryRepository
 import java.text.Normalizer
@@ -18,7 +13,7 @@ import java.util.Locale
  * Multi-turn diary assistant.
  *
  * Priority chain per message:
- *   1. Gemini Cloud  — if API key is configured. Uses startChat() for native multi-turn.
+ *   1. Deterministic local retrieval for grounded questions.
  *   2. Gemma local   — if model is downloaded & enabled. Multi-turn is simulated by
  *                       appending the full conversation history to the prompt on every call.
  *   3. No model      — returns a user-facing error string.
@@ -36,17 +31,9 @@ class DiaryAssistant(
     private val answerComposer = ChatAnswerComposer()
     private val factsFormatter = ChatFactsFormatter()
 
-    private val prefs
-        get() = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-
-    private fun getApiKey(): String? =
-        com.trama.app.security.SecureSecretStore.getGeminiApiKey(context)
-
-    fun hasApiKey(): Boolean = !getApiKey().isNullOrBlank()
+    // All inference and context retrieval stays on-device.
 
     // ── Gemini state (lazy session, persists for the conversation) ────────────
-    private var cloudSession: Chat? = null
-
     // ── Gemma state (manual history for simulated multi-turn) ────────────────
     // Each entry is Pair(role, text): role is "Usuario" or "Asistente"
     private val localHistory = mutableListOf<Pair<String, String>>()
@@ -58,17 +45,7 @@ class DiaryAssistant(
         val deterministic = tryDeterministicAnswer(userMessage)
         if (deterministic != null) return deterministic
 
-        // 1. Try Gemini Cloud
-        val apiKey = getApiKey()
-        if (!apiKey.isNullOrBlank()) {
-            try {
-                return sendWithCloud(userMessage, apiKey)
-            } catch (t: Throwable) {
-                Log.w(TAG, "Cloud chat failed, trying local model: ${t.javaClass.simpleName}: ${t.message}")
-            }
-        }
-
-        // 2. Try Gemma local model
+        // Try Gemma local model.
         if (GemmaClient.isModelAvailable(context)) {
             try {
                 val reply = sendWithLocalModel(userMessage)
@@ -79,16 +56,10 @@ class DiaryAssistant(
             }
         }
 
-        // 3. Nothing available
-        return if (apiKey.isNullOrBlank()) {
-            "⚠️ Configura tu API key de Gemini en Ajustes → IA, o descarga el modelo local, para usar el asistente."
-        } else {
-            "❌ No se pudo obtener respuesta (Cloud y modelo local fallaron)."
-        }
+        return "⚠️ Descarga el modelo local en Ajustes → IA local para usar el asistente."
     }
 
     fun clearHistory() {
-        cloudSession = null
         localHistory.clear()
         lastDeterministicQuery = null
         contextBuilder.invalidate()
@@ -203,31 +174,6 @@ class DiaryAssistant(
 
     // ── Gemini Cloud ──────────────────────────────────────────────────────────
 
-    private suspend fun sendWithCloud(userMessage: String, apiKey: String): String {
-        val session = cloudSession ?: createCloudSession(apiKey).also { cloudSession = it }
-        val response = session.sendMessage(userMessage)
-        return response.text?.trim() ?: throw Exception("Empty response from Gemini")
-    }
-
-    private suspend fun createCloudSession(apiKey: String): Chat {
-        val diaryContext = contextBuilder.getContext()
-        val today = todayString()
-
-        val systemPrompt = buildCloudSystemPrompt(diaryContext, today)
-
-        val model = GenerativeModel(
-            modelName = GeminiConfig.MODEL_NAME,
-            apiKey = apiKey,
-            generationConfig = generationConfig {
-                temperature = 0.4f
-                maxOutputTokens = 1024
-            },
-            systemInstruction = content { text(systemPrompt) }
-        )
-
-        return model.startChat()
-    }
-
     // ── Gemma local (simulated multi-turn) ────────────────────────────────────
 
     private suspend fun sendWithLocalModel(userMessage: String): String? {
@@ -268,16 +214,6 @@ class DiaryAssistant(
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private fun buildCloudSystemPrompt(diaryContext: String, today: String) = buildString {
-        appendLine("Eres el asistente personal del usuario de Trama, una app de diario personal y captura de voz.")
-        appendLine("Tienes acceso a su historial completo de tareas, lugares visitados y resúmenes diarios.")
-        appendLine("Responde siempre en español, de forma directa y concisa.")
-        appendLine("Si no tienes información suficiente, dilo con claridad — nunca inventes datos.")
-        appendLine("Fecha actual: $today.")
-        appendLine()
-        append(diaryContext)
-    }
-
     private fun buildLocalSystemPrompt(diaryContext: String, today: String) = buildString {
         appendLine("Eres el asistente personal local de Trama.")
         appendLine("El contexto incluido es una vista compacta y puede estar truncado por límites del modelo on-device.")
@@ -301,9 +237,6 @@ class DiaryAssistant(
 
     companion object {
         private const val TAG = "DiaryAssistant"
-        private const val PREFS_NAME = "daily_summary"
-        private const val KEY_API_KEY = "gemini_api_key"
-
         /** Max conversation messages kept in local history (Gemma 4 E4B: 128K token window) */
         private const val MAX_LOCAL_HISTORY_MESSAGES = 60 // 30 user + 30 assistant
     }

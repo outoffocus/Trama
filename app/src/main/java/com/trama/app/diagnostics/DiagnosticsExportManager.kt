@@ -51,6 +51,7 @@ object DiagnosticsExportManager {
         val llmRejected: Int,
         val discardedEntries: Int,
         val suggestedEntries: Int,
+        val userConfirmedEntries: Int,
         val suggestedEvents: Int,
         val lowConfidenceSuggestedEvents: Int,
         val pendingEntries: Int,
@@ -79,7 +80,9 @@ object DiagnosticsExportManager {
         val wasReviewedByLLM: Boolean,
         val sourceRecordingId: Long? = null,
         val dueDate: Long? = null,
-        val priority: String
+        val priority: String,
+        val userConfirmedAt: Long? = null,
+        val verificationSource: String? = null
     )
 
     @Serializable
@@ -171,6 +174,7 @@ object DiagnosticsExportManager {
             llmRejected = events.count { it.gate == "LLM" && it.result == "REJECT" },
             discardedEntries = entries.count { it.status == "DISCARDED" },
             suggestedEntries = entries.count { it.status == "SUGGESTED" },
+            userConfirmedEntries = entries.count { it.userConfirmedAt != null },
             suggestedEvents = events.count { it.gate == "LLM" && it.meta["route"] == "SUGGESTED" },
             lowConfidenceSuggestedEvents = events.count {
                 it.meta["outcome"] == CaptureLog.CaptureOutcome.LOW_CONFIDENCE_SUGGESTED.name
@@ -235,7 +239,9 @@ object DiagnosticsExportManager {
             wasReviewedByLLM = wasReviewedByLLM,
             sourceRecordingId = sourceRecordingId,
             dueDate = dueDate,
-            priority = priority
+            priority = priority,
+            userConfirmedAt = userConfirmedAt,
+            verificationSource = verificationSource
         )
 
     private fun Recording.toSample(actionCount: Int): RecordingSample =
@@ -254,12 +260,18 @@ object DiagnosticsExportManager {
         )
 
     private fun DiaryEntry.toQualityDecision(llmEvent: CaptureLog.Event?): QualityDecisionSample {
-        val bucket = llmEvent?.meta?.get("qualityBucket") ?: fallbackQualityBucket(this, llmEvent)
-        val needsHumanReview = bucket in REVIEW_BUCKETS ||
-            status == "DISCARDED" ||
-            status == "SUGGESTED" ||
-            llmEvent == null ||
-            llmConfidence?.let { it < 0.65f } == true
+        val bucket = if (userConfirmedAt != null) {
+            "user_confirmed"
+        } else {
+            llmEvent?.meta?.get("qualityBucket") ?: fallbackQualityBucket(this, llmEvent)
+        }
+        val needsHumanReview = userConfirmedAt == null && (
+            bucket in REVIEW_BUCKETS ||
+                status == "DISCARDED" ||
+                status == "SUGGESTED" ||
+                llmEvent == null ||
+                llmConfidence?.let { it < 0.65f } == true
+            )
         return QualityDecisionSample(
             id = id,
             createdAt = createdAt,
@@ -278,8 +290,8 @@ object DiagnosticsExportManager {
             llmDecision = llmEvent?.meta?.get("decision"),
             llmRoute = llmEvent?.meta?.get("route"),
             modelIsActionable = llmEvent?.meta?.get("isActionable")?.toBooleanStrictOrNull(),
-            usefulnessScore = llmEvent?.meta?.get("usefulness")?.toFloatOrNull(),
-            actionabilityScore = llmEvent?.meta?.get("actionability")?.toFloatOrNull(),
+            usefulnessScore = llmEvent?.meta?.get("usefulness")?.replace(',', '.')?.toFloatOrNull(),
+            actionabilityScore = llmEvent?.meta?.get("actionability")?.replace(',', '.')?.toFloatOrNull(),
             discardReason = llmEvent?.meta?.get("discardReason"),
             qualityBucket = bucket,
             needsHumanReview = needsHumanReview,
@@ -288,6 +300,7 @@ object DiagnosticsExportManager {
     }
 
     private fun fallbackQualityBucket(entry: DiaryEntry, llmEvent: CaptureLog.Event?): String = when {
+        entry.userConfirmedAt != null -> "user_confirmed"
         llmEvent == null -> "missing_llm_decision"
         entry.status == "PENDING" && (entry.llmConfidence ?: entry.confidence) < 0.65f -> "accepted_low_confidence"
         entry.status == "PENDING" || entry.status == "COMPLETED" -> "accepted_action"

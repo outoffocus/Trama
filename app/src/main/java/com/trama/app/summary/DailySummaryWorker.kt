@@ -18,7 +18,7 @@ import java.util.Locale
 
 /**
  * WorkManager worker that runs daily at the configured time.
- * Queries the day's entries, generates a summary via Gemini Nano,
+ * Queries the day's entries and generates a summary with the local model,
  * saves it, and shows a notification.
  */
 class DailySummaryWorker(

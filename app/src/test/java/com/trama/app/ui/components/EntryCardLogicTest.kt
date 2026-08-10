@@ -65,62 +65,46 @@ class EntryCardLogicTest {
 
     // ────────────────────────────────────────────────────────────────────────
     // Processing badge logic
-    // Cloud/local icons come from explicit processingBackend, never from confidence.
+    // Local icons come from explicit processingBackend, never from confidence.
     // ────────────────────────────────────────────────────────────────────────
-
-    private fun isCloudProcessed(e: DiaryEntry): Boolean =
-        e.processingBackend == EntryProcessingBackend.CLOUD
 
     private fun isLocalProcessed(e: DiaryEntry): Boolean =
         e.processingBackend == EntryProcessingBackend.LOCAL
 
     @Test
-    fun `cloud badge shows only for explicit cloud backend`() {
-        val e = entry(processingBackend = EntryProcessingBackend.CLOUD, llmConfidence = 0.1f)
-        assertTrue("Should show cloud icon", isCloudProcessed(e))
-        assertFalse("Should not show cloudOff", isLocalProcessed(e))
-    }
-
-    @Test
     fun `local badge shows only for explicit local backend`() {
         val e = entry(processingBackend = EntryProcessingBackend.LOCAL, llmConfidence = 0.95f)
-        assertFalse("Should not show cloud", isCloudProcessed(e))
         assertTrue("Should show local badge", isLocalProcessed(e))
     }
 
     @Test
-    fun `high confidence alone does not imply cloud backend`() {
+    fun `high confidence alone does not imply local backend`() {
         val e = entry(wasReviewedByLLM = true, llmConfidence = 0.9f, sourceRecordingId = null)
-        assertFalse("Should not infer cloud from confidence", isCloudProcessed(e))
         assertFalse("Should not infer local from confidence", isLocalProcessed(e))
     }
 
     @Test
     fun `recording source alone does not imply local backend`() {
         val e = entry(wasReviewedByLLM = false, sourceRecordingId = 42L)
-        assertFalse("Should not show cloud", isCloudProcessed(e))
         assertFalse("Should not infer local from sourceRecordingId", isLocalProcessed(e))
     }
 
     @Test
     fun `zero confidence alone does not imply local backend`() {
         val e = entry(wasReviewedByLLM = false, llmConfidence = 0.0f)
-        assertFalse("Should not show cloud", isCloudProcessed(e))
         assertFalse("Should not infer local from zero confidence", isLocalProcessed(e))
     }
 
     @Test
     fun `no badge when not reviewed and no recording id and confidence is non-zero`() {
         val e = entry(wasReviewedByLLM = false, sourceRecordingId = null, llmConfidence = 0.8f)
-        assertFalse("Should not show cloud", isCloudProcessed(e))
-        assertFalse("Should not show cloudOff", isLocalProcessed(e))
+        assertFalse("Should not show local badge", isLocalProcessed(e))
     }
 
     @Test
     fun `no badge when not reviewed and no recording id and confidence is null`() {
         val e = entry(wasReviewedByLLM = false, sourceRecordingId = null, llmConfidence = null)
-        assertFalse("Should not show cloud", isCloudProcessed(e))
-        assertFalse("Should not show cloudOff", isLocalProcessed(e))
+        assertFalse("Should not show local badge", isLocalProcessed(e))
     }
 
     @Test

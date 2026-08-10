@@ -68,6 +68,7 @@ class ContextualAudioCaptureEngine(
         // This is the dominant cost saver in continuous-speech environments where
         // the energy-based VAD pre-filter cannot help.
         private const val AMBIENT_BACKOFF_THRESHOLD = 1
+        private const val AMBIENT_BACKOFF_FACTOR = 6
         private val nextCaptureId = AtomicLong(0L)
     }
 
@@ -430,7 +431,10 @@ class ContextualAudioCaptureEngine(
                         val thermalThrottled = isThrottled()
                         val backoffFactor = when {
                             thermalThrottled -> Int.MAX_VALUE
-                            ambientBackoff -> Int.MAX_VALUE
+                            // Keep a sparse cheap-gate sample alive during TV or
+                            // continuous conversation. A total lockout could miss
+                            // an explicit phrase until the room becomes silent.
+                            ambientBackoff -> AMBIENT_BACKOFF_FACTOR
                             capture.consecutiveEmptyGateEvals >= GATE_EVAL_SKIP_THRESHOLD -> Int.MAX_VALUE
                             capture.consecutiveEmptyGateEvals >= GATE_EVAL_BACKOFF_THRESHOLD -> 2
                             else -> 1

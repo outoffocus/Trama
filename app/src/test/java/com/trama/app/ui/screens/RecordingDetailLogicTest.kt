@@ -54,7 +54,7 @@ class RecordingDetailLogicTest {
         rec.processingStatus == RecordingStatus.COMPLETED && rec.processedLocally ->
             "Procesado localmente"
         rec.processingStatus == RecordingStatus.COMPLETED ->
-            "Procesado con Gemini"
+            "Procesado localmente"
         rec.processingStatus == RecordingStatus.PROCESSING ->
             "Procesando..."
         rec.processingStatus == RecordingStatus.FAILED ->
@@ -77,9 +77,9 @@ class RecordingDetailLogicTest {
     }
 
     @Test
-    fun `statusBadge completed online shows Gemini label`() {
+    fun `statusBadge completed without backend metadata uses local label`() {
         val r = recording(processingStatus = RecordingStatus.COMPLETED, processedLocally = false)
-        assertEquals("Procesado con Gemini", statusLabel(r))
+        assertEquals("Procesado localmente", statusLabel(r))
     }
 
     @Test

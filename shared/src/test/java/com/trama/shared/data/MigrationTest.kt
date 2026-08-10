@@ -23,7 +23,8 @@ class MigrationTest {
         DiaryDatabase.MIGRATION_11_12,
         DiaryDatabase.MIGRATION_12_13,
         DiaryDatabase.MIGRATION_13_14,
-        DiaryDatabase.MIGRATION_14_15
+        DiaryDatabase.MIGRATION_14_15,
+        DiaryDatabase.MIGRATION_15_16
     )
 
     // ── Individual migration version checks ──
@@ -73,7 +74,7 @@ class MigrationTest {
     // ── Migration chain integrity ──
 
     @Test
-    fun `migrations form a continuous chain from version 1 to 15`() {
+    fun `migrations form a continuous chain from version 1 to 16`() {
         val migrations = allMigrations().sortedBy { it.startVersion }
 
         // Verify chain continuity: each migration's endVersion == next migration's startVersion
@@ -85,9 +86,9 @@ class MigrationTest {
             )
         }
 
-        // Verify chain starts at 1 and ends at 15
+        // Verify chain starts at 1 and ends at 16
         assertEquals(1, migrations.first().startVersion)
-        assertEquals(15, migrations.last().endVersion)
+        assertEquals(16, migrations.last().endVersion)
     }
 
     @Test
@@ -113,7 +114,7 @@ class MigrationTest {
         val latestMigrationEnd = allMigrations().maxOf { it.endVersion }
         assertEquals(
             "Keep this value in sync with @Database(version = ...) in DiaryDatabase",
-            15,
+            16,
             latestMigrationEnd
         )
     }

@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
  */
 object EntryProcessingState {
 
-    enum class Backend { UNKNOWN, CLOUD, LOCAL }
+    enum class Backend { UNKNOWN, LOCAL }
 
     private val _processingBackends = MutableStateFlow<Map<Long, Backend>>(emptyMap())
     val processingBackends: StateFlow<Map<Long, Backend>> = _processingBackends.asStateFlow()

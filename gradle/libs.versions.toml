@@ -18,7 +18,6 @@ datastorePreferences = "1.1.1"
 serializationJson = "1.6.3"
 horologist = "0.6.20"
 workRuntime = "2.10.0"
-generativeai = "0.9.0"
 mediapipeGenai = "0.10.22"
 mediapipeCore = "0.10.21"
 litertlm = "0.9.0"
@@ -56,7 +55,6 @@ room-testing = { group = "androidx.room", name = "room-testing", version.ref = "
 
 # Play Services
 play-services-wearable = { group = "com.google.android.gms", name = "play-services-wearable", version.ref = "playServicesWearable" }
-generativeai = { group = "com.google.ai.client.generativeai", name = "generativeai", version.ref = "generativeai" }
 mediapipe-tasks-genai = { group = "com.google.mediapipe", name = "tasks-genai", version.ref = "mediapipeGenai" }
 mediapipe-tasks-core = { group = "com.google.mediapipe", name = "tasks-core", version.ref = "mediapipeCore" }
 litertlm-android = { group = "com.google.ai.edge.litertlm", name = "litertlm-android", version.ref = "litertlm" }

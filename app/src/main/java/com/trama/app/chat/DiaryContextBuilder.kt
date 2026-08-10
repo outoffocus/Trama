@@ -34,7 +34,7 @@ import kotlinx.coroutines.withContext
  *   Pages recent full (90 d): ~72 K tokens   (90 days × ~800 t)
  *   Pages older briefSummary: ~205 K tokens  (1 370 days × ~150 t)
  *   ─────────────────────────────────────────────────────────────
- *   Total (4 years):          ~310 K tokens  → fine for Gemini 1 M
+ *   Total (4 years):          ~310 K tokens  → compacted for the local model
  *                                              ~2 years fit in Gemma 128 K
  *
  * Context is ordered newest-first so that, on models with a sliding-window
@@ -50,7 +50,7 @@ class DiaryContextBuilder(private val repository: DiaryRepository) {
     private val dayFormat = SimpleDateFormat("dd/MM EEE", Locale("es"))
     private val monthFormat = SimpleDateFormat("MMMM yyyy", Locale("es"))
 
-    /** Returns the full diary context (same for both Gemini and Gemma). */
+    /** Returns the full diary context for local retrieval and compaction. */
     suspend fun getContext(): String {
         val now = System.currentTimeMillis()
         if (cached != null && now - builtAt <= CONTEXT_TTL_MS) return cached!!

@@ -13,9 +13,6 @@ import com.trama.shared.speech.CaptureProfile
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
@@ -67,17 +64,6 @@ class SettingsViewModel @Inject constructor(
     val weeklyAgendaEnabled = settingsStore.weeklyAgendaEnabled
     val weeklyAgendaDayOfWeek = settingsStore.weeklyAgendaDayOfWeek
     val weeklyAgendaHour = settingsStore.weeklyAgendaHour
-
-    private val _geminiApiKey = MutableStateFlow(
-        com.trama.app.security.SecureSecretStore.getGeminiApiKey(appContext).orEmpty()
-    )
-    val geminiApiKey: StateFlow<String> = _geminiApiKey.asStateFlow()
-
-    fun setGeminiApiKey(value: String) {
-        val trimmed = value.trim()
-        _geminiApiKey.value = value
-        com.trama.app.security.SecureSecretStore.setGeminiApiKey(appContext, trimmed)
-    }
 
     suspend fun setAutoStart(enabled: Boolean) = settingsStore.setAutoStart(enabled)
     suspend fun setRecordingDuration(minutes: Int) = settingsStore.setRecordingDuration(minutes)

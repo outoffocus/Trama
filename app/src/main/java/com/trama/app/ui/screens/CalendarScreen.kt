@@ -536,7 +536,10 @@ fun CalendarScreen(
     fun markEntryCompleted(entry: DiaryEntry) {
         scope.launch {
             if (entry.status == EntryStatus.SUGGESTED) {
-                repository.markPending(entry.id)
+                repository.confirmSuggested(
+                    entry.id,
+                    com.trama.shared.model.EntryVerificationSource.CALENDAR
+                )
                 if (learnFromDeletions) {
                     val text = entry.displayText.ifBlank { entry.text }
                     com.trama.app.summary.DeletionFeedbackStore.recordAccepted(

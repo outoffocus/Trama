@@ -4,7 +4,7 @@
 
 Trama Lite no debe ser una version recortada de Trama. Debe ser una version mas util, menos invasiva y menos intensiva para bateria.
 
-La version actual de Trama ya contiene piezas valiosas: grabaciones manuales, modo reunion, captura desde Wear OS, importacion via share intent, lectura de capturas con Gemma multimodal, calendario, ubicacion por dwell, timeline, agenda, DailyPage, chat y procesamiento local/cloud. El problema de producto no es que falten capacidades, sino que la escucha contextual continua tiene demasiado coste para el valor que esta produciendo.
+La version actual de Trama ya contiene piezas valiosas: grabaciones manuales, modo reunion, captura desde Wear OS, importacion via share intent, lectura de capturas con Gemma multimodal, calendario, ubicacion por dwell, timeline, agenda, DailyPage, chat y procesamiento local. El problema de producto no es que falten capacidades, sino que la escucha contextual continua tiene demasiado coste para el valor que esta produciendo.
 
 La nueva direccion debe cambiar el centro de gravedad:
 
@@ -80,7 +80,7 @@ Estado inicial recomendado:
 - procesamiento de capturas activo;
 - grabaciones manuales y modo reunion activos;
 - notificaciones solo por allowlist;
-- Gemma local preferente si existe; cloud opcional y explicito.
+- Gemma local cuando exista; fallback determinista si no está disponible.
 
 La home debe comunicar un estado simple:
 
@@ -493,14 +493,10 @@ Gemma local primero si:
 - bateria no baja;
 - dispositivo no en presion termica;
 - evento tiene alto valor;
-- usuario no ha pedido cloud.
+- el procesamiento puede completarse enteramente en el dispositivo.
 
-Cloud opcional solo si:
-
-- usuario lo habilita;
-- contenido no es de sensibilidad alta o el usuario acepta;
-- procesamiento local falla;
-- hay red y bateria razonable.
+No existe fallback cloud. Si el modelo local no está disponible, se conserva la
+fuente y se aplican reglas deterministas o se propone revisión manual.
 
 ### 9.4 Quality gate
 
@@ -566,7 +562,7 @@ Ejecutar con WorkManager cuando:
 - bateria no baja;
 - no hay thermal moderate+;
 - preferiblemente cargando para lotes largos;
-- red disponible si requiere cloud.
+- modelo local disponible cuando el trabajo requiera razonamiento generativo.
 
 ### Caro y explicito
 

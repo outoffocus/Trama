@@ -187,7 +187,7 @@ class WatchDataReceiverService : WearableListenerService() {
                     }
                 }
 
-                // Sync recordings and process them with Gemini
+                // Sync recordings and process them locally.
                 var insertedRecordings = 0
                 for (syncRecording in payload.recordings) {
                     val recording = syncRecording.toRecording()
@@ -201,7 +201,7 @@ class WatchDataReceiverService : WearableListenerService() {
                         insertedRecordings++
                         Log.i(TAG, "Received recording from watch (id=$recordingId), processing...")
 
-                        // Process with Gemini (or local fallback)
+                        // Process with the local model (or deterministic fallback).
                         try {
                             val processor = RecordingProcessor(applicationContext)
                             processor.process(recordingId, repository)
@@ -482,7 +482,7 @@ class WatchDataReceiverService : WearableListenerService() {
         val label = classification.label
 
         val validation = runCatching {
-            // Cap the validator at 5s so a slow/unreachable Gemini call can't stall
+            // Cap validation so a busy local model cannot stall watch capture.
             // the entire audio pipeline; fall back to accepting the raw transcript.
             withTimeoutOrNull(5_000) { EntryValidator(applicationContext).validate(text) }
         }.getOrElse { error ->

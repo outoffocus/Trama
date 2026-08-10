@@ -93,6 +93,8 @@ class DiaryRepository(
 
     suspend fun markPending(id: Long) = dao.markPending(id)
 
+    suspend fun confirmSuggested(id: Long, source: String) = dao.confirmSuggested(id, source)
+
     suspend fun markCompletedByIds(ids: List<Long>) = dao.markCompletedByIds(ids)
 
     suspend fun updateAIProcessing(

@@ -7,7 +7,13 @@ data class CaptureMetrics(
     val observationHours: Double,
     val gateEvaluations: Int,
     val whisperTranscriptions: Int,
+    val intentionalTranscriptions: Int,
+    val ambientTranscriptions: Int,
+    val noIntentTranscriptions: Int,
     val savedEntries: Int,
+    val suggestedEntries: Int,
+    val deviceMediaPauses: Int,
+    val cappedSegments: Int,
     val likelyNoiseDeletes: Int,
     val shadowCandidates: Int,
     val suspiciousCapturesPerHour: Double,
@@ -27,8 +33,34 @@ data class CaptureMetrics(
             val whisper = events.count {
                 it.gate == CaptureLog.Gate.ASR_FINAL.name && it.result == CaptureLog.Result.OK.name
             }
+            val intentionalTranscriptions = events.count {
+                it.gate == CaptureLog.Gate.ASR_FINAL.name &&
+                    it.result == CaptureLog.Result.OK.name &&
+                    it.meta["source"] == "trigger"
+            }
+            val ambientTranscriptions = events.count {
+                it.gate == CaptureLog.Gate.ASR_FINAL.name &&
+                    it.result == CaptureLog.Result.OK.name &&
+                    it.meta["source"] == "uncertain_fallback"
+            }
+            val noIntent = events.count {
+                it.gate == CaptureLog.Gate.INTENT.name &&
+                    it.result == CaptureLog.Result.NO_MATCH.name &&
+                    it.meta["shadow"] != "true"
+            }
             val saved = events.count {
                 it.gate == CaptureLog.Gate.SAVE.name && it.result == CaptureLog.Result.OK.name
+            }
+            val suggested = events.count {
+                it.gate == CaptureLog.Gate.LLM.name && it.meta["route"] == "SUGGESTED"
+            }
+            val deviceMediaPauses = events.count {
+                it.gate == CaptureLog.Gate.SERVICE.name && it.text == "media_playback_pause"
+            }
+            val cappedSegments = events.count {
+                it.gate == CaptureLog.Gate.ASR_GATE.name &&
+                    it.text == "segment_finalized" &&
+                    it.meta["reason"] == "unmatched_segment_cap"
             }
             val likelyNoise = events.count {
                 it.gate == CaptureLog.Gate.USER_DELETE.name && it.meta["likelyNoise"] == "true"
@@ -49,7 +81,13 @@ data class CaptureMetrics(
                 observationHours = hours,
                 gateEvaluations = gateEvaluations,
                 whisperTranscriptions = whisper,
+                intentionalTranscriptions = intentionalTranscriptions,
+                ambientTranscriptions = ambientTranscriptions,
+                noIntentTranscriptions = noIntent,
                 savedEntries = saved,
+                suggestedEntries = suggested,
+                deviceMediaPauses = deviceMediaPauses,
+                cappedSegments = cappedSegments,
                 likelyNoiseDeletes = likelyNoise,
                 shadowCandidates = shadowCandidates,
                 suspiciousCapturesPerHour = if (hours <= 0.0) 0.0 else likelyNoise / max(hours, 0.25),

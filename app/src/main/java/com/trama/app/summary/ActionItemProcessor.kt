@@ -2,9 +2,6 @@ package com.trama.app.summary
 
 import android.content.Context
 import android.util.Log
-import com.google.ai.client.generativeai.GenerativeModel
-import com.trama.app.GeminiConfig
-import com.google.ai.client.generativeai.type.generationConfig
 import com.trama.app.diagnostics.CaptureLog
 import com.trama.app.service.EntryProcessingState
 import com.trama.shared.data.DiaryRepository
@@ -28,7 +25,7 @@ import java.util.Locale
  * - dueDate: extracted date if mentioned
  * - priority: LOW, NORMAL, HIGH, URGENT
  *
- * Priority: Cloud → local on-device model. If no LLM available, leaves entry as-is.
+ * Priority: local on-device model → deterministic local fallback.
  */
 class ActionItemProcessor(private val context: Context) {
 
@@ -97,7 +94,7 @@ class ActionItemProcessor(private val context: Context) {
                         "decision" to "blocked_by_signal",
                         "signalText" to signal.text.take(120),
                         "signalReason" to signal.reason,
-                        "similarity" to "%.2f".format(score),
+                        "similarity" to metric(score),
                         "rejectStage" to "ActionQuality",
                         "outcome" to CaptureLog.CaptureOutcome.ACTION_REJECTED
                     )
@@ -128,7 +125,11 @@ class ActionItemProcessor(private val context: Context) {
         }
         var acceptedForTimeline = splitCleanTexts.isNotEmpty()
         val heuristicFallback = if (outcome == null && splitCleanTexts.isEmpty()) {
-            buildHeuristicFallback(originalText, processingText)
+            buildHeuristicFallback(
+                originalText = originalText,
+                normalizedInput = processingText,
+                detectorConfidence = existingEntry?.confidence ?: 0.5f
+            )
         } else {
             null
         }
@@ -163,9 +164,9 @@ class ActionItemProcessor(private val context: Context) {
                         "id" to entryId,
                         "kind" to result.kind,
                         "actionType" to result.actionType,
-                        "confidence" to "%.2f".format(result.confidence),
-                        "usefulness" to "%.2f".format(result.usefulnessScore),
-                        "actionability" to "%.2f".format(result.actionabilityScore),
+                        "confidence" to metric(result.confidence),
+                        "usefulness" to metric(result.usefulnessScore),
+                        "actionability" to metric(result.actionabilityScore),
                         "outcome" to CaptureLog.CaptureOutcome.ACTION_ACCEPTED
                     )
                 )
@@ -203,9 +204,9 @@ class ActionItemProcessor(private val context: Context) {
                         "id" to entryId,
                         "kind" to result.kind,
                         "isActionable" to result.isActionable,
-                        "confidence" to "%.2f".format(result.confidence),
-                        "usefulness" to "%.2f".format(result.usefulnessScore),
-                        "actionability" to "%.2f".format(result.actionabilityScore),
+                        "confidence" to metric(result.confidence),
+                        "usefulness" to metric(result.usefulnessScore),
+                        "actionability" to metric(result.actionabilityScore),
                         "discardReason" to result.discardReason,
                         "route" to rejectedStatus(result, learningDecision),
                         "rejectStage" to "UserSurface",
@@ -356,20 +357,7 @@ class ActionItemProcessor(private val context: Context) {
         recentContext: String,
         repository: DiaryRepository
     ): LLMOutcome? {
-        // Try Cloud
-        val apiKey = getApiKey()
-        if (!apiKey.isNullOrBlank()) {
-            try {
-                EntryProcessingState.updateBackend(entryId, EntryProcessingState.Backend.CLOUD)
-                val outcome = processWithCloud(originalText, normalizedInput, recentContext, apiKey)
-                repository.updateProcessingBackend(entryId, EntryProcessingBackend.CLOUD)
-                return outcome
-            } catch (e: Exception) {
-                Log.w(TAG, "Cloud failed: ${e.javaClass.simpleName}", e)
-            }
-        }
-
-        // Try local on-device model
+        // Try the local on-device model. Captured content never leaves the device.
         if (GemmaClient.isModelAvailable(context)) {
             try {
                 EntryProcessingState.updateBackend(entryId, EntryProcessingState.Backend.LOCAL)
@@ -504,7 +492,8 @@ class ActionItemProcessor(private val context: Context) {
 
     private fun buildHeuristicFallback(
         originalText: String,
-        normalizedInput: String
+        normalizedInput: String,
+        detectorConfidence: Float
     ): ProcessingResult? {
         val candidates = linkedSetOf<String>()
         if (originalText.isNotBlank()) candidates += originalText
@@ -516,8 +505,9 @@ class ActionItemProcessor(private val context: Context) {
             .firstOrNull()
             ?: return null
 
-        // Without an LLM we can't reliably judge actionability, so the heuristic
-        // only proposes — the deterministic validator below is the final gate.
+        // Preserve the upstream detector evidence. A deterministic, explicitly
+        // actionable capture must not become uncertain merely because the local
+        // language model is unavailable.
         val passesGate = isActionableAfterValidation(
             cleanText = suggestion.text,
             actionType = suggestion.actionType,
@@ -528,34 +518,13 @@ class ActionItemProcessor(private val context: Context) {
             actionType = suggestion.actionType,
             dueDate = suggestion.dueDate,
             priority = suggestion.priority,
-            confidence = if (passesGate) 0.5f else 0.25f,
+            confidence = if (passesGate) {
+                detectorConfidence.coerceIn(0f, 1f)
+            } else {
+                minOf(detectorConfidence, 0.25f)
+            },
             isActionable = passesGate
         )
-    }
-
-    private suspend fun processWithCloud(
-        originalText: String,
-        normalizedInput: String,
-        recentContext: String,
-        apiKey: String
-    ): LLMOutcome {
-        val prompt = buildPrompt(originalText, normalizedInput, recentContext)
-
-        val model = GenerativeModel(
-            modelName = GeminiConfig.MODEL_NAME,
-            apiKey = apiKey,
-            generationConfig = generationConfig {
-                temperature = 0.1f
-                maxOutputTokens = 512
-            }
-        )
-
-        val response = model.generateContent(prompt)
-        val responseText = response.text?.trim()
-            ?: throw Exception("Empty Gemini response")
-
-        Log.d(TAG, "Cloud OK: $responseText")
-        return parseResult(responseText, 1.0f, normalizedInput)
     }
 
     private suspend fun processWithLocalModel(
@@ -563,13 +532,13 @@ class ActionItemProcessor(private val context: Context) {
         normalizedInput: String,
         recentContext: String
     ): LLMOutcome? {
-        // Use the same structured prompt as Cloud
+        // Use the shared structured prompt.
         val prompt = buildPrompt(originalText, normalizedInput, recentContext)
         val responseText = GemmaClient.generate(context, prompt, maxTokens = 512, responsePrefix = "{") ?: return null
         Log.d(TAG, "Local model response: $responseText")
 
         return try {
-            // Try parsing as JSON (same format as Cloud)
+            // Parse the local structured JSON response.
             parseResult(responseText, 0.85f, normalizedInput)
         } catch (e: Exception) {
             // Strict mode: local Gemma must behave like a structured classifier.
@@ -1029,15 +998,15 @@ class ActionItemProcessor(private val context: Context) {
         "actionType" to result.actionType,
         "kind" to result.kind,
         "isActionable" to result.isActionable,
-        "confidence" to "%.2f".format(result.confidence),
-        "usefulness" to "%.2f".format(result.usefulnessScore),
-        "actionability" to "%.2f".format(result.actionabilityScore),
+        "confidence" to metric(result.confidence),
+        "usefulness" to metric(result.usefulnessScore),
+        "actionability" to metric(result.actionabilityScore),
         "discardReason" to result.discardReason,
         "learningDecision" to learningDecision.route.name,
-        "learningScoreDelta" to "%.2f".format(learningDecision.scoreDelta),
+        "learningScoreDelta" to metric(learningDecision.scoreDelta),
         "learningReason" to learningDecision.reason,
         "learningMatchedReason" to learningDecision.matchedReason,
-        "learningSimilarity" to "%.2f".format(learningDecision.similarity)
+        "learningSimilarity" to metric(learningDecision.similarity)
     )
 
     private fun learningDecisionFor(
@@ -1228,23 +1197,7 @@ Reglas:
 - Si no coincide exactamente la persona, objeto o accion principal, responde null
 - En caso de duda, responde null"""
 
-        // Try Cloud
-        val apiKey = getApiKey()
-        if (!apiKey.isNullOrBlank()) {
-            try {
-                val model = GenerativeModel(
-                    modelName = GeminiConfig.MODEL_NAME,
-                    apiKey = apiKey,
-                    generationConfig = generationConfig { temperature = 0.1f }
-                )
-                val response = model.generateContent(prompt)
-                if (parseDedupAndMark(response.text, entryId, existing, repository)) return
-            } catch (e: Exception) {
-                Log.d(TAG, "Cloud dedup failed: ${e.message}")
-            }
-        }
-
-        // Try local model
+        // Try local model.
         if (GemmaClient.isModelAvailable(context)) {
             try {
                 val response = GemmaClient.generate(context, prompt, maxTokens = 64)
@@ -1294,8 +1247,8 @@ Reglas:
         else -> EntryPriority.NORMAL
     }
 
-    private fun getApiKey(): String? =
-        com.trama.app.security.SecureSecretStore.getGeminiApiKey(context)
+    private fun metric(value: Number): String =
+        String.format(Locale.US, "%.2f", value.toDouble())
 
     companion object {
         private const val TAG = "ActionItemProcessor"

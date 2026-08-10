@@ -211,6 +211,7 @@ private class FakeDiaryDao : DiaryDao {
     override suspend fun markCompleted(id: Long, completedAt: Long) {}
     override suspend fun markDiscarded(id: Long, now: Long) {}
     override suspend fun markPending(id: Long) {}
+    override suspend fun confirmSuggested(id: Long, source: String, confirmedAt: Long) {}
     override suspend fun markCompletedByIds(ids: List<Long>, completedAt: Long) {}
     override suspend fun updateAIProcessing(id: Long, cleanText: String, actionType: String, dueDate: Long?, priority: String, confidence: Float) {}
     override fun getLatest(): Flow<DiaryEntry?> = flowOf(null)

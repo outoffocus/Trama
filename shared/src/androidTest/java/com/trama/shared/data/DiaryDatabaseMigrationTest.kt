@@ -72,7 +72,8 @@ class DiaryDatabaseMigrationTest {
             DiaryDatabase.MIGRATION_11_12,
             DiaryDatabase.MIGRATION_12_13,
             DiaryDatabase.MIGRATION_13_14,
-            DiaryDatabase.MIGRATION_14_15
+            DiaryDatabase.MIGRATION_14_15,
+            DiaryDatabase.MIGRATION_15_16
         )
     }
 }

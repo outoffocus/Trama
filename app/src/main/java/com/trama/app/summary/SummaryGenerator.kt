@@ -2,9 +2,6 @@ package com.trama.app.summary
 
 import android.content.Context
 import android.util.Log
-import com.google.ai.client.generativeai.GenerativeModel
-import com.trama.app.GeminiConfig
-import com.google.ai.client.generativeai.type.generationConfig
 import com.trama.shared.data.DatabaseProvider
 import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.TimelineEventType
@@ -15,15 +12,12 @@ import java.util.Locale
 
 /**
  * Generates daily summaries using LLMs.
- * Priority: Gemini Cloud → local on-device model.
- * Both use the same structured JSON prompt. If no LLM available, returns a minimal summary.
+ * Uses the local on-device model. If it is unavailable, returns a minimal summary.
  */
 class SummaryGenerator(private val context: Context) {
 
     companion object {
         private const val TAG = "SummaryGenerator"
-        private const val PREFS = "daily_summary"
-        private const val KEY_API_KEY = "gemini_api_key"
         private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
     }
 
@@ -40,17 +34,7 @@ class SummaryGenerator(private val context: Context) {
             )
         }
 
-        // Try Gemini Cloud
-        val apiKey = getApiKey()
-        if (!apiKey.isNullOrBlank()) {
-            try {
-                return generateWithCloud(entries, dateStr, apiKey)
-            } catch (e: Exception) {
-                Log.w(TAG, "Cloud failed, trying local model", e)
-            }
-        }
-
-        // Try local on-device model (same prompt & format as Cloud)
+        // Try local on-device model.
         if (GemmaClient.isModelAvailable(context)) {
             try {
                 val result = generateWithLocalModel(entries, dateStr)
@@ -63,46 +47,23 @@ class SummaryGenerator(private val context: Context) {
         // No LLM — minimal summary
         return DailySummary(
             date = dateStr,
-            narrative = "Se capturaron ${entries.size} notas hoy. Descarga el modelo local o configura la API para generar resúmenes.",
+            narrative = "Se capturaron ${entries.size} notas hoy. Descarga el modelo local para generar resúmenes.",
             groups = emptyList(),
             actions = emptyList(),
             entryCount = entries.size
         )
     }
 
-    private suspend fun generateWithCloud(
-        entries: List<DiaryEntry>,
-        dateStr: String,
-        apiKey: String
-    ): DailySummary {
-        val prompt = buildPrompt(entries, dateStr)
-
-        val model = GenerativeModel(
-            modelName = GeminiConfig.MODEL_NAME,
-            apiKey = apiKey,
-            generationConfig = generationConfig {
-                temperature = 0.3f
-                maxOutputTokens = 2048
-            }
-        )
-
-        val response = model.generateContent(prompt)
-        val responseText = response.text ?: throw Exception("Empty response from Gemini")
-
-        Log.i(TAG, "Cloud response: ${responseText.take(200)}...")
-        return parseResponse(responseText, dateStr, entries.size, entries)
-    }
-
     private suspend fun generateWithLocalModel(
         entries: List<DiaryEntry>,
         dateStr: String
     ): DailySummary? {
-        // Use the same structured prompt as Cloud
+        // Use the shared structured prompt.
         val prompt = buildPrompt(entries, dateStr)
         val responseText = GemmaClient.generate(context, prompt, maxTokens = 2048, responsePrefix = "{") ?: return null
         Log.i(TAG, "Local model response: ${responseText.take(200)}...")
 
-        // Try parsing as JSON (same format as Cloud)
+        // Try parsing as JSON.
         return try {
             parseResponse(responseText, dateStr, entries.size, entries)
         } catch (e: Exception) {
@@ -142,7 +103,7 @@ class SummaryGenerator(private val context: Context) {
             "- $time$source$status$age \"$displayText\""
         }
 
-    /** Prompt for Gemini Cloud (powerful model, understands structure from description). */
+    /** Structured prompt for the local model. */
     private suspend fun buildPrompt(entries: List<DiaryEntry>, dateStr: String): String {
         val entriesText = buildEntriesText(entries)
         val calendarContext = buildCalendarContext()
@@ -208,10 +169,10 @@ class SummaryGenerator(private val context: Context) {
         val jsonStr = JsonRepair.extractAndRepair(response)
 
         return try {
-            val parsed = json.decodeFromString<GeminiResponse>(jsonStr)
+            val parsed = json.decodeFromString<LocalSummaryResponse>(jsonStr)
             require(parsed.narrative.isNotBlank()) { "LLM returned blank narrative" }
-            val llmActions = parsed.actions.map { geminiAction ->
-                val action = geminiAction.toSuggestedAction()
+            val llmActions = parsed.actions.map { localAction ->
+                val action = localAction.toSuggestedAction()
                 val matched = matchActionToEntries(action.title, entries)
                 val earliestCaptured = matched.firstOrNull()?.let { id ->
                     entries.firstOrNull { it.id == id }?.createdAt
@@ -287,20 +248,17 @@ class SummaryGenerator(private val context: Context) {
         }
     }
 
-    private fun getApiKey(): String? {
-        return com.trama.app.security.SecureSecretStore.getGeminiApiKey(context)
-    }
 }
 
 @kotlinx.serialization.Serializable
-private data class GeminiResponse(
+private data class LocalSummaryResponse(
     val narrative: String,
-    val groups: List<GeminiGroup>? = null,
-    val actions: List<GeminiAction>
+    val groups: List<LocalSummaryGroup>? = null,
+    val actions: List<LocalSummaryAction>
 )
 
 @kotlinx.serialization.Serializable
-private data class GeminiGroup(
+private data class LocalSummaryGroup(
     val label: String,
     val emoji: String = "📝",
     val items: List<String>
@@ -313,7 +271,7 @@ private data class GeminiGroup(
 }
 
 @kotlinx.serialization.Serializable
-private data class GeminiAction(
+private data class LocalSummaryAction(
     val type: String,
     val title: String,
     val description: String = "",

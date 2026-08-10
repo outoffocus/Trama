@@ -79,37 +79,35 @@ class RecordingCardLogicTest {
     }
 
     // ────────────────────────────────────────────────────────────────────────
-    // Processing mode indicator (cloud/cloudOff in footer)
+    // Legacy local-processing metadata remains readable.
     // ────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun `completed and processedLocally shows CloudOff`() {
+    fun `completed recording preserves local processing metadata`() {
         val r = recording(processingStatus = RecordingStatus.COMPLETED, processedLocally = true)
         assertEquals(RecordingStatus.COMPLETED, r.processingStatus)
         assertTrue(r.processedLocally)
     }
 
     @Test
-    fun `completed and not processedLocally shows Cloud`() {
+    fun `completed legacy recording without metadata remains readable`() {
         val r = recording(processingStatus = RecordingStatus.COMPLETED, processedLocally = false)
         assertEquals(RecordingStatus.COMPLETED, r.processingStatus)
         assertFalse(r.processedLocally)
     }
 
     @Test
-    fun `processing status shows Procesando text instead of cloud icon`() {
+    fun `processing status shows Procesando text`() {
         val r = recording(processingStatus = RecordingStatus.PROCESSING)
-        // The UI shows "Procesando..." text for PROCESSING, not a cloud icon
+        // The UI shows "Procesando..." while the local worker is active.
         assertEquals(RecordingStatus.PROCESSING, r.processingStatus)
     }
 
     @Test
-    fun `pending status shows neither cloud icon nor processing text`() {
+    fun `pending status does not show processing text`() {
         val r = recording(processingStatus = RecordingStatus.PENDING)
         val showProcessingText = r.processingStatus == RecordingStatus.PROCESSING
-        val showCloudIcon = r.processingStatus == RecordingStatus.COMPLETED
         assertFalse(showProcessingText)
-        assertFalse(showCloudIcon)
     }
 
     // ────────────────────────────────────────────────────────────────────────

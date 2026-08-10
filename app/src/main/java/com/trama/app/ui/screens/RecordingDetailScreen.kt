@@ -118,7 +118,10 @@ fun RecordingDetailScreen(
 
     fun acceptSuggestedAction(action: DiaryEntry, source: String) {
         scope.launch(Dispatchers.IO) {
-            repository.markPending(action.id)
+            repository.confirmSuggested(
+                action.id,
+                com.trama.shared.model.EntryVerificationSource.RECORDING
+            )
             if (learnFromDeletions) {
                 DeletionFeedbackStore.recordAccepted(
                     context = context,
@@ -298,7 +301,10 @@ fun RecordingDetailScreen(
                             TextButton(onClick = {
                                 scope.launch(Dispatchers.IO) {
                                     suggested.forEach { action ->
-                                        repository.markPending(action.id)
+                                        repository.confirmSuggested(
+                                            action.id,
+                                            com.trama.shared.model.EntryVerificationSource.RECORDING
+                                        )
                                         if (learnFromDeletions) {
                                             DeletionFeedbackStore.recordAccepted(
                                                 context = context,
@@ -393,8 +399,10 @@ private fun StatusBadge(recording: Recording) {
     val (icon, label, color) = when {
         status == RecordingStatus.COMPLETED && recording.processedBy == "LOCAL" ->
             Triple(Icons.Default.CheckCircle, "Procesado con modelo local", MaterialTheme.colorScheme.tertiary)
+        status == RecordingStatus.COMPLETED && recording.processedBy == "TRANSCRIPT_ONLY" ->
+            Triple(Icons.Default.CheckCircle, "Transcripción local sin analizar", MaterialTheme.colorScheme.tertiary)
         status == RecordingStatus.COMPLETED ->
-            Triple(Icons.Default.CheckCircle, "Procesado con Gemini", MaterialTheme.colorScheme.primary)
+            Triple(Icons.Default.CheckCircle, "Procesado localmente", MaterialTheme.colorScheme.primary)
         status == RecordingStatus.PROCESSING ->
             Triple(Icons.Default.Schedule, "Procesando...", MaterialTheme.colorScheme.tertiary)
         status == RecordingStatus.CAPTURING ->

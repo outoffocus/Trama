@@ -60,7 +60,7 @@ Estas decisiones ya estan tomadas. No se cuestionan durante la ejecucion.
 1. Audio continuo OFF por defecto. Procesamiento caro solo bajo evento explicito, contexto rico o ventana declarada por el usuario.
 2. Trabajo caro y diferible -> WorkManager con constraints de bateria/termico/red. Default: procesar lotes diferidos de noche y cargando.
 3. Toda fuente de datos nueva nace medida: sin metrica de aceptacion, no se activa por defecto.
-4. Local-first: Gemma local preferente. Cloud opcional, explicito, por item y con consentimiento segun sensibilidad.
+4. Solo local: Gemma y reglas deterministas en el dispositivo; ningún contenido personal se envía a modelos cloud.
 5. Determinismo donde se pueda: OCR, dedupe heuristica, reglas contextuales sin LLM. Gemma para razonar, no para decidir todo.
 
 ## 4. Arquitectura objetivo
@@ -382,7 +382,7 @@ Lite se vende como menos invasiva: el set de permisos por defecto debe ser minim
 - Instalacion limpia no pide microfono continuo, ubicacion en background ni acceso a notificaciones.
 - Cada permiso se solicita en el momento de uso de la feature que lo necesita, con explicacion.
 - Acceso a notificaciones y ubicacion en background son opt-in explicito desde Ajustes.
-- Datos sensibles (sensitivity HIGH) se procesan local; cloud solo con consentimiento por item.
+- Todo el contenido personal, con independencia de su sensibilidad, se procesa localmente.
 - En persistencia de `literalText`, enmascarar DNI, tarjetas, IBAN y secretos.
 
 ## 13. Definicion de "hecho" (Definition of Done)

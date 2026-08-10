@@ -1,0 +1,644 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 16,
+    "identityHash": "1508ec192beca411bf829bd694ecc70f",
+    "entities": [
+      {
+        "tableName": "diary_entries",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `text` TEXT NOT NULL, `keyword` TEXT NOT NULL, `category` TEXT NOT NULL, `confidence` REAL NOT NULL, `createdAt` INTEGER NOT NULL, `source` TEXT NOT NULL, `isSynced` INTEGER NOT NULL, `duration` INTEGER NOT NULL, `correctedText` TEXT, `wasReviewedByLLM` INTEGER NOT NULL, `llmConfidence` REAL, `processingBackend` TEXT, `isManual` INTEGER NOT NULL, `status` TEXT NOT NULL, `actionType` TEXT NOT NULL, `cleanText` TEXT, `dueDate` INTEGER, `completedAt` INTEGER, `priority` TEXT NOT NULL, `duplicateOfId` INTEGER, `sourceRecordingId` INTEGER, `userConfirmedAt` INTEGER, `verificationSource` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "text",
+            "columnName": "text",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "keyword",
+            "columnName": "keyword",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "category",
+            "columnName": "category",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "confidence",
+            "columnName": "confidence",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "source",
+            "columnName": "source",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isSynced",
+            "columnName": "isSynced",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "duration",
+            "columnName": "duration",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "correctedText",
+            "columnName": "correctedText",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "wasReviewedByLLM",
+            "columnName": "wasReviewedByLLM",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "llmConfidence",
+            "columnName": "llmConfidence",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "processingBackend",
+            "columnName": "processingBackend",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "isManual",
+            "columnName": "isManual",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "actionType",
+            "columnName": "actionType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cleanText",
+            "columnName": "cleanText",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "dueDate",
+            "columnName": "dueDate",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "completedAt",
+            "columnName": "completedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "priority",
+            "columnName": "priority",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "duplicateOfId",
+            "columnName": "duplicateOfId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "sourceRecordingId",
+            "columnName": "sourceRecordingId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "userConfirmedAt",
+            "columnName": "userConfirmedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "verificationSource",
+            "columnName": "verificationSource",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "recordings",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `title` TEXT, `transcription` TEXT NOT NULL, `summary` TEXT, `keyPoints` TEXT, `durationSeconds` INTEGER NOT NULL, `source` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `processingStatus` TEXT NOT NULL, `processedLocally` INTEGER NOT NULL, `processedBy` TEXT, `isSynced` INTEGER NOT NULL, `audioFilePath` TEXT, `audioSampleRateHz` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "transcription",
+            "columnName": "transcription",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "summary",
+            "columnName": "summary",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "keyPoints",
+            "columnName": "keyPoints",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "durationSeconds",
+            "columnName": "durationSeconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "source",
+            "columnName": "source",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "processingStatus",
+            "columnName": "processingStatus",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "processedLocally",
+            "columnName": "processedLocally",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "processedBy",
+            "columnName": "processedBy",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "isSynced",
+            "columnName": "isSynced",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "audioFilePath",
+            "columnName": "audioFilePath",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "audioSampleRateHz",
+            "columnName": "audioSampleRateHz",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "timeline_events",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `type` TEXT NOT NULL, `timestamp` INTEGER NOT NULL, `endTimestamp` INTEGER, `title` TEXT NOT NULL, `subtitle` TEXT, `dataJson` TEXT, `isHighlight` INTEGER NOT NULL, `placeId` INTEGER, `source` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `completedAt` INTEGER)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endTimestamp",
+            "columnName": "endTimestamp",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "subtitle",
+            "columnName": "subtitle",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "dataJson",
+            "columnName": "dataJson",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "isHighlight",
+            "columnName": "isHighlight",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "placeId",
+            "columnName": "placeId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "source",
+            "columnName": "source",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "completedAt",
+            "columnName": "completedAt",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_timeline_events_timestamp",
+            "unique": false,
+            "columnNames": [
+              "timestamp"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_timeline_events_timestamp` ON `${TABLE_NAME}` (`timestamp`)"
+          },
+          {
+            "name": "index_timeline_events_type",
+            "unique": false,
+            "columnNames": [
+              "type"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_timeline_events_type` ON `${TABLE_NAME}` (`type`)"
+          },
+          {
+            "name": "index_timeline_events_placeId",
+            "unique": false,
+            "columnNames": [
+              "placeId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_timeline_events_placeId` ON `${TABLE_NAME}` (`placeId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "places",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `type` TEXT, `visitCount` INTEGER NOT NULL, `lastVisitAt` INTEGER, `rating` INTEGER, `opinionText` TEXT, `opinionSummary` TEXT, `opinionUpdatedAt` INTEGER, `isHome` INTEGER NOT NULL, `isWork` INTEGER NOT NULL, `userRenamed` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "latitude",
+            "columnName": "latitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "longitude",
+            "columnName": "longitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "visitCount",
+            "columnName": "visitCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastVisitAt",
+            "columnName": "lastVisitAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "rating",
+            "columnName": "rating",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "opinionText",
+            "columnName": "opinionText",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "opinionSummary",
+            "columnName": "opinionSummary",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "opinionUpdatedAt",
+            "columnName": "opinionUpdatedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "isHome",
+            "columnName": "isHome",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isWork",
+            "columnName": "isWork",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userRenamed",
+            "columnName": "userRenamed",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_places_lastVisitAt",
+            "unique": false,
+            "columnNames": [
+              "lastVisitAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_places_lastVisitAt` ON `${TABLE_NAME}` (`lastVisitAt`)"
+          },
+          {
+            "name": "index_places_isHome",
+            "unique": false,
+            "columnNames": [
+              "isHome"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_places_isHome` ON `${TABLE_NAME}` (`isHome`)"
+          },
+          {
+            "name": "index_places_isWork",
+            "unique": false,
+            "columnNames": [
+              "isWork"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_places_isWork` ON `${TABLE_NAME}` (`isWork`)"
+          }
+        ]
+      },
+      {
+        "tableName": "dwell_detection_state",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `candidateLat` REAL, `candidateLon` REAL, `candidateStartedAt` INTEGER, `candidateLastSeenAt` INTEGER, `anchorLat` REAL, `anchorLon` REAL, `dwellStartedAt` INTEGER, `active` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `lastClosedLat` REAL, `lastClosedLon` REAL, `lastClosedAt` INTEGER, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "candidateLat",
+            "columnName": "candidateLat",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "candidateLon",
+            "columnName": "candidateLon",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "candidateStartedAt",
+            "columnName": "candidateStartedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "candidateLastSeenAt",
+            "columnName": "candidateLastSeenAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "anchorLat",
+            "columnName": "anchorLat",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "anchorLon",
+            "columnName": "anchorLon",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "dwellStartedAt",
+            "columnName": "dwellStartedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "active",
+            "columnName": "active",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastClosedLat",
+            "columnName": "lastClosedLat",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "lastClosedLon",
+            "columnName": "lastClosedLon",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "lastClosedAt",
+            "columnName": "lastClosedAt",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "daily_pages",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`dayStartMillis` INTEGER NOT NULL, `date` TEXT NOT NULL, `status` TEXT NOT NULL, `briefSummary` TEXT, `insightsJson` TEXT NOT NULL, `markdown` TEXT NOT NULL, `markdownPath` TEXT, `generatedAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `reviewedAt` INTEGER, `hasManualReview` INTEGER NOT NULL, PRIMARY KEY(`dayStartMillis`))",
+        "fields": [
+          {
+            "fieldPath": "dayStartMillis",
+            "columnName": "dayStartMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "date",
+            "columnName": "date",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "briefSummary",
+            "columnName": "briefSummary",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "insightsJson",
+            "columnName": "insightsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "markdown",
+            "columnName": "markdown",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "markdownPath",
+            "columnName": "markdownPath",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "generatedAt",
+            "columnName": "generatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "reviewedAt",
+            "columnName": "reviewedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "hasManualReview",
+            "columnName": "hasManualReview",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "dayStartMillis"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '1508ec192beca411bf829bd694ecc70f')"
+    ]
+  }
+}

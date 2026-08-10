@@ -63,7 +63,7 @@ principal.
 `Mostrar opciones avanzadas` es persistente y está desactivado inicialmente. Al
 activarlo aparecen:
 
-- `IA y modelos`: Gemini, modelo local, umbral de aceptación y prompts.
+- `IA local`: modelo local, umbral de aceptación y prompts. No admite claves ni procesamiento cloud.
 - `Audio y diagnóstico`: duración manual, contexto anterior/posterior, motores,
   métricas y ubicación con intervalos y radios exactos.
 

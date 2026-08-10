@@ -31,7 +31,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Phone
@@ -49,6 +48,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -103,7 +103,10 @@ fun EntryCard(
     val isSuggested = entry.status == EntryStatus.SUGGESTED
     val primaryText = entry.displayText.ifBlank { entry.text }
     val t = LocalTramaColors.current
-    val hasTrailingActions = !isSelectionMode && onQuickActionClick != null && quickActionIcon != null
+    val hasTrailingActions = !isSelectionMode && (
+        (isSuggested && onToggleComplete != null) ||
+            (onQuickActionClick != null && quickActionIcon != null)
+        )
 
     val cardColor by animateColorAsState(
         targetValue = when {
@@ -216,14 +219,14 @@ fun EntryCard(
                         textDecoration = if (isCompleted) TextDecoration.LineThrough else TextDecoration.None,
                         modifier       = Modifier.weight(1f)
                     )
-                    if (isSuggested && !isSelectionMode) {
+                    if ((isSuggested || entry.userConfirmedAt != null) && !isSelectionMode) {
                         Spacer(Modifier.width(8.dp))
                         Surface(
                             shape = RoundedCornerShape(999.dp),
                             color = t.teal.copy(alpha = 0.14f)
                         ) {
                             Text(
-                                text = "SUGERIDA",
+                                text = if (isSuggested) "SUGERIDA" else "CONFIRMADA",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.SemiBold,
                                 color = t.teal,
@@ -247,7 +250,14 @@ fun EntryCard(
             }
 
             // ── Right action: quick-action button ───────────────────────────
-            if (!isSelectionMode && onQuickActionClick != null && quickActionIcon != null) {
+            if (!isSelectionMode && isSuggested && onToggleComplete != null) {
+                TextButton(
+                    onClick = onToggleComplete,
+                    modifier = Modifier.padding(end = 4.dp)
+                ) {
+                    Text("Confirmar")
+                }
+            } else if (!isSelectionMode && onQuickActionClick != null && quickActionIcon != null) {
                 EntryActionIconButton(
                     onClick = onQuickActionClick,
                     icon = quickActionIcon,
@@ -376,17 +386,14 @@ private fun rememberProcessingBadge(
         val backend = processingBackend ?: EntryProcessingState.Backend.UNKNOWN
         return ProcessingBadge(
             icon = when (backend) {
-                EntryProcessingState.Backend.CLOUD -> Icons.Default.Cloud
                 EntryProcessingState.Backend.LOCAL -> Icons.Default.AutoAwesome
                 EntryProcessingState.Backend.UNKNOWN -> Icons.Default.AutoAwesome
             },
             tint = when (backend) {
-                EntryProcessingState.Backend.CLOUD -> MaterialTheme.colorScheme.primary.copy(alpha = 0.75f)
                 EntryProcessingState.Backend.LOCAL -> LocalTramaColors.current.teal.copy(alpha = 0.75f)
                 EntryProcessingState.Backend.UNKNOWN -> LocalTramaColors.current.amber.copy(alpha = 0.85f)
             },
             contentDescription = when (backend) {
-                EntryProcessingState.Backend.CLOUD -> "Procesando en la nube"
                 EntryProcessingState.Backend.LOCAL -> "Procesando en este móvil"
                 EntryProcessingState.Backend.UNKNOWN -> "Procesando"
             },
@@ -394,8 +401,6 @@ private fun rememberProcessingBadge(
         )
     }
 
-    val isCloudProcessed = entry.processingBackend == EntryProcessingBackend.CLOUD
-    val isLocalProcessed = entry.processingBackend == EntryProcessingBackend.LOCAL
     val isHeuristicProcessed = entry.processingBackend == EntryProcessingBackend.HEURISTIC
 
     return when {
@@ -403,11 +408,6 @@ private fun rememberProcessingBadge(
             icon               = Icons.Default.CheckCircle,
             tint               = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.7f),
             contentDescription = "Entrada manual"
-        )
-        isCloudProcessed -> ProcessingBadge(
-            icon               = Icons.Default.Cloud,
-            tint               = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
-            contentDescription = "Procesado online"
         )
         isHeuristicProcessed -> ProcessingBadge(
             icon               = Icons.Default.CheckCircle,

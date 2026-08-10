@@ -11,7 +11,7 @@ import androidx.work.WorkerParameters
 import com.trama.shared.data.DatabaseProvider
 
 /**
- * WorkManager worker that processes a recording with Gemini.
+ * WorkManager worker that processes a recording locally.
  * Survives service/activity destruction — guaranteed to complete.
  */
 class RecordingProcessorWorker(

@@ -157,6 +157,13 @@ interface DiaryDao {
     @Query("UPDATE diary_entries SET status = 'PENDING', completedAt = NULL WHERE id = :id")
     suspend fun markPending(id: Long)
 
+    /** Confirm a suggestion as reliable without overwriting the model's own confidence. */
+    @Query("""UPDATE diary_entries
+        SET status = 'PENDING', completedAt = NULL,
+            userConfirmedAt = :confirmedAt, verificationSource = :source
+        WHERE id = :id""")
+    suspend fun confirmSuggested(id: Long, source: String, confirmedAt: Long = System.currentTimeMillis())
+
     /** Batch mark as completed */
     @Query("UPDATE diary_entries SET status = 'COMPLETED', completedAt = :completedAt WHERE id IN (:ids)")
     suspend fun markCompletedByIds(ids: List<Long>, completedAt: Long = System.currentTimeMillis())

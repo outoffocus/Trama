@@ -1,9 +1,6 @@
 package com.trama.app.summary
 
 import android.content.Context
-import com.google.ai.client.generativeai.GenerativeModel
-import com.google.ai.client.generativeai.type.generationConfig
-import com.trama.app.GeminiConfig
 
 class PlaceOpinionSummarizer(private val context: Context) {
 
@@ -25,24 +22,6 @@ class PlaceOpinionSummarizer(private val context: Context) {
             )
         )
 
-        val apiKey = getApiKey()
-        if (!apiKey.isNullOrBlank()) {
-            runCatching {
-                val model = GenerativeModel(
-                    modelName = GeminiConfig.MODEL_NAME,
-                    apiKey = apiKey,
-                    generationConfig = generationConfig {
-                        temperature = 0.2f
-                        maxOutputTokens = 256
-                    }
-                )
-                model.generateContent(prompt).text?.trim()
-            }.getOrNull()
-                ?.cleanSummary()
-                ?.takeIf { it.isNotBlank() }
-                ?.let { return it }
-        }
-
         if (GemmaClient.isModelAvailable(context)) {
             GemmaClient.generate(context, prompt, maxTokens = 256)
                 ?.cleanSummary()
@@ -52,9 +31,6 @@ class PlaceOpinionSummarizer(private val context: Context) {
 
         return null
     }
-
-    private fun getApiKey(): String? =
-        com.trama.app.security.SecureSecretStore.getGeminiApiKey(context)
 
     private fun String.cleanSummary(): String =
         trim()

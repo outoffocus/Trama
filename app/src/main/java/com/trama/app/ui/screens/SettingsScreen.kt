@@ -90,7 +90,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -127,7 +126,7 @@ enum class SettingsSection(val route: String, val title: String, val subtitle: S
     AGENDA_CALENDARS("agenda-calendars", "Agenda y calendarios", "Fuentes, avisos y resúmenes"),
     PRIVACY_DATA("privacy-data", "Privacidad y copias", "Voz, respaldo e importación"),
     APPEARANCE("appearance", "Apariencia", "Color y lectura del timeline"),
-    IA("ia", "IA y modelos", "Gemini, modelo local y prompts"),
+    IA("ia", "IA local", "Modelo local, confianza y prompts"),
     ADVANCED("advanced", "Audio y diagnóstico", "Captura, ubicación y herramientas técnicas");
 
     companion object {
@@ -163,9 +162,6 @@ fun SettingsScreen(
     val intentPatterns by settings.intentPatterns.collectAsState(initialValue = IntentPattern.DEFAULTS)
     val customKeywords by settings.customKeywords.collectAsState(initialValue = emptyList())
     val captureProfile by settings.captureProfile.collectAsState(initialValue = CaptureProfile.STRICT)
-
-    // Gemini API key
-    val geminiApiKey by viewModel.geminiApiKey.collectAsState()
 
     val personalDictionary = viewModel.personalDictionary
     val learnedCorrections by personalDictionary.corrections.collectAsState(initialValue = emptyList())
@@ -612,7 +608,7 @@ fun SettingsScreen(
                             icon = Icons.Default.AutoAwesome,
                             title = SettingsSection.IA.title,
                             subtitle = SettingsSection.IA.subtitle,
-                            summary = "Gemini, modelo local, umbral de aceptación y prompts",
+                            summary = "Modelo local, umbral de aceptación y prompts",
                             onClick = { onOpenSection(SettingsSection.IA) },
                             accent = tramaColors.teal,
                         )
@@ -975,10 +971,10 @@ fun SettingsScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Aprender de mis eliminaciones", style = MaterialTheme.typography.bodyMedium)
+                    Text("Aprender de mis decisiones", style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        "Al borrar una tarea, eliges el motivo. Si dices que era ruido, " +
-                            "la app filtra patrones similares antes de mostrarlos.",
+                        "Las confirmaciones refuerzan patrones útiles y los descartes por ruido " +
+                            "ayudan a filtrar capturas similares. Todo se aprende en el dispositivo.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1644,22 +1640,17 @@ fun SettingsScreen(
             SectionHeader("Procesamiento inteligente")
 
             Text(
-                "Control técnico de la ruta local y en la nube. Estos valores no son necesarios para la captura cotidiana.",
+                "Todo el procesamiento inteligente se ejecuta en este dispositivo. Estos valores no son necesarios para la captura cotidiana.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            OutlinedTextField(
-                value = geminiApiKey,
-                onValueChange = { viewModel.setGeminiApiKey(it) },
-                label = { Text("Clave API Gemini") },
-                supportingText = { Text("Cifrada con Android Keystore") },
-                visualTransformation = PasswordVisualTransformation(),
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
+            Text(
+                "Los textos y grabaciones no se envían a servicios de IA externos.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             Spacer(modifier = Modifier.height(14.dp))
@@ -3296,8 +3287,8 @@ private fun CaptureDiagnosticsCard(
         "DEDUP_SEM" to "DUP" to "Duplicado (semántico)",
         "SERVICE" to "OK" to "Servicio activo/heartbeat",
         "SERVICE" to "REJECT" to "Servicio parado",
-        "LLM" to "OK" to "LLM acepta tarea",
-        "LLM" to "REJECT" to "LLM → revisión",
+        "LLM" to "OK" to "Modelo local acepta tarea",
+        "LLM" to "REJECT" to "Modelo local/reglas → revisión",
         "SAVE" to "OK" to "Entradas guardadas",
         "RECORDING" to "OK" to "Grabaciones con acciones",
         "RECORDING" to "NO_MATCH" to "Grabaciones sin acciones"
@@ -3322,7 +3313,7 @@ private fun CaptureDiagnosticsCard(
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        "Una entrada por cada etapa del pipeline. Si el número de 'Transcripciones ASR' sube pero 'Entradas guardadas' no, mira qué etapa intermedia rechaza: speaker, intent o LLM.",
+                        "Distingue lo que el micrófono oyó de lo que acabó como tarea. El audio ambiental puede transcribirse y descartarse correctamente.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -3347,14 +3338,26 @@ private fun CaptureDiagnosticsCard(
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     Text(
-                        "Línea base local",
+                        "Cobertura local",
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        "${metrics.whisperTranscriptions} transcripciones · ${metrics.savedEntries} guardadas · " +
-                            "${metrics.likelyNoiseDeletes} borrados sospechosos · ${metrics.shadowCandidates} candidatos en sombra",
+                        "${"%.1f".format(metrics.observationHours)} h con cobertura estimada · " +
+                            "${metrics.whisperTranscriptions} transcripciones · ${metrics.savedEntries} guardadas",
                         style = MaterialTheme.typography.bodySmall
+                    )
+                    Text(
+                        "Disparadas: ${metrics.intentionalTranscriptions} · ambientales: ${metrics.ambientTranscriptions} · " +
+                            "sin intención: ${metrics.noIntentTranscriptions} · sugeridas: ${metrics.suggestedEntries}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        "Segmentos continuos de 30 s: ${metrics.cappedSegments} · " +
+                            "pausas por audio de este dispositivo: ${metrics.deviceMediaPauses}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     if (metrics.observationHours >= 0.25) {
                         Text(

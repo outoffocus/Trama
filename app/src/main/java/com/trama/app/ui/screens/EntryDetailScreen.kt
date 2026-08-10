@@ -326,7 +326,12 @@ fun EntryDetailScreen(
                     DetailRow("Fuente", if (currentEntry.source == Source.PHONE) "Teléfono" else "Reloj")
                     DetailRow(
                         "Estado",
-                        if (currentEntry.status == EntryStatus.COMPLETED) "Completada" else "Pendiente"
+                        when {
+                            currentEntry.status == EntryStatus.COMPLETED -> "Completada"
+                            currentEntry.status == EntryStatus.SUGGESTED -> "Sugerida"
+                            currentEntry.userConfirmedAt != null -> "Confirmada por ti"
+                            else -> "Pendiente"
+                        }
                     )
                     DetailRow("Palabra clave", currentEntry.keyword.ifBlank { "—" })
                     DetailRow("Confianza", "${(currentEntry.confidence * 100).toInt()}%")
