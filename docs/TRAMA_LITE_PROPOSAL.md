@@ -1,5 +1,10 @@
 # Trama Lite: memoria contextual util, precisa y de bajo consumo
 
+> **Documento archivado.** Describe una exploración anterior y contiene supuestos
+> que ya no coinciden con el repositorio actual. No debe usarse como plan de
+> ejecución. La auditoría vigente está en
+> [`MVP_AND_UX_STUDY_2026-08-11.md`](MVP_AND_UX_STUDY_2026-08-11.md).
+
 ## 1. Vision
 
 Trama Lite no debe ser una version recortada de Trama. Debe ser una version mas util, menos invasiva y menos intensiva para bateria.

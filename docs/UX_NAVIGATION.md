@@ -5,8 +5,8 @@
 La navegación de TRAMA conserva su modelo temporal:
 
 - `CalendarScreen` sigue siendo Home.
-- La navegación por día, selector de mes, vuelta a hoy y acceso a Agenda siguen
-  en la barra temporal inferior.
+- La navegación por día, selector de mes y vuelta a hoy siguen en la barra
+  temporal inferior.
 - El timeline mantiene tareas, compromisos, calendarios, grabaciones y lugares.
 - Chat, búsqueda, grabaciones y ajustes son utilidades accesibles desde Home, no
   pestañas que compiten con el calendario.
@@ -21,8 +21,9 @@ habituales.
 
 La cabecera usa el día seleccionado como título principal. Búsqueda y Chat están
 visibles; el menú de desbordamiento contiene `Añadir nota`, `Ver grabaciones` y
-`Ajustes`. Esto mantiene accesibles todas las rutas públicas sin añadir una barra
-de pestañas.
+`Ajustes`. Esto evita una barra de pestañas. Hay una excepción conocida: Agenda
+solo aparece cuando existe al menos un elemento esta semana; el estudio MVP
+vigente exige que su entrada sea permanente.
 
 El día y mes seleccionados se guardan mediante estado restaurable, de modo que
 abrir un detalle y volver no debe enviar al usuario a otra fecha.
@@ -33,7 +34,7 @@ Contrato de accesibilidad desde Home:
 | --- | --- |
 | Búsqueda | Icono de búsqueda |
 | Chat | Icono de asistente |
-| Agenda | Barra temporal inferior |
+| Agenda | Barra temporal inferior; hoy está condicionada a contador > 0 |
 | Grabaciones | Menú `Más opciones` |
 | Ajustes | Menú `Más opciones` |
 | Entrada, grabación o lugar | Elemento correspondiente del timeline |
@@ -42,8 +43,8 @@ Contrato de accesibilidad desde Home:
 
 La raíz de Ajustes muestra primero el estado de las funciones y cuatro destinos:
 
-1. `Captura y frases`: perfil de tolerancia, categorías, frases y correcciones
-   aprendidas.
+1. `Captura y contexto`: perfil de tolerancia, contexto ambiental opcional,
+   categorías, frases y correcciones aprendidas.
 2. `Agenda y calendarios`: resumen diario, fuentes de Google Calendar y aviso
    semanal.
 3. `Privacidad y copias`: reconocimiento de la propia voz, copia automática,
@@ -93,3 +94,6 @@ compactos y grandes y una sesión real para medir:
 - capacidad de volver al mismo día y posición;
 - descubrimiento de grabaciones y backup;
 - frecuencia con la que se habilitan opciones avanzadas.
+
+La auditoría y la corrección priorizada de esta deuda están en
+[`MVP_AND_UX_STUDY_2026-08-11.md`](MVP_AND_UX_STUDY_2026-08-11.md).

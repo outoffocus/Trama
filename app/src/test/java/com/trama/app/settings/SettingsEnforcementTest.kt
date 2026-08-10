@@ -57,6 +57,8 @@ class SettingsEnforcementTest {
     fun `all hour values are valid (0-23)`() {
         assertTrue(SettingsDataStore.DEFAULT_SUMMARY_HOUR in 0..23)
         assertTrue(SettingsDataStore.DEFAULT_BACKUP_HOUR in 0..23)
+        assertTrue(SettingsDataStore.DEFAULT_AMBIENT_CONTEXT_START_HOUR in 0..23)
+        assertTrue(SettingsDataStore.DEFAULT_AMBIENT_CONTEXT_END_HOUR in 0..23)
     }
 
     @Test

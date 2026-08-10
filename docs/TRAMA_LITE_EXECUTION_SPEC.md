@@ -1,12 +1,16 @@
 # Trama Lite — Especificacion ejecutable
 
-> Documento de ejecucion para un agente de desarrollo autonomo (Android + UX).
-> Sustituye a `TRAMA_LITE_PROPOSAL.md` como fuente de verdad para implementacion.
-> El proposal queda como documento de vision; ante conflicto, manda este documento.
+> **ARCHIVADO: NO EJECUTAR.** Esta especificación parte de Room v14 y de entidades
+> y decisiones que no representan el estado actual (Room v16 y captura ya
+> recalibrada). Se conserva solo como historial. La fuente vigente para decidir el
+> MVP es [`MVP_AND_UX_STUDY_2026-08-11.md`](MVP_AND_UX_STUDY_2026-08-11.md).
 
-## 0. Como usar este documento
+> Históricamente fue un documento de ejecución para un agente de desarrollo
+> autónomo. Ya no sustituye a ningún documento vigente ni debe dirigir cambios.
 
-Este documento esta escrito para ser ejecutado sin supervision continua. Reglas para el agente:
+## 0. Cómo se usó este documento
+
+Las reglas siguientes se conservan únicamente para entender la propuesta histórica:
 
 - Las **decisiones cerradas** (seccion 2) no se renegocian. No propongas alternativas.
 - Cada **tarea** tiene ID, archivos afectados, criterios de aceptacion verificables y tests requeridos. Una tarea solo esta "hecha" cuando todos sus criterios pasan.

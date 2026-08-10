@@ -70,7 +70,7 @@ feedback real de uso.
 - Hacer atómicos los backups y completar todas las entidades y relaciones.
 - Usar trabajo único y transacciones al reprocesar grabaciones.
 
-Implementado: Room exporta y versiona su esquema, la cadena 1→15 dispone de una
+Implementado: Room exporta y versiona su esquema, la cadena 1→16 dispone de una
 prueba Android que crea una base v1 real y valida el esquema final, y se han
 eliminado todos los fallbacks destructivos. El backup v3 toma una instantánea
 transaccional de las seis entidades, preserva y reconstruye relaciones, escribe
@@ -94,7 +94,7 @@ demanda y los binarios nativos se restringen a las ABI compatibles; Whisper se
 mantiene incluido deliberadamente para garantizar grabación y ASR offline desde el
 primer inicio. Las claves se cifran con AES-GCM y Android Keystore, y el backup
 automático del sistema está deshabilitado para diario, audio y credenciales. CI
-ejecuta pruebas, lint, builds, control de deriva de esquema y migración 1→15 en un
+ejecuta pruebas, lint, builds, control de deriva de esquema y migración 1→16 en un
 emulador.
 
 ## Fase 7 — Captura por intención compacta (implementada; calibración física pendiente)
@@ -151,8 +151,25 @@ el workflow de CI la ejecuta después de construir ambos APK.
 Implementado: la fecha seleccionada pasa a ser el título de Home, Búsqueda y Chat
 son acciones visibles y el menú ofrece notas, lista de grabaciones y Ajustes.
 Agenda conserva su acceso en la barra temporal. El día y mes seleccionados usan
-estado restaurable al navegar a detalles. Ajustes presenta Captura y frases,
+estado restaurable al navegar a detalles. Ajustes presenta Captura y contexto,
 Agenda y calendarios, Privacidad y copias y Apariencia; IA/modelos, audio,
 ubicación y diagnóstico requieren activar `Mostrar opciones avanzadas`. Backup y
 reconocimiento de la propia voz dejan de estar enterrados en Avanzado. Queda
 pendiente validar densidad, truncado y comprensión en dispositivos físicos.
+
+## Fase 10 — Contexto ambiental separado de tareas (implementada; calibración física pendiente)
+
+- Hacer la función explícitamente opt-in y local.
+- Clasificar ambiente en pocas categorías, no en frases ni tareas.
+- No persistir audio ni transcripciones ambientales.
+- Agrupar señales y limitar el número de bloques diarios.
+- Permitir horario y exclusiones por Casa/Trabajo.
+- Mantener el audio de aplicaciones del dispositivo siempre excluido.
+- Exponer resultados y exclusiones en diagnóstico.
+
+Implementado: las ventanas `uncertain_fallback` pueden producir bloques de Música,
+Televisión/radio, Conversación o Reunión. Las frases de intención quedan protegidas,
+las señales iguales se agrupan 45 minutos, los cambios tienen 15 minutos de cooldown
+y el máximo es 12 bloques nuevos al día. La cronología reutiliza `TimelineEvent`,
+por lo que Room v16 no necesita migración. Queda pendiente medir precisión y coste
+con jornadas reales etiquetadas; ver `docs/AMBIENT_CONTEXT.md`.

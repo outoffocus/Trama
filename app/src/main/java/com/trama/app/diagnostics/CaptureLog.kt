@@ -31,6 +31,7 @@ object CaptureLog {
         ASR_GATE,        // Lightweight gate ASR heard speech and checked triggers
         ACOUSTIC_SPEECH, // Acoustic speech gate before expensive ASR
         ASR_FINAL,       // Whisper produced a final transcript (always OK)
+        AMBIENT_CONTEXT, // Coarse local environmental category; never raw transcript
         SPEAKER,         // Speaker verification
         INTENT,          // Trigger / keyword match
         DEDUP_MEM,       // In-memory 5s dedup window
@@ -60,6 +61,8 @@ object CaptureLog {
         ACTION_REJECTED,
         DUPLICATE,
         CAPTURE_THROTTLED,
+        ENVIRONMENT_RECORDED,
+        ENVIRONMENT_EXCLUDED,
         UNKNOWN
     }
 

@@ -67,9 +67,10 @@ La tarjeta `Cobertura local` separa:
 - segmentos continuos de 30 segundos;
 - pausas causadas por audio reproducido en este dispositivo.
 
-Una television externa no activa la deteccion multimedia de Android. Su audio
-puede aparecer como transcripcion ambiental y debe terminar en `NO_INTENT`, no
-como tarea.
+Una television externa no activa la deteccion multimedia de Android. Con
+`Contexto ambiental` desactivado, su audio debe terminar filtrado y no como tarea.
+Con la función activada, un indicio suficientemente claro puede crear un bloque
+agregado `Televisión o radio`; la transcripción no se guarda.
 
 Los diagnosticos serializan decimales con punto y aceptan exportaciones antiguas
 con coma. El calculo de bateria separa sesiones de carga y descarga, ignora

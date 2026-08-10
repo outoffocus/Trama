@@ -17,7 +17,8 @@ Situacion a fecha `2026-08-11`:
 - la app puede aprender localmente de confirmaciones y descartes, y usar esas decisiones para proteger acciones útiles y filtrar ruido
 - la escucha continua del movil trabaja en segmentos cortos y renovables para evitar ventanas largas/ruidosas atascadas
 - el fallback incierto a Whisper esta limitado por cooldown, carga y bateria para proteger consumo
-- la escucha se pausa cuando Android informa audio activo en este dispositivo, para evitar capturas de YouTube/Spotify; una TV externa se filtra por audio e intención
+- la escucha se pausa cuando Android informa audio activo en este dispositivo, para evitar capturas de YouTube/Spotify
+- el contexto ambiental local es opcional y crea bloques agregados de música, televisión/radio, conversación o reunión; nunca tareas ni transcripciones persistidas
 - Home puede mostrar estados tecnicos de escucha solo si el ajuste `Estado tecnico en inicio` esta activado
 - la UI principal vive en `Home`, `Calendar`, `Agenda`, `Chat`, `Recordings`, `PlaceDetail` y `Settings`
 - `DailyPage` y el markdown privado por fecha funcionan como memoria tecnica persistida
@@ -39,6 +40,7 @@ Situacion a fecha `2026-08-11`:
 - aprendizaje opcional desde eliminaciones: al borrar una entrada se puede indicar si era ruido, no era para el usuario, estaba mal transcrita, duplicada o caducada
 - grabaciones manuales en movil y reloj, con extraccion posterior de acciones sugeridas
 - timeline operativo del dia con tareas, grabaciones, eventos de calendario y visitas a lugares
+- contexto ambiental opt-in con horario, exclusión de Casa/Trabajo, agrupación y límite de 12 bloques nuevos al día
 - calendario historico por dia con tareas, lugares, grabaciones y valoraciones
 - agenda dedicada para tareas vencidas, esta semana, proxima semana, mas adelante y sin fecha
 - aviso semanal configurable por WorkManager con eventos de calendario y tareas con fecha
@@ -69,10 +71,11 @@ Ruta preferente:
 4. `VoskGateAsr`
 5. `CapturedAudioWindow`
 6. `SherpaWhisperAsrEngine`
-7. speaker verification opcional
-8. `IntentDetector` + validaciones
-9. `ActionItemProcessor`
-10. Room + timeline + sync
+7. rama ambiental local opcional para `uncertain_fallback`, sin guardar texto
+8. speaker verification opcional para la rama de tareas
+9. `IntentDetector` + validaciones
+10. `ActionItemProcessor`
+11. Room + timeline + sync
 
 Comportamiento de escucha continua:
 
@@ -146,6 +149,7 @@ Las sugerencias confirmadas conservan por separado la confianza automática y la
 - la base Room no esta cifrada todavia
 - los backups son JSON y dependen del destino elegido por el usuario
 - los textos, grabaciones, resúmenes y contexto del diario no se envían a modelos remotos
+- el contexto ambiental guarda categoría e intervalo, no audio ni transcripción
 
 ## Build
 
@@ -217,5 +221,7 @@ La mejor forma de avanzar sin romper el producto es estabilizar fronteras: DI, V
 - [`IMPROVEMENT_PLAN.md`](IMPROVEMENT_PLAN.md): fases ejecutadas y calibracion fisica pendiente.
 - [`docs/ANDROID_16KB_COMPATIBILITY.md`](docs/ANDROID_16KB_COMPATIBILITY.md): diagnostico, decisiones y verificacion de bibliotecas nativas.
 - [`docs/UX_NAVIGATION.md`](docs/UX_NAVIGATION.md): navegación preservada, accesos y jerarquía básico/avanzado.
+- [`docs/AMBIENT_CONTEXT.md`](docs/AMBIENT_CONTEXT.md): contrato, privacidad, límites y diagnóstico del contexto ambiental local.
+- [`docs/MVP_AND_UX_STUDY_2026-08-11.md`](docs/MVP_AND_UX_STUDY_2026-08-11.md): auditoría vigente, alcance del MVP y plan UX profesional.
 - [`docs/TRAMA_LITE_PROPOSAL.md`](docs/TRAMA_LITE_PROPOSAL.md): propuesta de producto TRAMA Lite.
 - [`docs/TRAMA_LITE_EXECUTION_SPEC.md`](docs/TRAMA_LITE_EXECUTION_SPEC.md): especificacion ejecutable de TRAMA Lite.

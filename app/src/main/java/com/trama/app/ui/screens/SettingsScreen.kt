@@ -122,7 +122,7 @@ import kotlin.math.roundToInt
 
 enum class SettingsSection(val route: String, val title: String, val subtitle: String) {
     ROOT("root", "Ajustes", "Control general de la app"),
-    CAPTURE_MEMORY("capture-memory", "Captura y frases", "Escucha, categorías y expresiones"),
+    CAPTURE_MEMORY("capture-memory", "Captura y contexto", "Tareas, ambiente y frases"),
     AGENDA_CALENDARS("agenda-calendars", "Agenda y calendarios", "Fuentes, avisos y resúmenes"),
     PRIVACY_DATA("privacy-data", "Privacidad y copias", "Voz, respaldo e importación"),
     APPEARANCE("appearance", "Apariencia", "Color y lectura del timeline"),
@@ -178,6 +178,15 @@ fun SettingsScreen(
     )
     val asrDebugEnabled by settings.asrDebugEnabled.collectAsState(initialValue = false)
     val listeningStatusOnHome by settings.listeningStatusOnHome.collectAsState(initialValue = false)
+    val ambientContextConfig by settings.ambientContextConfig.collectAsState(
+        initialValue = com.trama.app.ambient.AmbientContextConfig(
+            enabled = false,
+            activeStartHour = SettingsDataStore.DEFAULT_AMBIENT_CONTEXT_START_HOUR,
+            activeEndHour = SettingsDataStore.DEFAULT_AMBIENT_CONTEXT_END_HOUR,
+            excludeHome = false,
+            excludeWork = false
+        )
+    )
     val asrDebugEngine by settings.asrDebugEngine.collectAsState(initialValue = "-")
     val asrDebugStatus by settings.asrDebugStatus.collectAsState(initialValue = "sin datos")
     val asrDebugLastText by settings.asrDebugLastText.collectAsState(initialValue = "")
@@ -561,7 +570,7 @@ fun SettingsScreen(
                     icon = Icons.Default.Mic,
                     title = SettingsSection.CAPTURE_MEMORY.title,
                     subtitle = SettingsSection.CAPTURE_MEMORY.subtitle,
-                    summary = "${intentPatterns.count { it.enabled }} categorías activas · perfil ${captureProfile.displayName()}",
+                    summary = "Tareas: ${captureProfile.displayName()} · ambiente ${if (ambientContextConfig.enabled) "activo" else "desactivado"}",
                     onClick = { onOpenSection(SettingsSection.CAPTURE_MEMORY) },
                     accent = tramaColors.amber,
                 )
@@ -1223,6 +1232,117 @@ fun SettingsScreen(
                     scope.launch { settings.setCaptureProfile(profile) }
                 }
             )
+
+            SectionDivider()
+
+            SectionHeader("Contexto ambiental")
+
+            SettingToggle(
+                title = "Añadir contexto ambiental al día",
+                subtitle = "Crea bloques de música, televisión/radio, conversación o reunión; nunca los convierte en tareas",
+                checked = ambientContextConfig.enabled,
+                onCheckedChange = { enabled ->
+                    scope.launch { settings.setAmbientContextEnabled(enabled) }
+                }
+            )
+
+            AnimatedVisibility(visible = ambientContextConfig.enabled) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                    ),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            "Privacidad y consumo",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            "Todo se clasifica en el dispositivo. Trama guarda solo la categoría y el intervalo, nunca la transcripción. Agrupa señales próximas, limita el resultado a 12 bloques diarios e ignora siempre el audio reproducido por apps de este dispositivo. Puede aumentar el uso de batería.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp, bottom = 14.dp)
+                        )
+
+                        Text(
+                            "Horario: %02d:00–%02d:00".format(
+                                ambientContextConfig.activeStartHour,
+                                ambientContextConfig.activeEndHour
+                            ),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            "Si ambas horas coinciden, funciona todo el día.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("Desde", style = MaterialTheme.typography.labelMedium)
+                        Slider(
+                            value = ambientContextConfig.activeStartHour.toFloat(),
+                            onValueChange = { value ->
+                                scope.launch {
+                                    settings.setAmbientContextHours(
+                                        value.roundToInt(),
+                                        ambientContextConfig.activeEndHour
+                                    )
+                                }
+                            },
+                            valueRange = 0f..23f,
+                            steps = 22
+                        )
+                        Text("Hasta", style = MaterialTheme.typography.labelMedium)
+                        Slider(
+                            value = ambientContextConfig.activeEndHour.toFloat(),
+                            onValueChange = { value ->
+                                scope.launch {
+                                    settings.setAmbientContextHours(
+                                        ambientContextConfig.activeStartHour,
+                                        value.roundToInt()
+                                    )
+                                }
+                            },
+                            valueRange = 0f..23f,
+                            steps = 22
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        SettingToggle(
+                            title = "Excluir casa",
+                            subtitle = if (locationEnabled) {
+                                "No crea bloques cuando la estancia activa está marcada como Casa"
+                            } else {
+                                "Activa Ubicación en opciones avanzadas para aplicar esta exclusión"
+                            },
+                            checked = ambientContextConfig.excludeHome,
+                            onCheckedChange = { exclude ->
+                                scope.launch { settings.setAmbientContextExcludeHome(exclude) }
+                            },
+                            enabled = locationEnabled
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        SettingToggle(
+                            title = "Excluir trabajo",
+                            subtitle = if (locationEnabled) {
+                                "No crea bloques cuando la estancia activa está marcada como Trabajo"
+                            } else {
+                                "Activa Ubicación en opciones avanzadas para aplicar esta exclusión"
+                            },
+                            checked = ambientContextConfig.excludeWork,
+                            onCheckedChange = { exclude ->
+                                scope.launch { settings.setAmbientContextExcludeWork(exclude) }
+                            },
+                            enabled = locationEnabled
+                        )
+                    }
+                }
+            }
 
             SectionDivider()
 
@@ -3257,6 +3377,8 @@ private fun CaptureDiagnosticsCard(
             "ASR_GATE" to "OK",
             "ASR_GATE" to "NO_MATCH",
             "ASR_FINAL" to "OK",
+            "AMBIENT_CONTEXT" to "OK",
+            "AMBIENT_CONTEXT" to "NO_MATCH",
             "SPEAKER" to "OK",
             "SPEAKER" to "REJECT",
             "INTENT" to "OK",
@@ -3279,6 +3401,8 @@ private fun CaptureDiagnosticsCard(
         "ASR_GATE" to "OK" to "Gate aceptado/fallback",
         "ASR_GATE" to "NO_MATCH" to "Gate ligero sin trigger",
         "ASR_FINAL" to "OK" to "Transcripciones ASR",
+        "AMBIENT_CONTEXT" to "OK" to "Bloques ambientales guardados/agrupados",
+        "AMBIENT_CONTEXT" to "NO_MATCH" to "Contexto ambiental excluido/limitado",
         "SPEAKER" to "OK" to "Speaker verificado",
         "SPEAKER" to "REJECT" to "Speaker rechazado",
         "INTENT" to "OK" to "Intent detectado",
@@ -3348,7 +3472,7 @@ private fun CaptureDiagnosticsCard(
                         style = MaterialTheme.typography.bodySmall
                     )
                     Text(
-                        "Disparadas: ${metrics.intentionalTranscriptions} · ambientales: ${metrics.ambientTranscriptions} · " +
+                        "Disparadas: ${metrics.intentionalTranscriptions} · fallback ambiental: ${metrics.ambientTranscriptions} · " +
                             "sin intención: ${metrics.noIntentTranscriptions} · sugeridas: ${metrics.suggestedEntries}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant

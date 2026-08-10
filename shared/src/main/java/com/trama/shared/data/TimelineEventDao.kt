@@ -26,6 +26,9 @@ interface TimelineEventDao {
     @Query("SELECT * FROM timeline_events WHERE id = :id")
     suspend fun getByIdOnce(id: Long): TimelineEvent?
 
+    @Query("SELECT * FROM timeline_events WHERE type = :type ORDER BY timestamp DESC LIMIT 1")
+    suspend fun getLatestByType(type: String): TimelineEvent?
+
     @Query("SELECT * FROM timeline_events WHERE type = :type AND source = :source AND dataJson = :dataJson LIMIT 1")
     suspend fun getByTypeSourceAndDataJson(type: String, source: String, dataJson: String): TimelineEvent?
 

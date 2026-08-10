@@ -274,6 +274,7 @@ private class FakeTimelineEventDao : TimelineEventDao {
     override fun byDateRange(startTime: Long, endTime: Long): Flow<List<TimelineEvent>> = flowOf(emptyList())
     override suspend fun byDateRangeOnce(startTime: Long, endTime: Long): List<TimelineEvent> = emptyList()
     override suspend fun getByIdOnce(id: Long): TimelineEvent? = null
+    override suspend fun getLatestByType(type: String): TimelineEvent? = null
     override suspend fun getByTypeSourceAndDataJson(type: String, source: String, dataJson: String): TimelineEvent? = null
     override suspend fun getByNaturalKey(type: String, timestamp: Long, title: String): TimelineEvent? = null
     override fun getByPlaceId(placeId: Long): Flow<List<TimelineEvent>> = flowOf(emptyList())

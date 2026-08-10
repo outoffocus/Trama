@@ -17,6 +17,9 @@ import com.trama.app.audio.ContextualAudioCaptureEngine
 import com.trama.app.audio.CaptureProcessingSequencer
 import com.trama.app.audio.SherpaWhisperAsrEngine
 import com.trama.app.audio.SileroVadFilter
+import com.trama.app.ambient.AmbientContextClassifier
+import com.trama.app.ambient.AmbientContextConfig
+import com.trama.app.ambient.AmbientContextRecorder
 import com.trama.app.diagnostics.CaptureLog
 import com.trama.shared.audio.VoskGateAsr
 import com.trama.shared.audio.ContextualCaptureConfig
@@ -110,6 +113,7 @@ class KeywordListenerService : LifecycleService() {
     }
 
     private var repository: com.trama.shared.data.DiaryRepository? = null
+    private var ambientContextRecorder: AmbientContextRecorder? = null
     private lateinit var settings: SettingsDataStore
     private lateinit var dictionary: PersonalDictionary
     private lateinit var intentDetector: IntentDetector
@@ -133,6 +137,14 @@ class KeywordListenerService : LifecycleService() {
     private var contextPreRollSeconds: Int = SettingsDataStore.DEFAULT_CONTEXT_PRE_ROLL
     private var contextPostRollSeconds: Int = SettingsDataStore.DEFAULT_CONTEXT_POST_ROLL
     private var asrDebugEnabled: Boolean = false
+    @Volatile
+    private var ambientContextConfig = AmbientContextConfig(
+        enabled = false,
+        activeStartHour = SettingsDataStore.DEFAULT_AMBIENT_CONTEXT_START_HOUR,
+        activeEndHour = SettingsDataStore.DEFAULT_AMBIENT_CONTEXT_END_HOUR,
+        excludeHome = false,
+        excludeWork = false
+    )
     @Volatile private var asrDebugEnabledVolatile = false
     @Volatile
     private var listening = false
@@ -418,6 +430,7 @@ class KeywordListenerService : LifecycleService() {
         val preRollSeconds = settings.contextPreRollSeconds.first()
         val postRollSeconds = settings.contextPostRollSeconds.first()
         val debugEnabled = settings.asrDebugEnabled.first()
+        val initialAmbientContextConfig = settings.ambientContextConfig.first()
 
         intentDetector.setPatterns(patterns)
         intentDetector.setCustomKeywords(customKw)
@@ -427,6 +440,7 @@ class KeywordListenerService : LifecycleService() {
         contextPostRollSeconds = postRollSeconds
         asrDebugEnabled = debugEnabled
         asrDebugEnabledVolatile = debugEnabled
+        ambientContextConfig = initialAmbientContextConfig
         updateWhisperHotwords(customKw, patterns)
 
         Log.i(
@@ -443,7 +457,8 @@ class KeywordListenerService : LifecycleService() {
                 "customKeywords" to customKw.size,
                 "presetVersion" to IntentPattern.CURRENT_PRESET_VERSION,
                 "preRollSeconds" to contextPreRollSeconds,
-                "postRollSeconds" to contextPostRollSeconds
+                "postRollSeconds" to contextPostRollSeconds,
+                "ambientContextEnabled" to ambientContextConfig.enabled
             )
         )
     }
@@ -502,6 +517,11 @@ class KeywordListenerService : LifecycleService() {
             settings.asrDebugEnabled.collect { enabled ->
                 asrDebugEnabled = enabled
                 asrDebugEnabledVolatile = enabled
+            }
+        }
+        lifecycleScope.launch {
+            settings.ambientContextConfig.collect { config ->
+                ambientContextConfig = config
             }
         }
     }
@@ -575,6 +595,7 @@ class KeywordListenerService : LifecycleService() {
 
     private fun initDatabase() {
         repository = DatabaseProvider.getRepository(applicationContext)
+        ambientContextRecorder = repository?.let(::AmbientContextRecorder)
         phoneToWatchSyncer = repository?.let { PhoneToWatchSyncer(applicationContext, it) }
     }
 
@@ -840,18 +861,79 @@ class KeywordListenerService : LifecycleService() {
                     if (text.isNotBlank()) {
                         consecutiveOfflineAsrErrors = 0
                         val elapsedMs = System.currentTimeMillis() - startedAt
+                        val ambientSignal = if (
+                            source == "uncertain_fallback" &&
+                                ambientContextConfig.enabled &&
+                                intentDetector.detect(text) == null
+                        ) {
+                            AmbientContextClassifier.classify(text)
+                        } else {
+                            null
+                        }
                         CaptureLog.event(
                             gate = CaptureLog.Gate.ASR_FINAL,
                             result = CaptureLog.Result.OK,
-                            text = text,
+                            // Environmental text is intentionally never persisted.
+                            text = text.takeIf { ambientSignal == null },
                             meta = mapOf(
                                 "captureId" to envelope.captureId,
                                 "engine" to asrEngine.name,
                                 "windowMs" to window.durationMs(),
                                 "decodeMs" to elapsedMs,
-                                "source" to source
+                                "source" to source,
+                                "ambientCategory" to ambientSignal?.category?.name,
+                                "transcriptStored" to (ambientSignal == null)
                             ) + powerSnapshot()
                         )
+                        if (ambientSignal != null) {
+                            val ambientResult = ambientContextRecorder?.record(
+                                signal = ambientSignal,
+                                config = ambientContextConfig,
+                                nowMs = System.currentTimeMillis(),
+                                windowMs = window.durationMs(),
+                                deviceMediaPlaying = mediaPlaybackActive || isMediaPlaybackActiveNow()
+                            ) ?: AmbientContextRecorder.Result.Suppressed("repository_unavailable")
+                            when (ambientResult) {
+                                is AmbientContextRecorder.Result.Recorded -> {
+                                    CaptureLog.event(
+                                        gate = CaptureLog.Gate.AMBIENT_CONTEXT,
+                                        result = CaptureLog.Result.OK,
+                                        text = ambientSignal.category.name,
+                                        meta = mapOf(
+                                            "captureId" to envelope.captureId,
+                                            "confidence" to metric(ambientSignal.confidence),
+                                            "evidence" to ambientSignal.evidence,
+                                            "eventId" to ambientResult.eventId,
+                                            "merged" to ambientResult.merged,
+                                            "outcome" to CaptureLog.CaptureOutcome.ENVIRONMENT_RECORDED
+                                        )
+                                    )
+                                    publishAsrDebug(
+                                        status = "contexto ambiental registrado",
+                                        triggerReason = ambientSignal.category.title
+                                    )
+                                }
+                                is AmbientContextRecorder.Result.Suppressed -> {
+                                    CaptureLog.event(
+                                        gate = CaptureLog.Gate.AMBIENT_CONTEXT,
+                                        result = CaptureLog.Result.NO_MATCH,
+                                        text = ambientSignal.category.name,
+                                        meta = mapOf(
+                                            "captureId" to envelope.captureId,
+                                            "confidence" to metric(ambientSignal.confidence),
+                                            "evidence" to ambientSignal.evidence,
+                                            "reason" to ambientResult.reason,
+                                            "outcome" to CaptureLog.CaptureOutcome.ENVIRONMENT_EXCLUDED
+                                        )
+                                    )
+                                    publishAsrDebug(
+                                        status = "contexto ambiental ignorado",
+                                        triggerReason = ambientResult.reason
+                                    )
+                                }
+                            }
+                            return@capture
+                        }
                         val asrNoiseReason = AsrHallucinationDetector.detect(
                             text,
                             singleWordIsHallucination = false

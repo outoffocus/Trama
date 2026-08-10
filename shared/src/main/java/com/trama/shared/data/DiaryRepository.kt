@@ -241,6 +241,9 @@ class DiaryRepository(
     suspend fun getTimelineEventByIdOnce(id: Long): TimelineEvent? =
         timelineEventDao?.getByIdOnce(id)
 
+    suspend fun getLatestTimelineEventByType(type: String): TimelineEvent? =
+        timelineEventDao?.getLatestByType(type)
+
     suspend fun getTimelineEventByTypeSourceAndDataJson(
         type: String,
         source: String,

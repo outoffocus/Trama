@@ -14,12 +14,12 @@ Trama debe leerse como una memoria operativa local-first:
 
 El objetivo del producto es capturar con poca friccion, estructurar despues y permitir recuperar contexto sin convertir al usuario en editor permanente.
 
-## 2. Estado a 2026-08-10
+## 2. Estado a 2026-08-11
 
 ### Movil
 
 - Android app en Kotlin, Compose, Material 3 y Navigation Compose
-- Room compartido en `shared`, version 15, con esquemas exportados y migraciones probadas
+- Room compartido en `shared`, version 16, con esquemas exportados y migraciones probadas
 - escucha continua con pipeline dedicado
 - captura con `AudioSource.VOICE_RECOGNITION` y fallback a `MIC` si el dispositivo lo rechaza
 - `VoskGateAsr` como gate ligero
@@ -32,15 +32,16 @@ El objetivo del producto es capturar con poca friccion, estructurar despues y pe
 - listener termico (`OnThermalStatusChangedListener`, API 29+) mantiene estado fresco para throttling y diagnostico
 - reinicio automatico de la captura tras crash con backoff exponencial (1s, 5s, 30s, 5min) y reset si la captura corre limpia >=60s; los crashes loguean stacktrace truncado para diagnostico
 - speaker verification offline integrada despues de Whisper
-- si no hay perfil de voz configurado o la verificacion queda degradada, las capturas accionables se enrutan a `SUGGESTED` en vez de notificar como `PENDING`
+- no tener perfil de voz es neutral; un mismatch real rechaza y una comprobación inconclusa de un perfil habilitado enruta a `SUGGESTED`
 - pausa por audio activo de otra app para evitar capturas de multimedia
+- contexto ambiental local opt-in con cuatro categorías, horario, exclusiones de Casa/Trabajo, agrupación y ausencia de transcripción persistida
 - tracking opcional de ubicacion con dwell detection menos estricto para visitas cortas/interior
 - lugares persistidos, valoraciones, opiniones y apertura en mapas externos
 - importacion de calendarios seleccionados del sistema
 - pantalla `Agenda` para vencidas, esta/proxima semana, tareas futuras y tareas sin fecha
 - aviso semanal configurable por WorkManager con eventos de calendario y tareas con fecha
 - chat local sobre repositorio y contexto diario; soporta consultas genericas sobre hechos, lugares, compras, fechas y follow-ups usando retrieval factual + contexto compacto
-- Gemini cloud + Gemma local para procesamiento, resumen y extraccion (default local: Gemma 4 E2B-it litertlm, configurable por URL)
+- Gemma local para procesamiento, resumen y extraccion, con reglas deterministas cuando el modelo no está disponible; no existe ruta cloud
 - aprendizaje opt-in desde eliminaciones marcadas como ruido o "no es para mi"; alimenta un gate pre-LLM y ejemplos `DISCARD`
 - importacion via share intent para enviar texto/links a Trama y procesarlos asincronamente
 - WorkManager para resumen diario, procesado diferido y backups
@@ -82,7 +83,7 @@ Dependencias relevantes:
 - Compose BOM, Navigation Compose, Wear Compose, Horologist
 - Room, WorkManager, DataStore Preferences
 - Play Services Wearable
-- Vosk Android 0.3.75, JNA 5.18.1, sherpa-onnx JNI/assets, MediaPipe GenAI, LiteRT-LM, Gemini SDK
+- Vosk Android 0.3.75, JNA 5.18.1, sherpa-onnx JNI/assets, MediaPipe GenAI y LiteRT-LM
 - AGP 9 empaqueta las bibliotecas nativas con alineacion ZIP de 16 KB; CI valida tambien los segmentos ELF ARM64/x86_64
 
 ## 4. UI y navegacion
@@ -126,11 +127,12 @@ Flujo:
 6. Se construye `CapturedAudioWindow`.
 7. `SileroVadFilter` descarta no-habla antes de Whisper cuando el asset esta disponible.
 8. `SherpaWhisperAsrEngine` genera texto final.
-9. Speaker verification opcional calcula embedding sobre la misma ventana.
-10. `IntentDetector` clasifica contra patrones configurables.
-11. `EntryValidatorHeuristics` y deduplicacion filtran ruido.
-12. `ActionItemProcessor` aplica aprendizaje de eliminaciones si esta activo, limpia, enriquece y persiste.
-13. Room, timeline, sync y UI reciben el resultado.
+9. Si la ventana es `uncertain_fallback` y el contexto ambiental está activo, un clasificador conservador puede crear o agrupar un bloque sin guardar el texto; esta rama termina aquí.
+10. Speaker verification opcional calcula embedding sobre la misma ventana para la rama de tareas.
+11. `IntentDetector` clasifica contra patrones configurables.
+12. `EntryValidatorHeuristics` y deduplicacion filtran ruido.
+13. `ActionItemProcessor` aplica aprendizaje de eliminaciones si esta activo, limpia, enriquece y persiste.
+14. Room, timeline, sync y UI reciben el resultado.
 
 Propiedades:
 
@@ -143,6 +145,8 @@ Propiedades:
 - fallback incierto a Whisper solo para gates vacios o muy pobres, con cooldown de 5 min en bateria y 2 min cargando
 - fallback incierto bloqueado bajo 20% de bateria y tambien en modo ahorro suave (`battery_soft_low`) o presion termica cuando no esta cargando
 - ventanas bloqueadas si Android informa audio activo de otra app
+- el contexto ambiental está desactivado por defecto, solo admite Música, Televisión/radio, Conversación y Reunión, agrupa señales y limita bloques diarios
+- las expresiones personales de acción no pueden entrar en la rama ambiental
 - la entrada a Whisper se capa a 20 s manteniendo la cola del segmento; recorta la cola larga de p95 sin perder la frase final
 - filtro Silero VAD pre-Whisper (`SileroVadFilter`): el modelo `assets/asr/vad/silero_vad.onnx` se bundlea como asset y registra cada decision en la etapa `ACOUSTIC_SPEECH` con `vadMs`, `windowMs` y outcome `NO_SPEECH` o `INTENT_CANDIDATE`. Si el modelo falta o falla, se degrada a no-op y queda diagnosticado.
 - errores de ventana ASR se tratan como recuperables y rearman la captura
@@ -171,6 +175,8 @@ Eventos relevantes de diagnostico:
 - `ACOUSTIC_SPEECH silero_vad_speech|silero_vad_no_speech vadMs windowMs`
 - `ASR_FINAL source=trigger|uncertain_fallback|no_gate decodeMs windowMs`
 - `ASR_FINAL media_playback_blocked_window`
+- `AMBIENT_CONTEXT OK category=... merged=true|false`
+- `AMBIENT_CONTEXT NO_MATCH reason=outside_schedule|excluded_home|excluded_work|change_cooldown|daily_limit`
 - `LLM decision=blocked_by_signal signalReason similarity`
 
 ## 6. Grabaciones
@@ -184,7 +190,7 @@ Archivos:
 - `app/summary/RecordingProcessor.kt`
 - `app/summary/RecordingProcessorWorker.kt`
 
-Las grabaciones manuales se guardan como `Recording`, se transcriben por chunks para evitar bloqueos largos de UI y pueden producir acciones sugeridas. El procesado intenta Gemini cloud, Gemma local y heuristicas/fallbacks segun disponibilidad. El estado de grabacion diferencia captura, parada, transcripcion y procesado para que la UI no muestre dobles indicadores de IA ni quede congelada al parar.
+Las grabaciones manuales se guardan como `Recording`, se transcriben por chunks para evitar bloqueos largos de UI y pueden producir acciones sugeridas. El procesado intenta Gemma local y reglas/heurísticas deterministas según disponibilidad. El estado de grabacion diferencia captura, parada, transcripcion y procesado para que la UI no muestre dobles indicadores de IA ni quede congelada al parar.
 
 ## 7. IA y memoria
 
@@ -201,8 +207,8 @@ Archivos:
 
 Rutas:
 
-- Gemini cloud para estructuracion, acciones, resumenes y opiniones
-- Gemma local descargable para ejecucion on-device cuando esta disponible y habilitado
+- Gemma local descargable para estructuracion, acciones, resumenes y opiniones
+- reglas deterministas para mantener las rutas esenciales cuando Gemma no está disponible
 - heuristicas locales para reparacion JSON, duplicados y sugerencias manuales
 - prompt de acciones orientado a extraer la accion minima autosuficiente y rechazar ruido conversacional/no accionable
 - `DeletionFeedbackStore` persiste hasta 100 ejemplos locales de eliminaciones con razon de calidad, compara por similitud Jaccard y expone los 3 mas recientes como few-shot `DISCARD`
@@ -250,7 +256,7 @@ El chat interpreta preguntas sobre dias, lugares, duraciones, orden de visitas, 
 
 ## 9. Persistencia
 
-Base Room compartida en `shared/data`, version 15.
+Base Room compartida en `shared/data`, version 16.
 
 Entidades:
 
@@ -362,13 +368,13 @@ Tipos sincronizados:
 ## 13. Ajustes, backup y diagnostico
 
 `SettingsScreen` conserva toda la superficie funcional, pero la presenta en dos
-niveles. El básico contiene `Captura y frases`, `Agenda y calendarios`, `Privacidad
+niveles. El básico contiene `Captura y contexto`, `Agenda y calendarios`, `Privacidad
 y copias` y `Apariencia`. Un interruptor persistente revela `IA y modelos` y
 `Audio y diagnóstico`:
 
 - patrones y diccionario personal
 - permisos y ubicacion
-- Gemini API key
+- modelo Gemma local, umbral y prompts
 - descarga/configuracion de Gemma
 - speaker verification
 - Google Calendar
@@ -409,10 +415,11 @@ composables por sección para reducir su tamaño sin volver a mezclar conceptos.
 Estado actual:
 
 - audio contextual del movil vive en memoria durante la captura
+- los bloques ambientales guardan categoría e intervalo; no guardan audio ni transcripción
 - audio del reloj se transfiere al telefono para procesado local
 - feedback de eliminaciones se guarda localmente en `filesDir/diagnostics/deletion_feedback.json` y se puede borrar desde ajustes
 - Room no esta cifrado
-- Gemini API key se cifra con AES-GCM usando una clave no exportable de Android Keystore
+- la credencial opcional de Google Places se cifra con AES-GCM usando una clave no exportable de Android Keystore
 - cualquier otro secreto persistente debe adoptar el mismo patron antes de considerarse endurecido
 - backup JSON depende del destino elegido por el usuario
 
@@ -464,7 +471,7 @@ Comandos utiles:
 - onboarding
 - UI tests Compose
 - test de integracion del pipeline de captura
-- limites de coste/latencia para Gemini
+- límites de coste/latencia y compatibilidad para Gemma local
 - simplificar `SettingsScreen`
 - separar responsabilidades de `ActionItemProcessor`
 - extraer politicas puras adicionales para probar mas casos de segmentacion y calidad de acciones sin Android runtime

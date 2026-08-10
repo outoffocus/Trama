@@ -37,6 +37,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.AssistChip
@@ -554,6 +555,36 @@ internal fun LazyListScope.timelineListContent(
             is TimelineEventUi.StoredEvent -> {
                 val title = event.event.title
                 val isSelected = event.event.id in selectedEventIds
+                if (event.event.type == TimelineEventType.AMBIENT_CONTEXT) {
+                    TimelineStatusCard(
+                        modifier = itemModifier,
+                        eyebrow = "Contexto ambiental",
+                        title = title,
+                        body = event.event.subtitle ?: "Categoría local; sin transcripción guardada",
+                        accent = accentConfig.recording.copy(alpha = 0.86f),
+                        meta = formatAmbientContextDuration(
+                            event.event.timestamp,
+                            event.event.endTimestamp
+                        ),
+                        isSelectionMode = isSelectionMode,
+                        isSelected = isSelected,
+                        onLongClick = if (onEnterEventSelectionMode != null && !isSelectionMode) {
+                            { onEnterEventSelectionMode(event.event.id) }
+                        } else null,
+                        onClick = if (isSelectionMode && onEventSelectionChange != null) {
+                            { onEventSelectionChange(event.event.id, !isSelected) }
+                        } else null,
+                        iconShape = CircleShape,
+                        icon = {
+                            Icon(
+                                Icons.Default.Mic,
+                                contentDescription = null,
+                                tint = accentConfig.recording.copy(alpha = 0.86f)
+                            )
+                        }
+                    )
+                    return@items
+                }
                 if (event.event.type == TimelineEventType.CALENDAR) {
                     val completed = event.event.completedAt != null
                     val calendarCard: @Composable () -> Unit = {
@@ -657,6 +688,12 @@ internal fun LazyListScope.timelineListContent(
             }
         }
     }
+}
+
+private fun formatAmbientContextDuration(startTimestamp: Long, endTimestamp: Long?): String {
+    val end = endTimestamp ?: return "Momento detectado"
+    val minutes = ((end - startTimestamp).coerceAtLeast(0L) / 60_000L).coerceAtLeast(1L)
+    return if (minutes < 60L) "$minutes min" else DwellDurationFormatter.formatHours(startTimestamp, end)
 }
 
 private data class TimelineLocationSection(

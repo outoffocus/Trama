@@ -37,6 +37,7 @@ class SettingsViewModel @Inject constructor(
     val contextPostRollSeconds = settingsStore.contextPostRollSeconds
     val asrDebugEnabled = settingsStore.asrDebugEnabled
     val listeningStatusOnHome = settingsStore.listeningStatusOnHome
+    val ambientContextConfig = settingsStore.ambientContextConfig
     val asrDebugEngine = settingsStore.asrDebugEngine
     val asrDebugStatus = settingsStore.asrDebugStatus
     val asrDebugLastText = settingsStore.asrDebugLastText
@@ -78,6 +79,13 @@ class SettingsViewModel @Inject constructor(
     suspend fun resetRecommendedCaptureSettings() = settingsStore.resetRecommendedCaptureSettings()
     suspend fun setAsrDebugEnabled(enabled: Boolean) = settingsStore.setAsrDebugEnabled(enabled)
     suspend fun setListeningStatusOnHome(enabled: Boolean) = settingsStore.setListeningStatusOnHome(enabled)
+    suspend fun setAmbientContextEnabled(enabled: Boolean) = settingsStore.setAmbientContextEnabled(enabled)
+    suspend fun setAmbientContextHours(startHour: Int, endHour: Int) =
+        settingsStore.setAmbientContextHours(startHour, endHour)
+    suspend fun setAmbientContextExcludeHome(exclude: Boolean) =
+        settingsStore.setAmbientContextExcludeHome(exclude)
+    suspend fun setAmbientContextExcludeWork(exclude: Boolean) =
+        settingsStore.setAmbientContextExcludeWork(exclude)
     suspend fun setThemeMode(mode: Int) = settingsStore.setThemeMode(mode)
     suspend fun setShowOldEntriesExpanded(expanded: Boolean) = settingsStore.setShowOldEntriesExpanded(expanded)
     suspend fun setShowAdvancedOptions(visible: Boolean) = settingsStore.setShowAdvancedOptions(visible)
