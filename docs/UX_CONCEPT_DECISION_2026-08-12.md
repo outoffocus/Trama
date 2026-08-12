@@ -36,10 +36,11 @@ el detalle de eventos y ubicaciones. Búsqueda seguirá siendo una utilidad sepa
 gestión de calendarios permanece en Home. Tocar una grabación abrirá directamente su
 detalle. Ajustes seguirá en `Más`.
 
-Búsqueda tendrá un campo simple que filtre por la descripción de las tareas, sin usar
-el modelo local. Chat trabajará con el contexto recuperado de toda la historia de la
-memoria para consultas más avanzadas. Sus respuestas mostrarán fuentes y ofrecerán
-`Abrir detalle` cuando identifiquen un evento o una ubicación concretos.
+Búsqueda tendrá un campo simple que filtre en vivo desde el primer carácter por la
+descripción de todos los recordatorios, sin usar el modelo local. Chat trabajará con
+el contexto recuperado de toda la historia de la memoria para consultas más avanzadas.
+Sus respuestas mostrarán fuentes y ofrecerán `Abrir detalle` cuando identifiquen un
+evento o una ubicación concretos.
 
 ## Jerarquía de Home
 
@@ -48,7 +49,7 @@ memoria para consultas más avanzadas. Sus respuestas mostrarán fuentes y ofrec
    `Necesita atención`.
 3. Explicación de una línea, micrófono en uso y acción contextual `Activar`, `Pausar`
    o `Resolver`.
-4. Bandeja global `Por revisar`, con pendientes de cualquier fecha.
+4. Avance global `Por revisar`, con un máximo de tres pendientes y `Revisar todo`.
 5. Timeline único del día.
 6. Acciones siempre visibles `Añadir` e `Iniciar grabación`.
 7. Navegación temporal inferior persistente.
@@ -125,10 +126,17 @@ deducción con una instrucción real.
 día seleccionado. Esta separación evita que una propuesta antigua desaparezca por
 navegar a otra fecha; cada elemento de revisión mostrará su día de origen.
 
+Home mostrará las tres propuestas más antiguas como máximo. Si quedan más, `Revisar
+todo` abrirá la bandeja global completa sin alterar el día seleccionado.
+
 Una ubicación o estancia de la timeline actuará como enlace directo a su detalle, con
 comentario o nota, coordenadas, duración e historial de visitas. Chat también podrá
 encontrarla y ofrecer `Abrir ubicación`. Los eventos de agenda no actuarán como enlaces
 en la timeline: su detalle se abrirá mediante la redirección ofrecida por Chat.
+
+Los recordatorios y las grabaciones confirmados sí abrirán su detalle al tocarlos.
+`Añadir` mostrará un único formulario de `Recordatorio`, con descripción obligatoria y
+fecha opcional; no pedirá elegir entre nota, tarea, recordatorio o evento.
 
 No se mostrará un diálogo de confirmación al descartar una sugerencia porque la acción
 es reversible. El borrado definitivo de una grabación o de datos consolidados seguirá
@@ -140,4 +148,5 @@ La dirección, la jerarquía y la posición de `Confirmar` y `Eliminar` quedan a
 Antes de modificar la implementación se cerrarán la presentación de fuentes y enlaces
 de Chat y los estados visuales restantes: vacío, error, permiso, procesado y tamaños
 compacto/grande. El límite aprobado es de cinco activaciones compartidas por móvil y
-reloj.
+reloj. También falta decidir dónde vive la selección de calendarios sincronizados,
+sin convertir Agenda en una sección principal.

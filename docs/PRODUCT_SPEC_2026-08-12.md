@@ -43,6 +43,8 @@ recuperarla después dentro del contexto real del día.
 - Home tendrá una bandeja única `Por revisar` para resultados que necesitan decisión.
 - `Por revisar` será global: mostrará todas las propuestas pendientes aunque procedan
   de días anteriores, para que la deuda de revisión no quede enterrada en el pasado.
+- Home anticipará como máximo las tres propuestas más antiguas de `Por revisar` y
+  mostrará `Revisar todo` cuando existan más.
 - Cada orden o reunión procesada propondrá las acciones que identifique. Una acción
   detectada será una sugerencia revisable, no una tarea fiable, hasta que el usuario
   la confirme.
@@ -51,16 +53,20 @@ recuperarla después dentro del contexto real del día.
   necesitan confirmación humana.
 - Chat es una herramienta secundaria de búsqueda y recuperación.
 - Búsqueda y Chat seguirán siendo dos accesos distintos. Búsqueda filtra de forma
-  literal por la descripción de las tareas; Chat responde consultas más avanzadas con
-  el contexto de toda la historia de la memoria.
+  literal desde el primer carácter por la descripción de todos los recordatorios,
+  independientemente de su estado; Chat responde consultas más avanzadas con el
+  contexto de toda la historia de la memoria.
 - Chat podrá abrir el detalle exacto de un evento o una ubicación encontrada,
   manteniendo el día de origen y mostrando la fuente utilizada.
 - Tocar una ubicación o estancia en la timeline abrirá directamente su detalle. Chat
   podrá ofrecer la misma redirección cuando la encuentre dentro de una consulta.
+- Tocar un recordatorio confirmado en la timeline abrirá directamente su detalle.
 - Cada grabación aparecerá como una entrada normal en la fecha y hora de inicio; su
   resumen, acciones y transcripción estarán dentro de esa entrada. Tocar la entrada
   abrirá directamente su detalle.
 - La entrada manual y `Iniciar grabación` estarán siempre visibles en Home.
+- La entrada manual se simplifica a un único tipo visible: `Recordatorio`. La fecha es
+  opcional y no se exige clasificarlo como nota, tarea, evento o recordatorio.
 - Una grabación en curso mostrará un control persistente al navegar por la app, con
   duración y acceso para volver o detener y procesar.
 - Cuando la escucha pertenezca al reloj, Home permitirá devolverla directamente al
@@ -192,8 +198,8 @@ Orden visual recomendado:
 2. tarjeta de estado de ancho completo, con modo, explicación de una línea y acción
    `Pausar` o `Activar`;
 3. timeline único del día: calendario, lugares, capturas y tareas;
-4. bandeja global `Por revisar`, sin duplicar contenido ya resuelto y sin ocultar
-   propuestas de días anteriores;
+4. avance global de `Por revisar`: hasta tres propuestas antiguas y `Revisar todo`,
+   sin duplicar contenido ya resuelto ni ocultar deuda de días anteriores;
 5. acciones siempre visibles `Añadir` e `Iniciar grabación`;
 6. control persistente si existe una grabación en curso;
 7. acción directa `Pasar al móvil` cuando la escucha pertenezca al reloj;
@@ -214,6 +220,9 @@ La selección de un día no filtrará `Por revisar`: el día solo filtra la time
 propuesta mostrará su fecha de origen y, tras confirmarla o eliminarla, desaparecerá de
 la bandeja global y permanecerá donde corresponda en el registro temporal.
 
+Home mostrará un máximo de tres propuestas, ordenadas de la más antigua a la más
+reciente. `Revisar todo` abrirá la bandeja completa sin cambiar el día seleccionado.
+
 Esta excepción es deliberada: reduce el coste de revisión sin convertir toda la
 timeline en una lista de botones ni depender de gestos ocultos.
 
@@ -228,11 +237,28 @@ No existirá un historial de grabaciones separado como navegación principal. Ca
 grabación se encontrará en el día y hora en que empezó, como cualquier otra entrada,
 y tocarla abrirá su detalle.
 
+Los recordatorios confirmados también abrirán su detalle al tocarlos. Los eventos de
+calendario son la excepción: permanecen informativos en la timeline y se abren desde
+la redirección ofrecida por Chat.
+
+### Añadir manualmente
+
+`Añadir` abre un formulario corto para crear un `Recordatorio`:
+
+1. descripción obligatoria;
+2. fecha y hora opcionales;
+3. `Guardar`.
+
+No habrá un selector visible entre nota, tarea, recordatorio y evento. Sin fecha, el
+recordatorio permanece pendiente sin vencimiento; con fecha, aparece en el momento
+correspondiente de la timeline. Las propiedades avanzadas quedan fuera de este flujo.
+
 ### Búsqueda y Chat
 
-`Búsqueda` es una herramienta directa que no requiere el modelo local. Filtra mientras
-se escribe usando exclusivamente la descripción de las tareas y devuelve coincidencias
-predecibles; no resume, interpreta ni relaciona recuerdos.
+`Búsqueda` es una herramienta directa que no requiere el modelo local. Filtra en vivo
+desde el primer carácter usando exclusivamente la descripción de todos los
+recordatorios, tanto pendientes como confirmados o completados, y devuelve
+coincidencias predecibles; no resume, interpreta ni relaciona recuerdos.
 
 `Chat` usa el modelo local y recuperación sobre toda la historia de la memoria. Puede
 responder preguntas que necesiten contexto, relacionar días, tareas, grabaciones,
@@ -359,4 +385,6 @@ nueva aprobación explícita.
 ## Decisiones abiertas de navegación
 
 No quedan decisiones abiertas sobre la función de Búsqueda y Chat. Falta cerrar en el
-siguiente croquis cómo se presentan las fuentes y las acciones de redirección de Chat.
+siguiente croquis cómo se presentan las fuentes y las acciones de redirección de Chat,
+y dónde se ofrece la selección de calendarios sincronizados sin crear una sección
+principal innecesaria.
