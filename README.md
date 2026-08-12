@@ -16,7 +16,7 @@ Situacion a fecha `2026-08-12`:
 - `Gemma` local estructura acciones, resume grabaciones y genera memoria diaria; no existe ruta de IA cloud ni configuración de API key
 - la app puede aprender localmente de confirmaciones y descartes, y usar esas decisiones para proteger acciones útiles y filtrar ruido
 - la escucha continua del movil trabaja en segmentos cortos y renovables para evitar ventanas largas/ruidosas atascadas
-- la escucha continua se puede desactivar explícitamente desde Ajustes; calendario, ubicación y grabaciones manuales permanecen operativos
+- la escucha continua se puede desactivar explícitamente desde Ajustes; la nueva dirección de producto vuelve a situar la captura por frases configurables en el núcleo, sin hacer depender de ella calendario, ubicación ni grabaciones manuales
 - el fallback incierto a Whisper esta limitado por cooldown, carga y bateria para proteger consumo
 - la escucha se pausa cuando Android informa audio activo en este dispositivo, para evitar capturas de YouTube/Spotify
 - el contexto ambiental local es opcional y crea bloques agregados de música, televisión/radio, conversación o reunión; nunca tareas ni transcripciones persistidas
@@ -224,6 +224,7 @@ La mejor forma de avanzar sin romper el producto es estabilizar fronteras: DI, V
 - [`docs/UX_NAVIGATION.md`](docs/UX_NAVIGATION.md): navegación preservada, accesos y jerarquía básico/avanzado.
 - [`docs/AMBIENT_CONTEXT.md`](docs/AMBIENT_CONTEXT.md): contrato, privacidad, límites y diagnóstico del contexto ambiental local.
 - [`docs/MVP_AND_UX_STUDY_2026-08-11.md`](docs/MVP_AND_UX_STUDY_2026-08-11.md): auditoría UX de partida e historial de decisiones.
-- [`docs/MVP_USEFUL_EFFICIENT_PLAN_2026-08-12.md`](docs/MVP_USEFUL_EFFICIENT_PLAN_2026-08-12.md): dirección vigente del MVP, con agenda y ubicación como núcleo y audio continuo opcional.
+- [`docs/MVP_USEFUL_EFFICIENT_PLAN_2026-08-12.md`](docs/MVP_USEFUL_EFFICIENT_PLAN_2026-08-12.md): plan histórico basado en agenda, ubicación y audio continuo opcional; conserva diagnóstico y decisiones técnicas todavía útiles.
+- [`docs/PRODUCT_SPEC_2026-08-12.md`](docs/PRODUCT_SPEC_2026-08-12.md): especificación de producto vigente para el rediseño, decisiones cerradas, propuestas UX y puerta de aprobación.
 - [`docs/TRAMA_LITE_PROPOSAL.md`](docs/TRAMA_LITE_PROPOSAL.md): propuesta de producto TRAMA Lite.
 - [`docs/TRAMA_LITE_EXECUTION_SPEC.md`](docs/TRAMA_LITE_EXECUTION_SPEC.md): especificacion ejecutable de TRAMA Lite.

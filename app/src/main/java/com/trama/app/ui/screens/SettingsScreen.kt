@@ -1935,7 +1935,11 @@ fun SettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                modelFilename.removeSuffix(".task"),
+                                if (gemmaState is GemmaModelManager.DownloadState.Downloaded) {
+                                    GemmaClient.getModelFile(context).name
+                                } else {
+                                    modelFilename
+                                },
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
@@ -2045,7 +2049,7 @@ fun SettingsScreen(
                                 )
                                 Text(
                                     if (localModelEnabled) "Procesará sin conexión"
-                                    else "Solo se usará la nube",
+                                    else "Instalado, pero no se usará",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -2085,7 +2089,7 @@ fun SettingsScreen(
                                     modelUrl = it
                                     GemmaModelManager.setModelUrl(context, it)
                                 },
-                                label = { Text("URL del modelo (.task)") },
+                                label = { Text("URL del modelo (.task o .litertlm)") },
                                 supportingText = {
                                     Text("Archivo: $modelFilename")
                                 },

@@ -33,7 +33,6 @@ class DiaryAssistant(
 
     // All inference and context retrieval stays on-device.
 
-    // ── Gemini state (lazy session, persists for the conversation) ────────────
     // ── Gemma state (manual history for simulated multi-turn) ────────────────
     // Each entry is Pair(role, text): role is "Usuario" or "Asistente"
     private val localHistory = mutableListOf<Pair<String, String>>()
@@ -45,8 +44,12 @@ class DiaryAssistant(
         val deterministic = tryDeterministicAnswer(userMessage)
         if (deterministic != null) return deterministic
 
-        // Try Gemma local model.
-        if (GemmaClient.isModelAvailable(context)) {
+        val modelDownloaded = GemmaClient.isModelDownloaded(context)
+        val modelEnabled = GemmaClient.isLocalModelEnabled(context)
+
+        // Try Gemma local model. Keep installation, activation and runtime failures distinct:
+        // telling users to download an existing model makes the recovery path impossible.
+        if (modelDownloaded && modelEnabled) {
             try {
                 val reply = sendWithLocalModel(userMessage)
                 if (reply != null) return reply
@@ -56,7 +59,10 @@ class DiaryAssistant(
             }
         }
 
-        return "⚠️ Descarga el modelo local en Ajustes → IA local para usar el asistente."
+        return LocalModelChatMessage.forState(
+            downloaded = modelDownloaded,
+            enabled = modelEnabled
+        )
     }
 
     fun clearHistory() {
@@ -172,8 +178,6 @@ class DiaryAssistant(
         }
     }
 
-    // ── Gemini Cloud ──────────────────────────────────────────────────────────
-
     // ── Gemma local (simulated multi-turn) ────────────────────────────────────
 
     private suspend fun sendWithLocalModel(userMessage: String): String? {
@@ -239,5 +243,16 @@ class DiaryAssistant(
         private const val TAG = "DiaryAssistant"
         /** Max conversation messages kept in local history (Gemma 4 E4B: 128K token window) */
         private const val MAX_LOCAL_HISTORY_MESSAGES = 60 // 30 user + 30 assistant
+    }
+}
+
+internal object LocalModelChatMessage {
+    fun forState(downloaded: Boolean, enabled: Boolean): String = when {
+        !downloaded ->
+            "Para preguntas abiertas, instala el modelo local en Ajustes → IA local."
+        !enabled ->
+            "El modelo local ya está instalado, pero está desactivado. Activa «Usar modelo local» en Ajustes → IA local."
+        else ->
+            "El modelo local está instalado y activado, pero no ha podido iniciarse. Revisa el modelo en Ajustes → IA local e inténtalo de nuevo."
     }
 }

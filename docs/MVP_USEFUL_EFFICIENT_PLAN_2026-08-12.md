@@ -1,5 +1,11 @@
 # Plan de MVP útil, preciso y eficiente
 
+> Documento histórico. La dirección vigente está en
+> [`PRODUCT_SPEC_2026-08-12.md`](PRODUCT_SPEC_2026-08-12.md). La nueva especificación
+> devuelve la captura por frases configurables al núcleo del producto; este plan se
+> conserva para mantener el diagnóstico y las decisiones técnicas que siguen siendo
+> válidas.
+
 Fecha de decisión: `2026-08-12`.
 
 Este documento sustituye como dirección de producto a las propuestas que situaban

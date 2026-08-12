@@ -44,8 +44,6 @@ class GemmaModelManager(private val context: Context) {
 
         fun setModelUrl(context: Context, url: String) {
             getPrefs(context).edit().putString(KEY_MODEL_URL, url.trim()).apply()
-            // Sync derived filename to GemmaClient
-            GemmaClient.setModelFilename(context, filenameFromUrl(url))
         }
 
         fun getHfToken(context: Context): String =
@@ -63,6 +61,23 @@ class GemmaModelManager(private val context: Context) {
 
         fun getModelFilename(context: Context): String =
             filenameFromUrl(getModelUrl(context))
+
+        /** Destination associated with the URL currently configured by the user. */
+        fun getConfiguredModelFile(context: Context): File =
+            File(context.filesDir, getModelFilename(context))
+
+        /**
+         * Returns the configured model or recovers an already-installed compatible model.
+         *
+         * The fallback is important after changing the app default: older versions installed
+         * `gemma3-1b-it-int4.task`, while current versions default to a `.litertlm` bundle. The
+         * model must not become invisible merely because the default URL (and filename) changed.
+         */
+        fun findInstalledModelFile(context: Context): File? =
+            LocalModelFileResolver.find(
+                configuredFile = getConfiguredModelFile(context),
+                filesInDirectory = context.filesDir.listFiles().orEmpty()
+            )
     }
 
     private val _state = MutableStateFlow<DownloadState>(
@@ -90,9 +105,6 @@ class GemmaModelManager(private val context: Context) {
             _state.value = DownloadState.Failed("URL del modelo no configurada")
             return
         }
-
-        // Sync derived filename to GemmaClient
-        GemmaClient.setModelFilename(context, filename)
 
         val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
 
@@ -175,7 +187,9 @@ class GemmaModelManager(private val context: Context) {
                 DownloadManager.STATUS_SUCCESSFUL -> {
                     // Install: copy from cache to internal storage
                     try {
-                        val dest = GemmaClient.getModelFile(context)
+                        // Always install the download under the configured filename. The active
+                        // model resolver may currently be exposing a compatible legacy file.
+                        val dest = getConfiguredModelFile(context)
                         tempFile.copyTo(dest, overwrite = true)
                         tempFile.delete()
                         Log.i(TAG, "Model installed: ${dest.length() / (1024 * 1024)} MB")
@@ -216,4 +230,24 @@ class GemmaModelManager(private val context: Context) {
             cursor.close()
         }
     }
+}
+
+/** Pure file selection policy, kept independent from Android so migrations stay unit-testable. */
+internal object LocalModelFileResolver {
+    private val supportedExtensions = setOf("task", "litertlm")
+
+    fun find(configuredFile: File, filesInDirectory: Array<out File>): File? {
+        if (configuredFile.isUsableLocalModel()) return configuredFile
+
+        return filesInDirectory
+            .asSequence()
+            .filter { it.isUsableLocalModel() }
+            // Recovery is only for Gemma migrations. A generic `.task` file could belong
+            // to another MediaPipe feature and must never be loaded as an LLM by accident.
+            .filter { it.nameWithoutExtension.lowercase().contains("gemma") }
+            .maxWithOrNull(compareBy<File> { it.lastModified() }.thenBy { it.name })
+    }
+
+    private fun File.isUsableLocalModel(): Boolean =
+        isFile && length() > 0L && extension.lowercase() in supportedExtensions
 }

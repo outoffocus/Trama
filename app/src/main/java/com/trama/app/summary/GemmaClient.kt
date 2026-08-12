@@ -53,11 +53,11 @@ object GemmaClient {
 
     /** True if the model file exists on disk (regardless of enabled state). Used by UI/GemmaModelManager. */
     fun isModelDownloaded(context: Context): Boolean =
-        getModelFile(context).exists()
+        GemmaModelManager.findInstalledModelFile(context) != null
 
     /** True if the model is downloaded AND enabled. Used by processors. */
     fun isModelAvailable(context: Context): Boolean =
-        isLocalModelEnabled(context) && getModelFile(context).exists()
+        isLocalModelEnabled(context) && isModelDownloaded(context)
 
     fun isLocalModelEnabled(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -70,7 +70,8 @@ object GemmaClient {
     }
 
     fun getModelFile(context: Context): File =
-        File(context.filesDir, getModelFilename(context))
+        GemmaModelManager.findInstalledModelFile(context)
+            ?: GemmaModelManager.getConfiguredModelFile(context)
 
     fun isLiteRtModel(context: Context): Boolean =
         getModelFile(context).extension.equals("litertlm", ignoreCase = true)
@@ -145,7 +146,7 @@ object GemmaClient {
         responsePrefix: String? = null,
         systemInstruction: String? = null
     ): String? {
-        if (!isModelDownloaded(context)) return null
+        if (!isModelAvailable(context)) return null
 
         return mutex.withLock {
             withContext(Dispatchers.IO) {
@@ -179,7 +180,7 @@ object GemmaClient {
         responsePrefix: String? = null,
         systemInstruction: String? = null
     ): String? {
-        if (!isModelDownloaded(context) || images.isEmpty()) return null
+        if (!isModelAvailable(context) || images.isEmpty()) return null
 
         return mutex.withLock {
             withContext(Dispatchers.IO) {
@@ -213,7 +214,7 @@ object GemmaClient {
         responsePrefix: String? = null,
         systemInstruction: String? = null
     ): String? {
-        if (!isModelDownloaded(context) || imageFiles.isEmpty()) return null
+        if (!isModelAvailable(context) || imageFiles.isEmpty()) return null
 
         return mutex.withLock {
             withContext(Dispatchers.IO) {
