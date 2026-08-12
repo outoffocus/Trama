@@ -1,4 +1,4 @@
-# Especificación de producto v0.3
+# Especificación de producto v0.4
 
 Fecha: `2026-08-12`  
 Estado: dirección de producto y variante visual `Editorial serena` aprobadas.
@@ -37,6 +37,9 @@ recuperarla después dentro del contexto real del día.
 - La dirección visual de Home será `Editorial serena`: menos contenedores, jerarquía
   tipográfica clara y controles táctiles sin apariencia de panel de diagnóstico.
 - Las sugerencias pendientes podrán confirmarse o eliminarse directamente desde Home.
+- Cada orden o reunión procesada propondrá las acciones que identifique. Una acción
+  detectada será una sugerencia revisable, no una tarea fiable, hasta que el usuario
+  la confirme.
 - La pantalla de detalle se rediseñará alrededor de la acción útil, no del diagnóstico.
 - Las notas simples pueden guardarse directamente; tareas, citas y recordatorios
   necesitan confirmación humana.
@@ -114,6 +117,33 @@ integrada en el pipeline y debe validarse on-device en batería, memoria, tiempo
 precisión antes de considerarla terminada. La verificación actual de `Solo mi voz` no
 sustituye la segmentación de múltiples hablantes.
 
+### Acciones identificadas
+
+El análisis local buscará compromisos, encargos y próximos pasos en la orden capturada
+y en la transcripción de una reunión. Cada candidato se mostrará como `Acción
+sugerida` e incluirá:
+
+- una descripción accionable;
+- la captura o reunión de origen y el fragmento que la justifica;
+- responsable y fecha límite únicamente cuando se hayan expresado con claridad;
+- cualquier dato deducido como propuesta editable, nunca como hecho confirmado.
+
+El flujo será `detectada → sugerida → confirmada o eliminada`. Confirmar crea una
+tarea fiable sin perder su procedencia. Editar permite corregir contenido, responsable
+o fecha antes de confirmar. Eliminar descarta la propuesta y ofrece `Deshacer`.
+
+Las acciones de una reunión no quedarán escondidas en su detalle: Home indicará que
+existen pendientes y permitirá revisarlas. Si una reunión produce varias, se mostrarán
+agrupadas bajo su origen para no fragmentar la timeline; cada acción conservará su
+decisión individual. Ninguna acción sugerida se enviará al calendario ni se tratará
+como compromiso real sin confirmación humana.
+
+La extracción priorizará precisión sobre cantidad. No se propondrán como tareas una
+idea vaga, una hipótesis ni una frase meramente informativa. Se consolidarán propuestas
+duplicadas y, si falta responsable o fecha, esos campos quedarán vacíos en lugar de
+inventarse. Una sugerencia descartada servirá como señal local para reducir propuestas
+similares, sin convertir por sí sola una regla general irreversible.
+
 ### Estados visibles
 
 La interfaz y la notificación deben usar el mismo modelo de estados:
@@ -149,6 +179,10 @@ Solo las sugerencias pendientes de decisión mostrarán acciones en la timeline:
 - `Eliminar` las descarta y ofrece `Deshacer` sin abrir un diálogo;
 - tocar el contenido abre el detalle si el usuario quiere corregirlo antes;
 - eventos, lugares y entradas ya confirmadas no muestran estos controles.
+
+Las acciones identificadas en una orden o reunión forman parte de estas sugerencias y
+deben llegar a Home. El origen permanecerá visible para que el usuario pueda juzgar
+la propuesta sin confiar ciegamente en el análisis local.
 
 Esta excepción es deliberada: reduce el coste de revisión sin convertir toda la
 timeline en una lista de botones ni depender de gestos ocultos.
@@ -230,6 +264,8 @@ la legibilidad. La ejecución deberá:
 - El usuario puede identificar el modo de micrófono y si se está guardando algo sin
   interpretar un icono aislado.
 - Una captura ambigua no se convierte silenciosamente en un hecho fiable.
+- Una acción identificada siempre conserva evidencia de origen y requiere confirmación
+  antes de convertirse en tarea o sincronizarse con la agenda.
 - El audio de la espera y de una orden activada por `Trama` nunca se conserva.
 - El audio de una reunión bajo demanda se elimina solo después de obtener una
   transcripción íntegra y durable, salvo que el usuario elija `Conservar grabación`.

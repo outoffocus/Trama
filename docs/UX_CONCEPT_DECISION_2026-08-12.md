@@ -92,6 +92,16 @@ confirmadas. Así Home permite vaciar pendientes sin abrir el detalle y evita ll
 cada elemento con botones. Tocar el contenido seguirá abriendo el detalle para editar
 antes de decidir.
 
+Las tareas identificadas en una orden o reunión se presentarán como `Acciones
+sugeridas`. No quedarán confinadas al detalle de la grabación: Home mostrará la
+cantidad pendiente y permitirá decidir sobre cada una. Varias acciones del mismo
+origen se agruparán visualmente, manteniendo `Confirmar` y `Eliminar` por acción y el
+acceso a edición al tocar su contenido.
+
+Cada propuesta mostrará su origen y, cuando esté disponible de forma explícita,
+responsable y fecha. Trama no completará silenciosamente esos datos ni confundirá una
+deducción con una instrucción real.
+
 No se mostrará un diálogo de confirmación al descartar una sugerencia porque la acción
 es reversible. El borrado definitivo de una grabación o de datos consolidados seguirá
 un contrato específico y no se hará desde estos botones.
