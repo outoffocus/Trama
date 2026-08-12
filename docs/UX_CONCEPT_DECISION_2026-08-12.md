@@ -11,8 +11,8 @@ Existe una sola navegación principal, no una colección de pestañas:
 Home / día seleccionado
 ├── búsqueda
 ├── Chat local (secundario)
-│   └── redirección al detalle encontrado
-├── Por revisar
+│   └── redirección al detalle de evento o ubicación
+├── Por revisar (global)
 ├── añadir entrada
 ├── iniciar grabación
 ├── ajustes
@@ -32,7 +32,9 @@ color y densidad tipográfica, sin cambiar esas acciones ni su modelo mental.
 
 Agenda, Lugares y Grabaciones no tendrán secciones independientes. Sus elementos
 aparecen en la fecha y hora correspondientes de Home; Chat puede localizarlos y abrir
-su detalle. La gestión de calendarios permanece en Home. Ajustes seguirá en `Más`.
+el detalle de eventos y ubicaciones. Búsqueda seguirá siendo una utilidad separada. La
+gestión de calendarios permanece en Home. Tocar una grabación abrirá directamente su
+detalle. Ajustes seguirá en `Más`.
 
 ## Jerarquía de Home
 
@@ -41,7 +43,7 @@ su detalle. La gestión de calendarios permanece en Home. Ajustes seguirá en `M
    `Necesita atención`.
 3. Explicación de una línea, micrófono en uso y acción contextual `Activar`, `Pausar`
    o `Resolver`.
-4. Bandeja única `Por revisar`.
+4. Bandeja global `Por revisar`, con pendientes de cualquier fecha.
 5. Timeline único del día.
 6. Acciones siempre visibles `Añadir` e `Iniciar grabación`.
 7. Navegación temporal inferior persistente.
@@ -114,6 +116,14 @@ Cada propuesta mostrará su origen y, cuando esté disponible de forma explícit
 responsable y fecha. Trama no completará silenciosamente esos datos ni confundirá una
 deducción con una instrucción real.
 
+`Por revisar` no cambiará al mover el calendario inferior. La timeline sí seguirá el
+día seleccionado. Esta separación evita que una propuesta antigua desaparezca por
+navegar a otra fecha; cada elemento de revisión mostrará su día de origen.
+
+Los eventos de agenda y las ubicaciones de la timeline no actuarán como enlaces. Para
+obtener su detalle, el usuario preguntará o buscará el elemento desde Chat y elegirá
+la acción de redirección ofrecida en la respuesta.
+
 No se mostrará un diálogo de confirmación al descartar una sugerencia porque la acción
 es reversible. El borrado definitivo de una grabación o de datos consolidados seguirá
 un contrato específico y no se hará desde estos botones.
@@ -121,7 +131,7 @@ un contrato específico y no se hará desde estos botones.
 ## Siguiente puerta de decisión
 
 La dirección, la jerarquía y la posición de `Confirmar` y `Eliminar` quedan aprobadas.
-Antes de modificar la implementación se cerrarán el acceso directo a detalles, el
-alcance temporal de `Por revisar`, la posible unificación de Búsqueda y Chat, el límite
-de activaciones y los estados visuales restantes: vacío, error, permiso, procesado y
-tamaños compacto/grande.
+Antes de modificar la implementación se cerrarán la diferencia funcional entre
+Búsqueda y Chat y los estados visuales restantes: vacío, error, permiso, procesado y
+tamaños compacto/grande. El límite aprobado es de cinco activaciones compartidas por
+móvil y reloj.

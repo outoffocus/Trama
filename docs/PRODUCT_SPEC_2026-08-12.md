@@ -1,4 +1,4 @@
-# Especificación de producto v0.5
+# Especificación de producto v0.6
 
 Fecha: `2026-08-12`  
 Estado: dirección de producto y variante visual `Editorial serena` aprobadas.
@@ -41,6 +41,8 @@ recuperarla después dentro del contexto real del día.
   tipográfica clara y controles táctiles sin apariencia de panel de diagnóstico.
 - Las sugerencias pendientes podrán confirmarse o eliminarse directamente desde Home.
 - Home tendrá una bandeja única `Por revisar` para resultados que necesitan decisión.
+- `Por revisar` será global: mostrará todas las propuestas pendientes aunque procedan
+  de días anteriores, para que la deuda de revisión no quede enterrada en el pasado.
 - Cada orden o reunión procesada propondrá las acciones que identifique. Una acción
   detectada será una sugerencia revisable, no una tarea fiable, hasta que el usuario
   la confirme.
@@ -48,10 +50,12 @@ recuperarla después dentro del contexto real del día.
 - Las notas simples pueden guardarse directamente; tareas, citas y recordatorios
   necesitan confirmación humana.
 - Chat es una herramienta secundaria de búsqueda y recuperación.
-- Chat podrá abrir el detalle exacto de una entrada, grabación, evento o estancia
-  encontrada, manteniendo el día de origen.
+- Búsqueda y Chat seguirán siendo dos accesos distintos.
+- Chat podrá abrir el detalle exacto de un evento o una ubicación encontrada,
+  manteniendo el día de origen.
 - Cada grabación aparecerá como una entrada normal en la fecha y hora de inicio; su
-  resumen, acciones y transcripción estarán dentro de esa entrada.
+  resumen, acciones y transcripción estarán dentro de esa entrada. Tocar la entrada
+  abrirá directamente su detalle.
 - La entrada manual y `Iniciar grabación` estarán siempre visibles en Home.
 - Una grabación en curso mostrará un control persistente al navegar por la app, con
   duración y acceso para volver o detener y procesar.
@@ -105,7 +109,8 @@ reloj se usa su propio micrófono.
 Las activaciones cortas pero distintivas reducen esfuerzo sin convertir cientos de
 expresiones normales en disparadores. El MVP no volverá a ofrecer listas masivas:
 mantendrá una lista personal deliberadamente pequeña y una gramática compacta para
-interpretar lo dicho después. El límite exacto de frases queda pendiente de decisión.
+interpretar lo dicho después. Se podrán configurar hasta cinco activaciones; móvil y
+reloj utilizarán siempre la misma lista sincronizada.
 
 ### Grabación bajo demanda y diarización
 
@@ -183,7 +188,8 @@ Orden visual recomendado:
 2. tarjeta de estado de ancho completo, con modo, explicación de una línea y acción
    `Pausar` o `Activar`;
 3. timeline único del día: calendario, lugares, capturas y tareas;
-4. bandeja única `Por revisar`, sin duplicar contenido ya resuelto;
+4. bandeja global `Por revisar`, sin duplicar contenido ya resuelto y sin ocultar
+   propuestas de días anteriores;
 5. acciones siempre visibles `Añadir` e `Iniciar grabación`;
 6. control persistente si existe una grabación en curso;
 7. acción directa `Pasar al móvil` cuando la escucha pertenezca al reloj;
@@ -200,18 +206,23 @@ Las acciones identificadas en una orden o reunión forman parte de estas sugeren
 deben llegar a Home. El origen permanecerá visible para que el usuario pueda juzgar
 la propuesta sin confiar ciegamente en el análisis local.
 
+La selección de un día no filtrará `Por revisar`: el día solo filtra la timeline. Cada
+propuesta mostrará su fecha de origen y, tras confirmarla o eliminarla, desaparecerá de
+la bandeja global y permanecerá donde corresponda en el registro temporal.
+
 Esta excepción es deliberada: reduce el coste de revisión sin convertir toda la
 timeline en una lista de botones ni depender de gestos ocultos.
 
 Se eliminarían del primer nivel los estados técnicos, contadores de diagnóstico y
 acciones ambiguas u ocultas tras pulsaciones largas. Agenda y Lugares no serán
 destinos independientes: sus datos se consultan en la timeline del día y mediante
-Chat. La gestión de calendarios y la navegación inferior seguirán accesibles desde
-Home.
+Chat. Los elementos de la timeline no abrirán por sí mismos el detalle de un evento o
+una ubicación; Chat ofrecerá una acción de redirección al resultado exacto. La gestión
+de calendarios y la navegación inferior seguirán accesibles desde Home.
 
 No existirá un historial de grabaciones separado como navegación principal. Cada
 grabación se encontrará en el día y hora en que empezó, como cualquier otra entrada,
-y Chat podrá localizarla y redirigir a su detalle.
+y tocarla abrirá su detalle.
 
 ### Detalle de una entrada — arquitectura aprobada, ejecución visual pendiente
 
@@ -322,8 +333,4 @@ nueva aprobación explícita.
 
 Quedan por concretar antes del siguiente croquis:
 
-- si tocar cualquier elemento de la timeline abre también su detalle o si el acceso se
-  hace exclusivamente mediante Chat;
-- si `Por revisar` reúne pendientes de todos los días o solo del día seleccionado;
-- si Chat sustituye por completo a la búsqueda separada;
-- el máximo permitido de palabras o frases de activación.
+- qué diferencia funcional concreta tendrá Búsqueda frente a Chat.
