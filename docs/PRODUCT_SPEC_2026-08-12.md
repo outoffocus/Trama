@@ -55,6 +55,8 @@ recuperarla después dentro del contexto real del día.
   el contexto de toda la historia de la memoria.
 - Chat podrá abrir el detalle exacto de un evento o una ubicación encontrada,
   manteniendo el día de origen y mostrando la fuente utilizada.
+- Tocar una ubicación o estancia en la timeline abrirá directamente su detalle. Chat
+  podrá ofrecer la misma redirección cuando la encuentre dentro de una consulta.
 - Cada grabación aparecerá como una entrada normal en la fecha y hora de inicio; su
   resumen, acciones y transcripción estarán dentro de esa entrada. Tocar la entrada
   abrirá directamente su detalle.
@@ -218,9 +220,9 @@ timeline en una lista de botones ni depender de gestos ocultos.
 Se eliminarían del primer nivel los estados técnicos, contadores de diagnóstico y
 acciones ambiguas u ocultas tras pulsaciones largas. Agenda y Lugares no serán
 destinos independientes: sus datos se consultan en la timeline del día y mediante
-Chat. Los elementos de la timeline no abrirán por sí mismos el detalle de un evento o
-una ubicación; Chat ofrecerá una acción de redirección al resultado exacto. La gestión
-de calendarios y la navegación inferior seguirán accesibles desde Home.
+Chat. Una ubicación o estancia sí abrirá su detalle al tocarla; un evento de calendario
+solo se abrirá mediante la acción de redirección que ofrezca Chat. La gestión de
+calendarios y la navegación inferior seguirán accesibles desde Home.
 
 No existirá un historial de grabaciones separado como navegación principal. Cada
 grabación se encontrará en el día y hora en que empezó, como cualquier otra entrada,
@@ -254,6 +256,16 @@ nueva jerarquía propuesta es:
 Para grabaciones, el orden recomendado es reproductor, resumen, acciones sugeridas
 y transcripción plegada. Para lugares, identidad y visitas son el contenido principal;
 los datos de resolución geográfica quedan en segundo nivel.
+
+El detalle de una ubicación o estancia incluirá:
+
+1. nombre y tipo de lugar;
+2. llegada, salida y duración de la estancia seleccionada;
+3. comentario o nota personal editable;
+4. coordenadas y precisión disponibles;
+5. acceso para abrir las coordenadas en el mapa;
+6. historial de visitas al mismo lugar;
+7. datos técnicos de resolución geográfica plegados y fuera del primer nivel.
 
 ### Tipografía y tono visual — Editorial serena aprobada
 

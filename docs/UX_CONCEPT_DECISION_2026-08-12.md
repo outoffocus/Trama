@@ -125,9 +125,10 @@ deducción con una instrucción real.
 día seleccionado. Esta separación evita que una propuesta antigua desaparezca por
 navegar a otra fecha; cada elemento de revisión mostrará su día de origen.
 
-Los eventos de agenda y las ubicaciones de la timeline no actuarán como enlaces. Para
-obtener su detalle, el usuario preguntará o buscará el elemento desde Chat y elegirá
-la acción de redirección ofrecida en la respuesta.
+Una ubicación o estancia de la timeline actuará como enlace directo a su detalle, con
+comentario o nota, coordenadas, duración e historial de visitas. Chat también podrá
+encontrarla y ofrecer `Abrir ubicación`. Los eventos de agenda no actuarán como enlaces
+en la timeline: su detalle se abrirá mediante la redirección ofrecida por Chat.
 
 No se mostrará un diálogo de confirmación al descartar una sugerencia porque la acción
 es reversible. El borrado definitivo de una grabación o de datos consolidados seguirá
