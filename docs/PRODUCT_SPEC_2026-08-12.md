@@ -1,4 +1,4 @@
-# Especificación de producto v0.4
+# Especificación de producto v0.5
 
 Fecha: `2026-08-12`  
 Estado: dirección de producto y variante visual `Editorial serena` aprobadas.
@@ -22,9 +22,12 @@ recuperarla después dentro del contexto real del día.
 - Promesa: `Dilo y aparecerá organizado en tu día`.
 - `CalendarScreen` sigue siendo Home y el tiempo continúa siendo el eje del producto.
 - Se mantiene la navegación inferior por días, mes y vuelta a hoy.
-- Agenda sincronizada y traza de ubicación siguen siendo funciones principales.
-- La app ofrece un modo persistente que espera **una frase de activación
-  configurable**, inicialmente `Trama`, sin grabar de forma continua.
+- Agenda sincronizada y traza de ubicación siguen siendo funciones principales, pero
+  no tendrán secciones de navegación independientes: sus eventos y estancias viven en
+  la timeline del día.
+- La app ofrece un modo persistente que espera una lista compartida de **palabras o
+  frases de activación configurables**, igual en móvil y reloj, sin grabar de forma
+  continua.
 - Al reconocer esa frase comienza una captura breve de la orden y termina al detectar
   silencio. Esto pertenece al modo continuo y no es una `grabación bajo demanda`.
 - El reconocimiento de la activación será estricto; la captura posterior priorizará
@@ -37,6 +40,7 @@ recuperarla después dentro del contexto real del día.
 - La dirección visual de Home será `Editorial serena`: menos contenedores, jerarquía
   tipográfica clara y controles táctiles sin apariencia de panel de diagnóstico.
 - Las sugerencias pendientes podrán confirmarse o eliminarse directamente desde Home.
+- Home tendrá una bandeja única `Por revisar` para resultados que necesitan decisión.
 - Cada orden o reunión procesada propondrá las acciones que identifique. Una acción
   detectada será una sugerencia revisable, no una tarea fiable, hasta que el usuario
   la confirme.
@@ -44,6 +48,15 @@ recuperarla después dentro del contexto real del día.
 - Las notas simples pueden guardarse directamente; tareas, citas y recordatorios
   necesitan confirmación humana.
 - Chat es una herramienta secundaria de búsqueda y recuperación.
+- Chat podrá abrir el detalle exacto de una entrada, grabación, evento o estancia
+  encontrada, manteniendo el día de origen.
+- Cada grabación aparecerá como una entrada normal en la fecha y hora de inicio; su
+  resumen, acciones y transcripción estarán dentro de esa entrada.
+- La entrada manual y `Iniciar grabación` estarán siempre visibles en Home.
+- Una grabación en curso mostrará un control persistente al navegar por la app, con
+  duración y acceso para volver o detener y procesar.
+- Cuando la escucha pertenezca al reloj, Home permitirá devolverla directamente al
+  móvil.
 - Wear OS es una extensión opcional para capturar y grabar, sin exigir paridad total.
 - La interfaz utilizará la tipografía del sistema para mejorar legibilidad,
   disponibilidad offline y coherencia con el tamaño configurado por el usuario.
@@ -61,9 +74,9 @@ de reunión.
 
 | Caso | Inicio y final | Resultado | Retención del audio |
 | --- | --- | --- | --- |
-| Escucha continua · móvil | Se activa una vez; espera `Trama` en el micrófono del teléfono y captura la orden posterior hasta silencio | Nota directa o tarea/cita pendiente de confirmar | La espera nunca se persiste; la orden se descarta después de procesarla |
-| Escucha continua · reloj | Se activa una vez; el reloj espera `Trama`, captura la orden y la envía al teléfono | El teléfono transcribe y crea el mismo resultado que el móvil | La espera nunca se persiste; el reloj borra la captura cuando la transferencia queda confirmada |
-| Grabación bajo demanda · móvil | El usuario pulsa `Grabar reunión` y la detiene explícitamente, con límite de seguridad | Grabación, transcripción diarizada visible, resumen y acciones extraíbles | Se elimina tras completar el procesado salvo que el usuario elija `Conservar grabación` |
+| Escucha continua · móvil | Se activa una vez; espera cualquiera de las frases configuradas en el micrófono del teléfono y captura la orden posterior hasta silencio | Nota directa o tarea/cita pendiente de confirmar | La espera nunca se persiste; la orden se descarta después de procesarla |
+| Escucha continua · reloj | Se activa una vez; el reloj espera la misma lista compartida, captura la orden y la envía al teléfono | El teléfono transcribe y crea el mismo resultado que el móvil | La espera nunca se persiste; el reloj borra la captura cuando la transferencia queda confirmada |
+| Grabación bajo demanda · móvil | El usuario pulsa `Iniciar grabación` y la detiene explícitamente, con límite de seguridad | Entrada fechada con transcripción diarizada visible, resumen y acciones extraíbles | Se elimina tras completar el procesado salvo que el usuario elija `Conservar grabación` |
 | Grabación bajo demanda · reloj | El usuario inicia y detiene la reunión desde el reloj; el audio se transfiere al teléfono | El teléfono genera la misma ficha de reunión, transcripción diarizada, resumen y acciones | El reloj borra su copia tras confirmar la transferencia; el teléfono aplica la preferencia `Conservar grabación` |
 
 Solo un dispositivo será propietario de la escucha continua cada vez. La propuesta
@@ -79,8 +92,8 @@ reloj se usa su propio micrófono.
 
 1. El usuario activa el modo una vez de forma explícita y concede el permiso de
    micrófono.
-2. Trama mantiene una escucha local ligera para una única frase de activación
-   configurable, inicialmente `Trama`.
+2. Trama mantiene una escucha local ligera para la lista de palabras o frases de
+   activación configuradas por el usuario. La misma lista se sincroniza con el reloj.
 3. Durante la espera no existe una grabación continua. El audio solo atraviesa una
    ventana efímera en memoria para detectar la activación y nunca se persiste.
 4. Al reconocer la frase, Trama da feedback inmediato y comienza una captura breve
@@ -89,10 +102,10 @@ reloj se usa su propio micrófono.
    según el contrato que se apruebe.
 6. El usuario puede corregir, confirmar o descartar el resultado.
 
-Una frase de activación corta pero distintiva reduce esfuerzo sin convertir cientos
-de expresiones normales en disparadores. El MVP no volverá a ofrecer listas masivas:
-mantendrá una sola activación personal y una gramática compacta para interpretar lo
-dicho después.
+Las activaciones cortas pero distintivas reducen esfuerzo sin convertir cientos de
+expresiones normales en disparadores. El MVP no volverá a ofrecer listas masivas:
+mantendrá una lista personal deliberadamente pequeña y una gramática compacta para
+interpretar lo dicho después. El límite exacto de frases queda pendiente de decisión.
 
 ### Grabación bajo demanda y diarización
 
@@ -151,7 +164,7 @@ La interfaz y la notificación deben usar el mismo modelo de estados:
 | Estado | Significado visible | ¿Se guarda audio? |
 | --- | --- | --- |
 | `Inactivo` | Micrófono apagado | No |
-| `En espera · móvil/reloj` | Ese dispositivo espera `Trama` | No, solo ventana efímera en RAM |
+| `En espera · móvil/reloj` | Ese dispositivo espera las activaciones configuradas | No, solo ventana efímera en RAM |
 | `Capturando orden` | Activación detectada; capturando hasta silencio | Sí, solo en memoria durante el procesado |
 | `Grabando reunión · móvil/reloj` | Grabación bajo demanda iniciada por el usuario | Sí, en almacenamiento privado temporal |
 | `Procesando` | Transcribiendo, diarizando o preparando el resultado localmente | Solo hasta completar el procesado, salvo conservación explícita |
@@ -170,8 +183,11 @@ Orden visual recomendado:
 2. tarjeta de estado de ancho completo, con modo, explicación de una línea y acción
    `Pausar` o `Activar`;
 3. timeline único del día: calendario, lugares, capturas y tareas;
-4. una acción `Grabar reunión` claramente etiquetada y entrada manual de respaldo;
-5. navegación temporal inferior actual, conservando su funcionamiento.
+4. bandeja única `Por revisar`, sin duplicar contenido ya resuelto;
+5. acciones siempre visibles `Añadir` e `Iniciar grabación`;
+6. control persistente si existe una grabación en curso;
+7. acción directa `Pasar al móvil` cuando la escucha pertenezca al reloj;
+8. navegación temporal inferior actual, conservando su funcionamiento.
 
 Solo las sugerencias pendientes de decisión mostrarán acciones en la timeline:
 
@@ -188,8 +204,14 @@ Esta excepción es deliberada: reduce el coste de revisión sin convertir toda l
 timeline en una lista de botones ni depender de gestos ocultos.
 
 Se eliminarían del primer nivel los estados técnicos, contadores de diagnóstico y
-acciones ambiguas u ocultas tras pulsaciones largas. Agenda debe tener una entrada
-permanente aunque esté vacía, para evitar que su navegación aparezca y desaparezca.
+acciones ambiguas u ocultas tras pulsaciones largas. Agenda y Lugares no serán
+destinos independientes: sus datos se consultan en la timeline del día y mediante
+Chat. La gestión de calendarios y la navegación inferior seguirán accesibles desde
+Home.
+
+No existirá un historial de grabaciones separado como navegación principal. Cada
+grabación se encontrará en el día y hora en que empezó, como cualquier otra entrada,
+y Chat podrá localizarla y redirigir a su detalle.
 
 ### Detalle de una entrada — arquitectura aprobada, ejecución visual pendiente
 
@@ -234,12 +256,11 @@ la legibilidad. La ejecución deberá:
 
 ### Debe incluir
 
-- escucha continua en móvil y reloj con una activación configurable;
+- escucha continua en móvil y reloj con activaciones configurables compartidas;
 - grabación de reuniones bajo demanda en móvil y reloj;
 - estado de escucha/captura inequívoco;
 - Home temporal simplificado;
-- agenda y calendarios seleccionados;
-- estancias y lugares;
+- agenda, calendarios seleccionados, estancias y lugares integrados en la timeline;
 - revisión de resultados y confirmación humana;
 - grabaciones voluntarias con transcripción local;
 - búsqueda y recuperación por Chat local;
@@ -261,12 +282,15 @@ la legibilidad. La ejecución deberá:
 - Instalación, activación y fallo de carga son estados diferentes y recuperables.
 - Cada pantalla pública tiene una entrada estable y una vuelta predecible al día
   seleccionado.
+- Una grabación en curso mantiene siempre un control visible aunque el usuario navegue
+  a otro contenido de la app.
 - El usuario puede identificar el modo de micrófono y si se está guardando algo sin
   interpretar un icono aislado.
 - Una captura ambigua no se convierte silenciosamente en un hecho fiable.
 - Una acción identificada siempre conserva evidencia de origen y requiere confirmación
   antes de convertirse en tarea o sincronizarse con la agenda.
-- El audio de la espera y de una orden activada por `Trama` nunca se conserva.
+- El audio de la espera y de una orden iniciada con una activación configurada nunca
+  se conserva.
 - El audio de una reunión bajo demanda se elimina solo después de obtener una
   transcripción íntegra y durable, salvo que el usuario elija `Conservar grabación`.
 - Una transferencia desde el reloj no borra la única copia antes de que el teléfono
@@ -293,3 +317,13 @@ serena` fue la elegida. Quedan aprobadas la navegación, la jerarquía principal
 tipografía del sistema y las acciones directas `Confirmar` y `Eliminar` de las
 sugerencias en Home. Cualquier desviación posterior de estas decisiones requerirá una
 nueva aprobación explícita.
+
+## Decisiones abiertas de navegación
+
+Quedan por concretar antes del siguiente croquis:
+
+- si tocar cualquier elemento de la timeline abre también su detalle o si el acceso se
+  hace exclusivamente mediante Chat;
+- si `Por revisar` reúne pendientes de todos los días o solo del día seleccionado;
+- si Chat sustituye por completo a la búsqueda separada;
+- el máximo permitido de palabras o frases de activación.

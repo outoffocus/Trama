@@ -11,22 +11,28 @@ Existe una sola navegación principal, no una colección de pestañas:
 Home / día seleccionado
 ├── búsqueda
 ├── Chat local (secundario)
-├── Agenda (entrada permanente)
-├── grabaciones
+│   └── redirección al detalle encontrado
+├── Por revisar
+├── añadir entrada
+├── iniciar grabación
 ├── ajustes
 └── timeline
     ├── detalle de entrada
     ├── detalle de grabación
-    └── detalle de lugar
+    ├── evento de agenda
+    └── estancia o lugar
+
+Control persistente de grabación
+└── volver / detener y procesar
 ```
 
 Home conserva el control temporal inferior actual: día anterior/siguiente, apertura
 del mes, vuelta a hoy y selección de la semana. Se permite reducir altura, ruido de
 color y densidad tipográfica, sin cambiar esas acciones ni su modelo mental.
 
-La Agenda tendrá una entrada permanente aunque esté vacía. Búsqueda y Chat seguirán
-visibles como utilidades; grabaciones y Ajustes permanecerán en `Más`. Ningún destino
-público dependerá de que exista contenido para poder encontrarse.
+Agenda, Lugares y Grabaciones no tendrán secciones independientes. Sus elementos
+aparecen en la fecha y hora correspondientes de Home; Chat puede localizarlos y abrir
+su detalle. La gestión de calendarios permanece en Home. Ajustes seguirá en `Más`.
 
 ## Jerarquía de Home
 
@@ -35,18 +41,24 @@ público dependerá de que exista contenido para poder encontrarse.
    `Necesita atención`.
 3. Explicación de una línea, micrófono en uso y acción contextual `Activar`, `Pausar`
    o `Resolver`.
-4. Timeline único del día.
-5. Acción `Grabar reunión` y entrada manual de respaldo.
-6. Navegación temporal inferior persistente.
+4. Bandeja única `Por revisar`.
+5. Timeline único del día.
+6. Acciones siempre visibles `Añadir` e `Iniciar grabación`.
+7. Navegación temporal inferior persistente.
 
-La palabra `Trama` activa una **orden breve** dentro del modo continuo; no inicia una
-reunión. `Grabar reunión` es un caso bajo demanda separado, con inicio y parada
-explícitos, transcripción diarizada, resumen y extracción de acciones.
+Una de las palabras o frases configuradas activa una **orden breve** dentro del modo
+continuo; no inicia una grabación bajo demanda. `Iniciar grabación` es un caso
+separado, con inicio y parada explícitos, transcripción diarizada, resumen y extracción
+de acciones. La lista de activaciones es la misma en móvil y reloj.
 
 El estado identifica siempre qué dispositivo posee el audio: `En espera · móvil`,
 `En espera · reloj`, `Capturando orden · móvil`, `Grabando reunión · reloj`, etc. El
 usuario transfiere la escucha continua entre móvil y reloj; no quedan ambos activos a
-la vez por defecto.
+la vez por defecto. Cuando el reloj sea propietario, Home mostrará `Pasar al móvil`.
+
+Al comenzar una grabación aparecerá una barra persistente en toda la app con duración,
+dispositivo y las acciones `Volver` y `Detener y procesar`. Cambiar de pantalla nunca
+debe parecer que ha detenido la captura.
 
 ## Jerarquía de detalle
 
@@ -109,5 +121,7 @@ un contrato específico y no se hará desde estos botones.
 ## Siguiente puerta de decisión
 
 La dirección, la jerarquía y la posición de `Confirmar` y `Eliminar` quedan aprobadas.
-Antes de modificar la implementación se cerrarán los estados visuales restantes:
-vacío, error, permiso, procesado y tamaños compacto/grande.
+Antes de modificar la implementación se cerrarán el acceso directo a detalles, el
+alcance temporal de `Por revisar`, la posible unificación de Búsqueda y Chat, el límite
+de activaciones y los estados visuales restantes: vacío, error, permiso, procesado y
+tamaños compacto/grande.
