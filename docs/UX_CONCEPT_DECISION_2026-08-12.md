@@ -1,4 +1,4 @@
-# Concepto UX pendiente de aprobación visual
+# Concepto UX aprobado: Editorial serena
 
 Fecha: `2026-08-12`.  
 Base: [`PRODUCT_SPEC_2026-08-12.md`](PRODUCT_SPEC_2026-08-12.md).
@@ -60,12 +60,11 @@ la vez por defecto.
 El detalle de reunión tiene una jerarquía propia: resumen, acciones sugeridas y
 transcripción diarizada; la reproducción solo aparece si el audio se conserva.
 
-## Variantes visuales
+## Dirección visual elegida
 
-Ambas usan la fuente del sistema, cuerpo mínimo habitual de 14 sp, paleta cálida y el
-mismo contrato funcional.
-
-### A — Editorial serena (recomendada)
+El `2026-08-12` se aprueba la variante **A — Editorial serena**. Usará la fuente del
+sistema, cuerpo mínimo habitual de 14 sp y una paleta cálida con pocos acentos
+simultáneos.
 
 - menos contenedores y bordes;
 - estado como bloque editorial integrado en el lienzo;
@@ -73,21 +72,32 @@ mismo contrato funcional.
 - acción manual visible pero no dominante mientras la app está `En espera`;
 - navegación inferior más baja, manteniendo todas sus acciones.
 
-Ventaja: se parece a una memoria personal y no a un panel de control. Requiere una
-ejecución rigurosa del espaciado para que el contenido siga siendo claramente táctil.
+El resultado debe parecer una memoria personal y no un panel de control. La ejecución
+mantendrá superficies táctiles de al menos 48 dp aunque visualmente use menos cajas.
+La variante B — Tarjetas suaves queda descartada como dirección general; una tarjeta
+solo se usará cuando aporte estructura o delimitación funcional real.
 
-### B — Tarjetas suaves
+## Decisiones desde Home
 
-- cada bloque importante vive en una superficie redondeada;
-- estado muy reconocible y separación inmediata entre tipos de contenido;
-- timeline algo más denso y convencional;
-- navegación inferior contenida en una superficie elevada.
+Una sugerencia que todavía necesita revisión mostrará dos acciones directamente en
+su fila de la timeline:
 
-Ventaja: más familiar y explícita. Riesgo: volver a acumular cajas y controles a
-medida que crezca el producto.
+- `Confirmar` es la acción principal. Convierte la sugerencia en una entrada fiable,
+  conserva su procedencia y oculta las acciones de revisión.
+- `Eliminar` es secundaria y visible, nunca un gesto oculto. Descarta la sugerencia
+  inmediatamente y muestra `Deshacer` durante unos segundos.
 
-## Decisión pendiente
+Estas acciones no aparecerán en eventos de calendario, lugares ni entradas ya
+confirmadas. Así Home permite vaciar pendientes sin abrir el detalle y evita llenar
+cada elemento con botones. Tocar el contenido seguirá abriendo el detalle para editar
+antes de decidir.
 
-Elegir `A` o `B`. La variante seleccionada se convertirá en especificación visual con
-medidas, componentes, estados vacíos, error, permiso y tamaños compacto/grande antes
-de modificar la implementación.
+No se mostrará un diálogo de confirmación al descartar una sugerencia porque la acción
+es reversible. El borrado definitivo de una grabación o de datos consolidados seguirá
+un contrato específico y no se hará desde estos botones.
+
+## Siguiente puerta de decisión
+
+La dirección, la jerarquía y la posición de `Confirmar` y `Eliminar` quedan aprobadas.
+Antes de modificar la implementación se cerrarán los estados visuales restantes:
+vacío, error, permiso, procesado y tamaños compacto/grande.

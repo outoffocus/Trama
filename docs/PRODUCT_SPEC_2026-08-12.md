@@ -1,7 +1,7 @@
-# Especificación de producto v0.2
+# Especificación de producto v0.3
 
 Fecha: `2026-08-12`  
-Estado: dirección de producto aprobada; concepto visual pendiente de elección.
+Estado: dirección de producto y variante visual `Editorial serena` aprobadas.
 Precedencia: este documento sustituye la dirección de producto de los planes MVP
 anteriores cuando exista una contradicción.
 
@@ -34,6 +34,9 @@ recuperarla después dentro del contexto real del día.
 - Todo el reconocimiento y análisis de contenido personal se realiza localmente.
 - El producto no incluye modelos cloud ni claves API.
 - Home debe ser más simple, cálido, agradable y legible.
+- La dirección visual de Home será `Editorial serena`: menos contenedores, jerarquía
+  tipográfica clara y controles táctiles sin apariencia de panel de diagnóstico.
+- Las sugerencias pendientes podrán confirmarse o eliminarse directamente desde Home.
 - La pantalla de detalle se rediseñará alrededor de la acción útil, no del diagnóstico.
 - Las notas simples pueden guardarse directamente; tareas, citas y recordatorios
   necesitan confirmación humana.
@@ -129,7 +132,7 @@ muestra además su indicador de privacidad y exige un servicio en primer plano p
 continuar una captura iniciada por el usuario. El estado debe explicar la diferencia
 entre usar el micrófono y guardar una captura.
 
-### Home — arquitectura aprobada, ejecución visual pendiente
+### Home — arquitectura y dirección visual aprobadas
 
 Orden visual recomendado:
 
@@ -139,6 +142,16 @@ Orden visual recomendado:
 3. timeline único del día: calendario, lugares, capturas y tareas;
 4. una acción `Grabar reunión` claramente etiquetada y entrada manual de respaldo;
 5. navegación temporal inferior actual, conservando su funcionamiento.
+
+Solo las sugerencias pendientes de decisión mostrarán acciones en la timeline:
+
+- `Confirmar` las convierte en entradas fiables sin perder la procedencia;
+- `Eliminar` las descarta y ofrece `Deshacer` sin abrir un diálogo;
+- tocar el contenido abre el detalle si el usuario quiere corregirlo antes;
+- eventos, lugares y entradas ya confirmadas no muestran estos controles.
+
+Esta excepción es deliberada: reduce el coste de revisión sin convertir toda la
+timeline en una lista de botones ni depender de gestos ocultos.
 
 Se eliminarían del primer nivel los estados técnicos, contadores de diagnóstico y
 acciones ambiguas u ocultas tras pulsaciones largas. Agenda debe tener una entrada
@@ -160,7 +173,7 @@ Para grabaciones, el orden recomendado es reproductor, resumen, acciones sugerid
 y transcripción plegada. Para lugares, identidad y visitas son el contenido principal;
 los datos de resolución geográfica quedan en segundo nivel.
 
-### Tipografía y tono visual — dirección aprobada, ejecución pendiente
+### Tipografía y tono visual — Editorial serena aprobada
 
 La app adoptará la tipografía del sistema. La base actual mezcla DM Sans con etiquetas
 de 10–11 sp en DM Mono, haciendo que gran parte de la app parezca técnica y reduciendo
@@ -239,7 +252,8 @@ la legibilidad. La ejecución deberá:
 
 ## Puerta de decisión
 
-Las decisiones de producto se cerraron el `2026-08-12`. El equipo preparará un único
-concepto de navegación y dos variantes visuales comparables. Solo la variante elegida
-por el usuario pasará a código; cualquier desviación posterior de navegación,
-jerarquía, botones o tipografía requerirá una nueva aprobación explícita.
+Las decisiones de producto se cerraron el `2026-08-12` y la variante `Editorial
+serena` fue la elegida. Quedan aprobadas la navegación, la jerarquía principal, la
+tipografía del sistema y las acciones directas `Confirmar` y `Eliminar` de las
+sugerencias en Home. Cualquier desviación posterior de estas decisiones requerirá una
+nueva aprobación explícita.
