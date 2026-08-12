@@ -31,6 +31,7 @@ class ServiceControllerTest {
     @Test
     fun `initial isRunning is false`() = runTest {
         assertFalse(ServiceController.isRunning.value)
+        assertFalse(ServiceController.continuousListeningEnabled.value)
     }
 
     @Test

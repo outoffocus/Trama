@@ -9,6 +9,9 @@ al día.
 
 La función está desactivada por defecto y se activa en
 `Ajustes > Captura y contexto > Contexto ambiental`.
+También requiere que `Ajustes > Escucha automática > Escucha continua` esté
+activada. Al desactivar la escucha, el contexto ambiental queda inactivo, mientras
+calendarios, ubicación y grabaciones manuales continúan funcionando.
 
 ## Qué guarda
 

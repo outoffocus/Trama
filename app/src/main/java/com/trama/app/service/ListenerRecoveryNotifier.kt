@@ -24,6 +24,12 @@ import com.trama.app.R
 object ListenerRecoveryNotifier {
     const val EXTRA_REACTIVATE_LISTENER = "reactivate_listener"
 
+    fun cancel(context: Context) {
+        context.applicationContext
+            .getSystemService(NotificationManager::class.java)
+            ?.cancel(NotificationConfig.ID_LISTENER_RECOVERY)
+    }
+
     fun show(context: Context, reason: String): Boolean {
         val appContext = context.applicationContext
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&

@@ -2,6 +2,11 @@
 
 Fecha de corte: `2026-08-11`.
 
+> Actualización `2026-08-12`: la dirección vigente está en
+> [`MVP_USEFUL_EFFICIENT_PLAN_2026-08-12.md`](MVP_USEFUL_EFFICIENT_PLAN_2026-08-12.md).
+> Tras un segundo diagnóstico real, calendario y traza de ubicación pasan a ser
+> núcleo del MVP; la escucha continua queda opcional.
+
 ## Conclusión
 
 El MVP vendible no debe intentar vender “una memoria de todo”. La propuesta más
@@ -76,7 +81,8 @@ interacciones esenciales ([Layout basics](https://developer.android.com/design/u
 ### Ocultar del MVP básico, sin borrar todavía
 
 - Chat, hasta medir que recupera información mejor que Búsqueda y Agenda.
-- Ubicación, lugares, valoraciones y opiniones, hasta medir recurrencia y coste.
+- Valoraciones y opiniones de lugares. La traza de ubicación y las estancias se
+  mantienen en el núcleo por decisión de producto; deben optimizarse y medirse.
 - Capturas de pantalla: hoy desaparecen si no hay acciones y exigen un modelo
   multimodal; no cumplen todavía un contrato de “memoria guardada”.
 - Resumen diario y agenda semanal automática: se solapan con Home/Agenda y deben

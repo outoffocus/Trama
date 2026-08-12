@@ -14,13 +14,18 @@ Trama debe leerse como una memoria operativa local-first:
 
 El objetivo del producto es capturar con poca friccion, estructurar despues y permitir recuperar contexto sin convertir al usuario en editor permanente.
 
-## 2. Estado a 2026-08-11
+## 2. Estado a 2026-08-12
+
+La dirección de producto vigente está en
+[`docs/MVP_USEFUL_EFFICIENT_PLAN_2026-08-12.md`](docs/MVP_USEFUL_EFFICIENT_PLAN_2026-08-12.md):
+Home/calendario y la traza de ubicación permanecen como núcleo; la escucha
+continua pasa a ser opcional y no condiciona las grabaciones manuales.
 
 ### Movil
 
 - Android app en Kotlin, Compose, Material 3 y Navigation Compose
 - Room compartido en `shared`, version 16, con esquemas exportados y migraciones probadas
-- escucha continua con pipeline dedicado
+- escucha continua opcional con pipeline dedicado e interruptor explícito en Ajustes
 - captura con `AudioSource.VOICE_RECOGNITION` y fallback a `MIC` si el dispositivo lo rechaza
 - `VoskGateAsr` como gate ligero
 - `SherpaWhisperAsrEngine` como transcriptor final, 1 hilo y entrada capada a 20 s para mantener decode bajo presupuesto

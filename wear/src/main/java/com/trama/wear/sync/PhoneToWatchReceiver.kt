@@ -23,6 +23,7 @@ class PhoneToWatchReceiver : WearableListenerService() {
         private const val MIC_PATH = "/trama/mic"
         private const val CMD_PAUSE = MicCoordinator.CMD_PAUSE
         private const val CMD_RESUME = MicCoordinator.CMD_RESUME
+        private const val CMD_DISABLE_CONTINUOUS = MicCoordinator.CMD_DISABLE_CONTINUOUS
         private const val CMD_START_KEYWORD = MicCoordinator.CMD_START_KEYWORD
         private const val CMD_START_RECORDING = MicCoordinator.CMD_START_RECORDING
 
@@ -44,7 +45,19 @@ class PhoneToWatchReceiver : WearableListenerService() {
                         val keywordsStr = dataMap.getString("keyword_mappings")
                         val captureProfile = dataMap.getString("capture_profile")
                         val accelGate = dataMap.getBoolean("wear_accelerometer_gate", false)
-                        handleSettings(patternsJson, keywordsStr, captureProfile, accelGate)
+                        val hasContinuousListening = dataMap.containsKey("continuous_listening_enabled")
+                        val continuousListeningEnabled = if (hasContinuousListening) {
+                            dataMap.getBoolean("continuous_listening_enabled")
+                        } else {
+                            null
+                        }
+                        handleSettings(
+                            patternsJson,
+                            keywordsStr,
+                            captureProfile,
+                            accelGate,
+                            continuousListeningEnabled
+                        )
                     }
                 }
             }
@@ -55,7 +68,8 @@ class PhoneToWatchReceiver : WearableListenerService() {
         patternsJson: String?,
         keywordsStr: String?,
         captureProfile: String?,
-        accelGate: Boolean
+        accelGate: Boolean,
+        continuousListeningEnabled: Boolean?
     ) {
         val prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
 
@@ -71,6 +85,10 @@ class PhoneToWatchReceiver : WearableListenerService() {
 
         prefs.putBoolean("wear_accelerometer_gate", accelGate)
         prefs.apply()
+
+        if (continuousListeningEnabled == false) {
+            WatchServiceController.disableContinuousListening(applicationContext)
+        }
 
         sendBroadcast(
             android.content.Intent("com.trama.wear.SETTINGS_UPDATED")
@@ -96,6 +114,10 @@ class PhoneToWatchReceiver : WearableListenerService() {
                 WatchServiceController.notifyPhoneInactive(applicationContext)
                 WatchServiceController.resumeIfAllowed(applicationContext)
                 Log.i(TAG, "Watch auto-resume attempted (phone released)")
+            }
+            CMD_DISABLE_CONTINUOUS -> {
+                WatchServiceController.disableContinuousListening(applicationContext)
+                Log.i(TAG, "Watch continuous listening disabled by phone")
             }
             CMD_START_KEYWORD -> {
                 WatchServiceController.notifyPhoneInactive(applicationContext)

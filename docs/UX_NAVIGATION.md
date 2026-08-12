@@ -12,10 +12,11 @@ La navegación de TRAMA conserva su modelo temporal:
   pestañas que compiten con el calendario.
 - Wear OS continúa como grabadora y control remoto ocasional.
 
-La prioridad cotidiana es detectar tareas, compromisos y agenda mediante escucha
-automática. La aplicación conserva todos sus controles técnicos porque su usuario
-principal es avanzado, pero deja de mostrarlos al mismo nivel que las decisiones
-habituales.
+La prioridad cotidiana es reconstruir el día con agenda sincronizada, estancias,
+tareas y grabaciones deliberadas. La escucha continua es opcional y no condiciona
+el calendario, la traza de ubicación ni la grabación manual. La aplicación
+conserva sus controles técnicos, pero deja de mostrarlos al mismo nivel que las
+decisiones habituales.
 
 ## Home
 
@@ -44,7 +45,9 @@ Contrato de accesibilidad desde Home:
 La raíz de Ajustes muestra primero el estado de las funciones y cuatro destinos:
 
 1. `Captura y contexto`: perfil de tolerancia, contexto ambiental opcional,
-   categorías, frases y correcciones aprendidas.
+   categorías, frases y correcciones aprendidas. La raíz muestra antes un control
+   explícito de `Escucha continua` y explica qué funciones permanecen disponibles
+   al apagarlo.
 2. `Agenda y calendarios`: resumen diario, fuentes de Google Calendar y aviso
    semanal.
 3. `Privacidad y copias`: reconocimiento de la propia voz, copia automática,
@@ -77,6 +80,8 @@ ofrece un control que prometa una función futura.
 Los textos visibles describen consecuencias:
 
 - `Avisarme para reactivar la escucha`, no `Recordar escucha al reiniciar`.
+- `Escucha continua` explica consumo y confirma que calendario, ubicación y
+  grabaciones siguen activos cuando se deshabilita.
 - `Tolerancia al ruido`, no `Precisión de captura`.
 - `Conservar el inicio` y `Conservar contexto posterior`, con explicación de
   coste y batería.

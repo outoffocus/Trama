@@ -90,6 +90,10 @@ object ServiceController {
     private val _listenerState = MutableStateFlow(ListenerState.STOPPED)
     val listenerState: StateFlow<ListenerState> = _listenerState.asStateFlow()
 
+    private val _continuousListeningEnabled = MutableStateFlow(false)
+    val continuousListeningEnabled: StateFlow<Boolean> =
+        _continuousListeningEnabled.asStateFlow()
+
     private val _isWatchActive = MutableStateFlow(false)
     val isWatchActive: StateFlow<Boolean> = _isWatchActive.asStateFlow()
 
@@ -109,6 +113,7 @@ object ServiceController {
                 .putBoolean(KEY_SHOULD_RUN, true)
                 .putString(KEY_SUSPEND_REASON, SuspendReason.NONE.name)
                 .commit()
+            _continuousListeningEnabled.value = true
             if (shouldSuppressStart("user_start")) return
             ServiceWatchdogScheduler.schedule(context, reason = "user_start")
             CaptureLog.event(
@@ -118,6 +123,9 @@ object ServiceController {
             )
             val intent = Intent(context, KeywordListenerService::class.java)
             requestListenerStart(context, intent, reason = "user_start")
+            scope.launch {
+                syncSettingsToWatch(context, continuousListeningEnabled = true)
+            }
             _isWatchActive.value = false
             modeRef.set(ServiceMode.LISTENING)
         }
@@ -134,7 +142,9 @@ object ServiceController {
                 .putBoolean(KEY_SHOULD_RUN, false)
                 .putString(KEY_SUSPEND_REASON, SuspendReason.NONE.name)
                 .commit()
+            _continuousListeningEnabled.value = false
             ServiceWatchdogScheduler.cancel(context)
+            ListenerRecoveryNotifier.cancel(context)
             CaptureLog.event(
                 gate = CaptureLog.Gate.SERVICE,
                 result = CaptureLog.Result.OK,
@@ -150,6 +160,22 @@ object ServiceController {
         }
     }
 
+    /**
+     * Disable background keyword listening everywhere without touching manual
+     * recordings, calendar sync or location tracking.
+     *
+     * Unlike [stop], this also asks a paired watch to release continuous
+     * listening. Manual recording remains available on both devices.
+     */
+    fun disableContinuousListening(context: Context, reason: String = "settings_disabled") {
+        stop(context, reason)
+        scope.launch {
+            syncSettingsToWatch(context, continuousListeningEnabled = false)
+            MicCoordinator.sendDisableContinuous(context.applicationContext)
+            notifyWatchInactive()
+        }
+    }
+
     fun rearm(context: Context, reason: String = "user_rearm") {
         synchronized(transitionLock) {
             if (RecordingState.isRecording.value) return
@@ -158,6 +184,7 @@ object ServiceController {
                 .putBoolean(KEY_SHOULD_RUN, true)
                 .putString(KEY_SUSPEND_REASON, SuspendReason.NONE.name)
                 .commit()
+            _continuousListeningEnabled.value = true
             if (shouldSuppressStart("rearm:$reason")) return
             ServiceWatchdogScheduler.schedule(context, reason = reason)
             CaptureLog.event(
@@ -300,6 +327,16 @@ object ServiceController {
     }
 
     private suspend fun syncSettingsToWatch(context: Context) {
+        syncSettingsToWatch(
+            context = context,
+            continuousListeningEnabled = shouldBeRunning(context)
+        )
+    }
+
+    private suspend fun syncSettingsToWatch(
+        context: Context,
+        continuousListeningEnabled: Boolean
+    ) {
         val appContext = context.applicationContext
         val settings = SettingsDataStore(appContext)
         runCatching {
@@ -307,6 +344,7 @@ object ServiceController {
                 patterns = settings.intentPatterns.first(),
                 customKeywords = settings.customKeywords.first(),
                 captureProfile = settings.captureProfile.first(),
+                continuousListeningEnabled = continuousListeningEnabled,
                 force = true
             )
         }
@@ -328,8 +366,10 @@ object ServiceController {
 
     /** Returns true if the user explicitly wants the service running */
     fun shouldBeRunning(context: Context): Boolean {
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val enabled = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getBoolean(KEY_SHOULD_RUN, false)
+        _continuousListeningEnabled.value = enabled
+        return enabled
     }
 
     fun suspendReason(context: Context): SuspendReason {

@@ -179,6 +179,17 @@ object WatchServiceController {
             .edit().putBoolean(KEY_USER_ENABLED, false).apply()
     }
 
+    /** Disable only keyword listening; an active manual recording is preserved. */
+    fun disableContinuousListening(context: Context) {
+        stop(context)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_USER_ENABLED, false)
+            .putBoolean(KEY_PHONE_ACTIVE, false)
+            .apply()
+        _isPhoneActive.value = false
+    }
+
     /**
      * Stop everything because phone took over. Does NOT clear user_enabled
      * so watch can auto-resume when phone returns control.

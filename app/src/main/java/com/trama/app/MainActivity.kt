@@ -49,8 +49,10 @@ class MainActivity : ComponentActivity() {
         RecordingRecoveryWorker.enqueue(applicationContext)
         val mainViewModel = viewModel
 
-        val shouldStartMicro = ServiceController.shouldBeRunning(this) ||
-            intent?.getBooleanExtra(ListenerRecoveryNotifier.EXTRA_REACTIVATE_LISTENER, false) == true
+        val shouldStartMicro = ServiceController.shouldBeRunning(this)
+        if (!shouldStartMicro) {
+            ListenerRecoveryNotifier.cancel(applicationContext)
+        }
         if (hasAudioPermission()) {
             if (shouldStartMicro) {
                 startListenerService()
@@ -90,6 +92,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         if (!intent.getBooleanExtra(ListenerRecoveryNotifier.EXTRA_REACTIVATE_LISTENER, false)) return
+        if (!ServiceController.shouldBeRunning(this)) return
         if (hasAudioPermission()) {
             startListenerService()
         } else {

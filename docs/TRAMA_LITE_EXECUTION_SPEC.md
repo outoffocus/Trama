@@ -3,7 +3,7 @@
 > **ARCHIVADO: NO EJECUTAR.** Esta especificación parte de Room v14 y de entidades
 > y decisiones que no representan el estado actual (Room v16 y captura ya
 > recalibrada). Se conserva solo como historial. La fuente vigente para decidir el
-> MVP es [`MVP_AND_UX_STUDY_2026-08-11.md`](MVP_AND_UX_STUDY_2026-08-11.md).
+> MVP es [`MVP_USEFUL_EFFICIENT_PLAN_2026-08-12.md`](MVP_USEFUL_EFFICIENT_PLAN_2026-08-12.md).
 
 > Históricamente fue un documento de ejecución para un agente de desarrollo
 > autónomo. Ya no sustituye a ningún documento vigente ni debe dirigir cambios.

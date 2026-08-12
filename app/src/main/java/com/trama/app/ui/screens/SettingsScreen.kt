@@ -104,6 +104,7 @@ import com.trama.app.speech.speaker.SherpaSpeakerVerificationManager
 import com.trama.app.speech.speaker.SpeakerEnrollmentStep
 import com.trama.app.speech.speaker.VerificationDiagnostic
 import com.trama.app.service.ServiceController
+import com.trama.app.service.ContinuousListeningPolicy
 import com.trama.app.speech.IntentPattern
 import com.trama.shared.speech.CaptureProfile
 import com.trama.app.summary.ActionItemProcessor
@@ -150,6 +151,9 @@ fun SettingsScreen(
 
     // Settings state
     val autoStart by settings.autoStart.collectAsState(initialValue = false)
+    val continuousListeningEnabled by ServiceController.continuousListeningEnabled.collectAsState(
+        initialValue = ServiceController.shouldBeRunning(context)
+    )
     val recordingDuration by settings.recordingDuration.collectAsState(
         initialValue = SettingsDataStore.DEFAULT_DURATION
     )
@@ -187,6 +191,15 @@ fun SettingsScreen(
             excludeWork = false
         )
     )
+    val listeningFeatureAvailability = remember(
+        continuousListeningEnabled,
+        ambientContextConfig.enabled
+    ) {
+        ContinuousListeningPolicy.availability(
+            continuousListeningEnabled = continuousListeningEnabled,
+            ambientContextConfigured = ambientContextConfig.enabled
+        )
+    }
     val asrDebugEngine by settings.asrDebugEngine.collectAsState(initialValue = "-")
     val asrDebugStatus by settings.asrDebugStatus.collectAsState(initialValue = "sin datos")
     val asrDebugLastText by settings.asrDebugLastText.collectAsState(initialValue = "")
@@ -387,6 +400,20 @@ fun SettingsScreen(
         }
     }
 
+    val continuousListeningPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            ServiceController.start(context)
+        } else {
+            Toast.makeText(
+                context,
+                "Necesito permiso de micrófono para activar la escucha continua",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
     val fineLocationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -397,6 +424,12 @@ fun SettingsScreen(
             }
         } else {
             Toast.makeText(context, "Permiso de ubicación denegado", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    LaunchedEffect(continuousListeningEnabled, autoStart) {
+        if (!continuousListeningEnabled && autoStart) {
+            settings.setAutoStart(false)
         }
     }
 
@@ -557,10 +590,48 @@ fun SettingsScreen(
                 SectionHeader("Escucha automática")
 
                 SettingToggle(
+                    title = "Escucha continua",
+                    subtitle = if (continuousListeningEnabled) {
+                        "Trama escucha frases activadoras en segundo plano. Puede aumentar el consumo de batería."
+                    } else {
+                        "Desactivada. Las grabaciones manuales, calendarios y la traza de ubicación siguen funcionando."
+                    },
+                    checked = continuousListeningEnabled,
+                    onCheckedChange = { enabled ->
+                        if (enabled) {
+                            val hasPermission = ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.RECORD_AUDIO
+                            ) == PackageManager.PERMISSION_GRANTED
+                            if (hasPermission) {
+                                ServiceController.start(context)
+                            } else {
+                                continuousListeningPermissionLauncher.launch(
+                                    Manifest.permission.RECORD_AUDIO
+                                )
+                            }
+                        } else {
+                            ServiceController.disableContinuousListening(
+                                context,
+                                reason = "settings_continuous_listening_off"
+                            )
+                            scope.launch { settings.setAutoStart(false) }
+                        }
+                    }
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                SettingToggle(
                     title = "Avisarme para reactivar la escucha",
-                    subtitle = "Después de reiniciar el dispositivo, Trama mostrará una notificación; Android no permite encender el micrófono sin tu confirmación",
+                    subtitle = if (continuousListeningEnabled) {
+                        "Después de reiniciar el dispositivo, Trama mostrará una notificación; Android no permite encender el micrófono sin tu confirmación"
+                    } else {
+                        "Disponible cuando la escucha continua está activada"
+                    },
                     checked = autoStart,
-                    onCheckedChange = { scope.launch { settings.setAutoStart(it) } }
+                    onCheckedChange = { scope.launch { settings.setAutoStart(it) } },
+                    enabled = continuousListeningEnabled
                 )
 
                 Spacer(modifier = Modifier.height(20.dp))
@@ -570,7 +641,7 @@ fun SettingsScreen(
                     icon = Icons.Default.Mic,
                     title = SettingsSection.CAPTURE_MEMORY.title,
                     subtitle = SettingsSection.CAPTURE_MEMORY.subtitle,
-                    summary = "Tareas: ${captureProfile.displayName()} · ambiente ${if (ambientContextConfig.enabled) "activo" else "desactivado"}",
+                    summary = "Escucha ${if (continuousListeningEnabled) "activa" else "desactivada"} · tareas ${captureProfile.displayName()} · ambiente ${if (listeningFeatureAvailability.ambientContext) "activo" else "desactivado"}",
                     onClick = { onOpenSection(SettingsSection.CAPTURE_MEMORY) },
                     accent = tramaColors.amber,
                 )
@@ -1239,14 +1310,19 @@ fun SettingsScreen(
 
             SettingToggle(
                 title = "Añadir contexto ambiental al día",
-                subtitle = "Crea bloques de música, televisión/radio, conversación o reunión; nunca los convierte en tareas",
+                subtitle = if (continuousListeningEnabled) {
+                    "Crea bloques de música, televisión/radio, conversación o reunión; nunca los convierte en tareas"
+                } else {
+                    "Necesita escucha continua. Las grabaciones, calendarios y ubicación no dependen de esta opción."
+                },
                 checked = ambientContextConfig.enabled,
                 onCheckedChange = { enabled ->
                     scope.launch { settings.setAmbientContextEnabled(enabled) }
-                }
+                },
+                enabled = continuousListeningEnabled
             )
 
-            AnimatedVisibility(visible = ambientContextConfig.enabled) {
+            AnimatedVisibility(visible = listeningFeatureAvailability.ambientContext) {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()

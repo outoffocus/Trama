@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.trama.app.service.ServiceController
+import com.trama.app.service.ContinuousListeningPolicy
 import com.trama.app.service.ListenerRecoveryNotifier
 import com.trama.app.summary.RecordingRecoveryWorker
 import com.trama.app.ui.SettingsDataStore
@@ -27,7 +28,11 @@ class BootReceiver : BroadcastReceiver() {
             try {
                 val autoStart = SettingsDataStore(context).autoStart.first()
                 val shouldRestore = ServiceController.shouldBeRunning(context)
-                if (autoStart || shouldRestore) {
+                if (ContinuousListeningPolicy.shouldRequestBootReactivation(
+                        continuousListeningEnabled = shouldRestore,
+                        reminderEnabled = autoStart
+                    )
+                ) {
                     // A microphone foreground service cannot be started directly
                     // from BOOT_COMPLETED on current Android versions. Ask for an
                     // explicit user interaction instead.
@@ -38,7 +43,7 @@ class BootReceiver : BroadcastReceiver() {
                             "Boot completed, notification permission missing"
                     )
                 } else {
-                    Log.i("BootReceiver", "Boot completed, auto-start disabled")
+                    Log.i("BootReceiver", "Boot completed, listening or reminder disabled")
                 }
 
                 val locationEnabled = SettingsDataStore(context).locationEnabled.first()

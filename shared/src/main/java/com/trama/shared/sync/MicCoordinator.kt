@@ -16,6 +16,7 @@ object MicCoordinator {
     const val WATCH_DEBUG_PATH = "/trama/watch-debug"
     const val CMD_PAUSE = "PAUSE"
     const val CMD_RESUME = "RESUME"
+    const val CMD_DISABLE_CONTINUOUS = "DISABLE_CONTINUOUS"
     const val CMD_START_KEYWORD = "START_KEYWORD"
     const val CMD_START_RECORDING = "START_RECORDING"
 
@@ -27,6 +28,11 @@ object MicCoordinator {
     /** Tell all connected nodes they can resume their mic */
     suspend fun sendResume(context: Context): Boolean {
         return sendCommand(context, CMD_RESUME)
+    }
+
+    /** Disable keyword listening on the paired device without disabling manual recording. */
+    suspend fun sendDisableContinuous(context: Context): Boolean {
+        return sendCommand(context, CMD_DISABLE_CONTINUOUS)
     }
 
     /** Tell the other device to start keyword listening */

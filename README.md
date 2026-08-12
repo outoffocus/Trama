@@ -4,7 +4,7 @@ Trama es una app Android local-first para capturar recordatorios, tareas, grabac
 
 ## Estado actual del proyecto
 
-Situacion a fecha `2026-08-11`:
+Situacion a fecha `2026-08-12`:
 
 - proyecto Android multi-modulo con `app`, `shared` y `wear`
 - movil en Jetpack Compose + Room + WorkManager + Wear Data Layer
@@ -16,6 +16,7 @@ Situacion a fecha `2026-08-11`:
 - `Gemma` local estructura acciones, resume grabaciones y genera memoria diaria; no existe ruta de IA cloud ni configuración de API key
 - la app puede aprender localmente de confirmaciones y descartes, y usar esas decisiones para proteger acciones útiles y filtrar ruido
 - la escucha continua del movil trabaja en segmentos cortos y renovables para evitar ventanas largas/ruidosas atascadas
+- la escucha continua se puede desactivar explícitamente desde Ajustes; calendario, ubicación y grabaciones manuales permanecen operativos
 - el fallback incierto a Whisper esta limitado por cooldown, carga y bateria para proteger consumo
 - la escucha se pausa cuando Android informa audio activo en este dispositivo, para evitar capturas de YouTube/Spotify
 - el contexto ambiental local es opcional y crea bloques agregados de música, televisión/radio, conversación o reunión; nunca tareas ni transcripciones persistidas
@@ -222,6 +223,7 @@ La mejor forma de avanzar sin romper el producto es estabilizar fronteras: DI, V
 - [`docs/ANDROID_16KB_COMPATIBILITY.md`](docs/ANDROID_16KB_COMPATIBILITY.md): diagnostico, decisiones y verificacion de bibliotecas nativas.
 - [`docs/UX_NAVIGATION.md`](docs/UX_NAVIGATION.md): navegación preservada, accesos y jerarquía básico/avanzado.
 - [`docs/AMBIENT_CONTEXT.md`](docs/AMBIENT_CONTEXT.md): contrato, privacidad, límites y diagnóstico del contexto ambiental local.
-- [`docs/MVP_AND_UX_STUDY_2026-08-11.md`](docs/MVP_AND_UX_STUDY_2026-08-11.md): auditoría vigente, alcance del MVP y plan UX profesional.
+- [`docs/MVP_AND_UX_STUDY_2026-08-11.md`](docs/MVP_AND_UX_STUDY_2026-08-11.md): auditoría UX de partida e historial de decisiones.
+- [`docs/MVP_USEFUL_EFFICIENT_PLAN_2026-08-12.md`](docs/MVP_USEFUL_EFFICIENT_PLAN_2026-08-12.md): dirección vigente del MVP, con agenda y ubicación como núcleo y audio continuo opcional.
 - [`docs/TRAMA_LITE_PROPOSAL.md`](docs/TRAMA_LITE_PROPOSAL.md): propuesta de producto TRAMA Lite.
 - [`docs/TRAMA_LITE_EXECUTION_SPEC.md`](docs/TRAMA_LITE_EXECUTION_SPEC.md): especificacion ejecutable de TRAMA Lite.

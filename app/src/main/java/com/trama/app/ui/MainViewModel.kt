@@ -30,7 +30,13 @@ class MainViewModel @Inject constructor(
             val customKeywords = settings.customKeywords.first()
             val intentPatterns = settings.intentPatterns.first()
             val captureProfile = settings.captureProfile.first()
-            SettingsSyncer(appContext).syncPatterns(intentPatterns, customKeywords, captureProfile)
+            SettingsSyncer(appContext).syncPatterns(
+                patterns = intentPatterns,
+                customKeywords = customKeywords,
+                captureProfile = captureProfile,
+                continuousListeningEnabled = com.trama.app.service.ServiceController
+                    .shouldBeRunning(appContext)
+            )
         }
     }
 

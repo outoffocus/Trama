@@ -53,13 +53,15 @@ class SettingsSyncer(private val context: Context) {
         patterns: List<IntentPattern>,
         customKeywords: List<String>,
         captureProfile: CaptureProfile = CaptureProfile.STRICT,
+        continuousListeningEnabled: Boolean? = null,
         force: Boolean = false
     ) {
-        if (!shouldSyncToWatch()) return
+        if (!force && !shouldSyncToWatch()) return
         try {
             val patternsJson = IntentPattern.serialize(patterns)
             val keywordsStr = customKeywords.joinToString(",")
-            val signature = "patterns:${patternsJson.hashCode()}:keywords:${keywordsStr.hashCode()}:profile:${captureProfile.name}"
+            val signature = "patterns:${patternsJson.hashCode()}:keywords:${keywordsStr.hashCode()}:" +
+                "profile:${captureProfile.name}:continuous:$continuousListeningEnabled"
             if (!force && isAlreadySynced(signature)) {
                 Log.d(TAG, "Skipping watch settings sync: unchanged")
                 return
@@ -69,6 +71,9 @@ class SettingsSyncer(private val context: Context) {
                 dataMap.putString("intent_patterns_json", patternsJson)
                 dataMap.putString("keyword_mappings", keywordsStr)
                 dataMap.putString("capture_profile", captureProfile.name)
+                continuousListeningEnabled?.let {
+                    dataMap.putBoolean("continuous_listening_enabled", it)
+                }
                 dataMap.putLong("updated_at", System.currentTimeMillis())
             }.asPutDataRequest()
 

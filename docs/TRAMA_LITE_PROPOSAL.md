@@ -3,7 +3,7 @@
 > **Documento archivado.** Describe una exploración anterior y contiene supuestos
 > que ya no coinciden con el repositorio actual. No debe usarse como plan de
 > ejecución. La auditoría vigente está en
-> [`MVP_AND_UX_STUDY_2026-08-11.md`](MVP_AND_UX_STUDY_2026-08-11.md).
+> [`MVP_USEFUL_EFFICIENT_PLAN_2026-08-12.md`](MVP_USEFUL_EFFICIENT_PLAN_2026-08-12.md).
 
 ## 1. Vision
 
