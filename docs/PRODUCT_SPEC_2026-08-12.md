@@ -50,9 +50,11 @@ recuperarla después dentro del contexto real del día.
 - Las notas simples pueden guardarse directamente; tareas, citas y recordatorios
   necesitan confirmación humana.
 - Chat es una herramienta secundaria de búsqueda y recuperación.
-- Búsqueda y Chat seguirán siendo dos accesos distintos.
+- Búsqueda y Chat seguirán siendo dos accesos distintos. Búsqueda filtra de forma
+  literal por la descripción de las tareas; Chat responde consultas más avanzadas con
+  el contexto de toda la historia de la memoria.
 - Chat podrá abrir el detalle exacto de un evento o una ubicación encontrada,
-  manteniendo el día de origen.
+  manteniendo el día de origen y mostrando la fuente utilizada.
 - Cada grabación aparecerá como una entrada normal en la fecha y hora de inicio; su
   resumen, acciones y transcripción estarán dentro de esa entrada. Tocar la entrada
   abrirá directamente su detalle.
@@ -224,6 +226,19 @@ No existirá un historial de grabaciones separado como navegación principal. Ca
 grabación se encontrará en el día y hora en que empezó, como cualquier otra entrada,
 y tocarla abrirá su detalle.
 
+### Búsqueda y Chat
+
+`Búsqueda` es una herramienta directa que no requiere el modelo local. Filtra mientras
+se escribe usando exclusivamente la descripción de las tareas y devuelve coincidencias
+predecibles; no resume, interpreta ni relaciona recuerdos.
+
+`Chat` usa el modelo local y recuperación sobre toda la historia de la memoria. Puede
+responder preguntas que necesiten contexto, relacionar días, tareas, grabaciones,
+eventos y estancias, y ofrecer acciones para abrir el detalle de un evento o una
+ubicación. Cada respuesta factual mostrará las fuentes internas que la sustentan. Si
+no encuentra evidencia suficiente, lo dirá expresamente en lugar de completar la
+respuesta por su cuenta.
+
 ### Detalle de una entrada — arquitectura aprobada, ejecución visual pendiente
 
 La pantalla actual concede demasiado peso a iconos sin texto y datos técnicos. La
@@ -331,6 +346,5 @@ nueva aprobación explícita.
 
 ## Decisiones abiertas de navegación
 
-Quedan por concretar antes del siguiente croquis:
-
-- qué diferencia funcional concreta tendrá Búsqueda frente a Chat.
+No quedan decisiones abiertas sobre la función de Búsqueda y Chat. Falta cerrar en el
+siguiente croquis cómo se presentan las fuentes y las acciones de redirección de Chat.

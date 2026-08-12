@@ -36,6 +36,11 @@ el detalle de eventos y ubicaciones. Búsqueda seguirá siendo una utilidad sepa
 gestión de calendarios permanece en Home. Tocar una grabación abrirá directamente su
 detalle. Ajustes seguirá en `Más`.
 
+Búsqueda tendrá un campo simple que filtre por la descripción de las tareas, sin usar
+el modelo local. Chat trabajará con el contexto recuperado de toda la historia de la
+memoria para consultas más avanzadas. Sus respuestas mostrarán fuentes y ofrecerán
+`Abrir detalle` cuando identifiquen un evento o una ubicación concretos.
+
 ## Jerarquía de Home
 
 1. Fecha seleccionada.
@@ -131,7 +136,7 @@ un contrato específico y no se hará desde estos botones.
 ## Siguiente puerta de decisión
 
 La dirección, la jerarquía y la posición de `Confirmar` y `Eliminar` quedan aprobadas.
-Antes de modificar la implementación se cerrarán la diferencia funcional entre
-Búsqueda y Chat y los estados visuales restantes: vacío, error, permiso, procesado y
-tamaños compacto/grande. El límite aprobado es de cinco activaciones compartidas por
-móvil y reloj.
+Antes de modificar la implementación se cerrarán la presentación de fuentes y enlaces
+de Chat y los estados visuales restantes: vacío, error, permiso, procesado y tamaños
+compacto/grande. El límite aprobado es de cinco activaciones compartidas por móvil y
+reloj.
