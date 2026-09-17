@@ -304,6 +304,10 @@ private class FakeRecordingDao : RecordingDao {
     override suspend fun updateStatus(id: Long, status: String) {}
     override suspend fun updateCapturedAudio(id: Long, audioFilePath: String, durationSeconds: Int, audioSampleRateHz: Int, status: String) {}
     override suspend fun updateTranscription(id: Long, transcription: String, durationSeconds: Int, status: String, processedLocally: Boolean, processedBy: String?) {}
+    override suspend fun updateDiarization(id: Long, diarizationJson: String?) {
+        val index = recordings.indexOfFirst { it.id == id }
+        if (index >= 0) recordings[index] = recordings[index].copy(diarizationJson = diarizationJson)
+    }
     override suspend fun getByStatuses(statuses: List<String>): List<Recording> =
         recordings.filter { it.processingStatus in statuses }
     override suspend fun updateProcessingResult(id: Long, title: String, summary: String, keyPoints: String?, status: String, processedLocally: Boolean, processedBy: String?) {}

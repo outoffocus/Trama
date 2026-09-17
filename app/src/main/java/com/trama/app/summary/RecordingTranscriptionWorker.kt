@@ -19,9 +19,12 @@ import com.trama.app.R
 import com.trama.app.audio.PcmRecordingStorage
 import com.trama.app.audio.PcmRecordingTranscriber
 import com.trama.app.audio.RecordingTranscriptionCheckpointStore
+import com.trama.app.audio.SherpaMeetingDiarizer
 import com.trama.app.audio.SherpaWhisperAsrEngine
+import com.trama.app.audio.SpeakerTurnAligner
 import com.trama.shared.data.DatabaseProvider
 import com.trama.shared.model.RecordingStatus
+import com.trama.shared.model.SpeakerTurns
 import kotlinx.coroutines.CancellationException
 
 class RecordingTranscriptionWorker(
@@ -123,6 +126,24 @@ class RecordingTranscriptionWorker(
                     processedLocally = true,
                     processedBy = asrEngine.name
                 )
+                val diarizationJson = try {
+                    val diarizer = SherpaMeetingDiarizer(applicationContext)
+                    if (diarizer.isAvailable) {
+                        val spans = diarizer.diarize(audioFile, sampleRateHz)
+                        SpeakerTurns.encode(SpeakerTurnAligner.align(result.segments, spans))
+                    } else {
+                        Log.w(TAG, "Speaker diarization assets are unavailable")
+                        null
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Throwable) {
+                    // The transcript is still valuable if a device ABI does not expose
+                    // Sherpa's optional diarization native symbols.
+                    Log.w(TAG, "Diarization failed for recording $recordingId", error)
+                    null
+                }
+                repository.updateRecordingDiarization(recordingId, diarizationJson)
                 RecordingTranscriptionCheckpointStore.clear(audioFile)
                 RecordingProcessorWorker.enqueue(applicationContext, recordingId)
                 Log.i(TAG, "Recording $recordingId transcribed from durable PCM")
@@ -153,7 +174,7 @@ class RecordingTranscriptionWorker(
         )
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle("Transcribiendo reunión")
-            .setContentText("El procesamiento continúa en este dispositivo")
+            .setContentText("Transcripción y separación de interlocutores en el dispositivo")
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .build()

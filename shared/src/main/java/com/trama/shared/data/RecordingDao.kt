@@ -74,6 +74,9 @@ interface RecordingDao {
         processedBy: String?
     )
 
+    @Query("UPDATE recordings SET diarizationJson = :diarizationJson WHERE id = :id")
+    suspend fun updateDiarization(id: Long, diarizationJson: String?)
+
     @Query("SELECT * FROM recordings WHERE processingStatus IN (:statuses) ORDER BY createdAt ASC")
     suspend fun getByStatuses(statuses: List<String>): List<Recording>
 

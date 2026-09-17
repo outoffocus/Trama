@@ -27,11 +27,16 @@ Una reanalítica explícita de una tarea existente no cambia su estado ni reempl
 
 ## Diarización
 
-La diarización real no está implementada.
+La diarización local está implementada con el segmentador `sherpa-onnx-pyannote-segmentation-3-0` cuantizado y el modelo de *speaker embedding* ya usado por «Solo mi voz».
 
-El APK incluye VAD y un modelo de *speaker embedding* para verificar opcionalmente si una captura breve se parece a la voz entrenada del propietario. Esa comprobación no detecta turnos ni separa participantes en una reunión.
+- Sherpa detecta intervalos de voz y agrupa interlocutores sin enviar el audio fuera del teléfono.
+- Las grabaciones largas se procesan en ventanas de cinco minutos para limitar el pico de memoria.
+- Una segunda agrupación por huella vocal conserva la identidad anónima al cambiar de ventana.
+- Los intervalos se alinean con el texto producido por cada bloque Whisper y se guardan en Room como JSON versionado (`diarizationJson`, esquema 20).
+- El detalle de reunión muestra interlocutor, color, marca de tiempo y texto; la búsqueda filtra los turnos visibles.
+- La copia de seguridad y la sincronización conservan la diarización.
 
-La dependencia Sherpa expone clases nativas de diarización, pero falta incorporar un modelo compatible de segmentación, ejecutar segmentación y agrupación sobre el PCM, transcribir intervalos con tiempos, persistir turnos, permitir renombrar hablantes y atribuir acciones con evidencia. Hasta completar y medir ese circuito, la interfaz no debe mostrar etiquetas de hablante.
+La app todavía no asigna nombres reales a los interlocutores ni realiza separación de fuentes cuando dos personas hablan simultáneamente. La atribución de palabras dentro de cada bloque Whisper es temporal y aproximada porque el backend actual entrega texto limpio por bloque, no tiempos fiables por palabra.
 
 ## Validación automatizada
 
@@ -51,6 +56,6 @@ Resultado: correcto. Incluye pruebas de persistencia, migración, deduplicación
 - Transferencia del Galaxy Watch 4 con teléfono desconectado, reintento y recibo durable.
 - Ejecución y restauración de una copia diaria con datos sintéticos.
 - Escritura, modificación y cancelación reales en el proveedor de Calendar seleccionado.
-- Ensayo acústico y de rendimiento previo a elegir un modelo de diarización.
+- Ensayo acústico y de rendimiento de la diarización con reuniones reales de 2–4 personas, voces solapadas y grabaciones de 60 minutos.
 
 Estas comprobaciones requieren los dispositivos y no quedan sustituidas por compilación o tests unitarios.

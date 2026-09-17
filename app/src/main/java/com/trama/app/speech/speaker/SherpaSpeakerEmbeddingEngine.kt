@@ -58,6 +58,15 @@ class SherpaSpeakerEmbeddingEngine(
         }
     }
 
+    suspend fun close() {
+        withContext(Dispatchers.IO) {
+            extractorMutex.withLock {
+                extractor?.release()
+                extractor = null
+            }
+        }
+    }
+
     private fun createExtractor(): SpeakerEmbeddingExtractor {
         require(isAvailable) { "Speaker embedding model missing at $MODEL_ASSET" }
         val modelPath = assetCache.ensureCopied(MODEL_ASSET)

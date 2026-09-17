@@ -16,7 +16,8 @@ class PcmRecordingTranscriber(
         val chunkCount: Int,
         val acceptedChunks: Int,
         val rejectedChunks: Int,
-        val rejectReason: String?
+        val rejectReason: String?,
+        val segments: List<TranscribedAudioChunk>
     )
 
     companion object {
@@ -24,8 +25,12 @@ class PcmRecordingTranscriber(
         private const val MIN_CHUNK_MS = 700L
 
         fun expectedChunkCount(file: File, sampleRateHz: Int): Int {
+            return expectedChunkCountForDuration(file, sampleRateHz, CHUNK_MS)
+        }
+
+        fun expectedChunkCountForDuration(file: File, sampleRateHz: Int, durationMs: Long): Int {
             val bytesPerChunk = (sampleRateHz *
-                PcmRecordingStorage.BYTES_PER_SAMPLE * CHUNK_MS / 1000L).coerceAtLeast(1L)
+                PcmRecordingStorage.BYTES_PER_SAMPLE * durationMs / 1000L).coerceAtLeast(1L)
             return ceil(file.length().toDouble() / bytesPerChunk).toInt().coerceAtLeast(1)
         }
     }
@@ -49,6 +54,7 @@ class PcmRecordingTranscriber(
         var rejectedChunks = validResume?.rejectedChunks ?: 0
         var visitedChunks = validResume?.nextChunkIndex ?: 0
         val acceptedText = validResume?.acceptedText?.toMutableList() ?: mutableListOf()
+        val acceptedSegments = validResume?.acceptedSegments?.toMutableList() ?: mutableListOf()
         val rejectReasons = validResume?.rejectReasons?.toMutableList() ?: mutableListOf()
         val firstPendingChunk = validResume?.nextChunkIndex ?: 0
 
@@ -76,6 +82,11 @@ class PcmRecordingTranscriber(
             if (rejectReason == null) {
                 acceptedChunks += 1
                 acceptedText += text
+                acceptedSegments += TranscribedAudioChunk(
+                    startMs = index * CHUNK_MS,
+                    endMs = index * CHUNK_MS + chunk.durationMs(),
+                    text = text
+                )
             } else {
                 rejectedChunks += 1
                 rejectReasons += rejectReason
@@ -107,6 +118,7 @@ class PcmRecordingTranscriber(
                     acceptedChunks = acceptedChunks,
                     rejectedChunks = rejectedChunks,
                     rejectReasons = rejectReasons.toList(),
+                    acceptedSegments = acceptedSegments.toList(),
                     filterVersion = RecordingTranscriptionCheckpoint.CURRENT_FILTER_VERSION
                 )
             )
@@ -124,7 +136,8 @@ class PcmRecordingTranscriber(
                     ?: "no_chunks"
             } else {
                 null
-            }
+            },
+            segments = acceptedSegments
         )
     }
 

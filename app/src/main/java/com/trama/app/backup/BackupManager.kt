@@ -92,7 +92,8 @@ object BackupManager {
         val processedLocally: Boolean = false,
         val processedBy: String? = null,
         val isSynced: Boolean = false,
-        val audioSampleRateHz: Int = 16_000
+        val audioSampleRateHz: Int = 16_000,
+        val diarizationJson: String? = null
     )
 
     @Serializable
@@ -305,7 +306,8 @@ object BackupManager {
         processedLocally = processedLocally,
         processedBy = processedBy,
         isSynced = isSynced,
-        audioSampleRateHz = audioSampleRateHz
+        audioSampleRateHz = audioSampleRateHz,
+        diarizationJson = diarizationJson
     )
 
     private fun BackupRecording.toRecording() = Recording(
@@ -320,7 +322,8 @@ object BackupManager {
         processedLocally = processedLocally,
         processedBy = processedBy,
         isSynced = isSynced,
-        audioSampleRateHz = audioSampleRateHz
+        audioSampleRateHz = audioSampleRateHz,
+        diarizationJson = diarizationJson
     )
 
     internal fun BackupEntry.toDiaryEntry(

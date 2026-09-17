@@ -132,6 +132,35 @@ class DiaryDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migrate19To20AddsDiarizationWithoutLosingRecordings() {
+        val databaseName = "migration-19-20-diarization"
+        migrationHelper.createDatabase(databaseName, 19).apply {
+            execSQL(
+                """INSERT INTO recordings (
+                    id, title, transcription, summary, keyPoints, durationSeconds, source,
+                    createdAt, processingStatus, isSynced, processedLocally, processedBy,
+                    audioFilePath, audioSampleRateHz
+                ) VALUES (1, 'Reunión', 'Texto', NULL, NULL, 60, 'PHONE', 1700000000000,
+                    'COMPLETED', 0, 1, 'LOCAL', NULL, 16000)"""
+            )
+            close()
+        }
+
+        migrationHelper.runMigrationsAndValidate(
+            databaseName,
+            20,
+            true,
+            DiaryDatabase.MIGRATION_19_20
+        ).use { migrated ->
+            migrated.query("SELECT transcription, diarizationJson FROM recordings WHERE id = 1").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("Texto", cursor.getString(0))
+                assertTrue(cursor.isNull(1))
+            }
+        }
+    }
+
     private companion object {
         const val INSERT_ENTRY_SQL = """INSERT INTO diary_entries (
             id, text, keyword, category, confidence, createdAt, source, isSynced, duration,
@@ -162,7 +191,8 @@ class DiaryDatabaseMigrationTest {
             DiaryDatabase.MIGRATION_15_16,
             DiaryDatabase.MIGRATION_16_17,
             DiaryDatabase.MIGRATION_17_18,
-            DiaryDatabase.MIGRATION_18_19
+            DiaryDatabase.MIGRATION_18_19,
+            DiaryDatabase.MIGRATION_19_20
         )
     }
 }

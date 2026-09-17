@@ -89,6 +89,8 @@ import com.trama.shared.model.Recording
 import com.trama.shared.model.RecordingKeyPoints
 import com.trama.shared.model.RecordingStatus
 import com.trama.shared.model.Source
+import com.trama.shared.model.SpeakerTurn
+import com.trama.shared.model.SpeakerTurns
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -533,17 +535,93 @@ fun RecordingDetailScreen(
                         )
                     }
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = rec.transcription.ifBlank { "Todavía no hay transcripción." },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    val allSpeakerTurns = SpeakerTurns.decode(rec.diarizationJson)
+                    val speakerTurns = allSpeakerTurns
+                        .filter { transcriptQuery.isBlank() || it.text.contains(transcriptQuery, ignoreCase = true) }
+                    if (speakerTurns.isNotEmpty()) {
+                        Text(
+                            text = "${speakerTurns.map { it.speaker }.distinct().size} interlocutores detectados",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        speakerTurns.forEach { turn ->
+                            SpeakerTurnRow(turn)
+                            Spacer(modifier = Modifier.height(10.dp))
+                        }
+                    } else if (allSpeakerTurns.isNotEmpty() && transcriptQuery.isNotBlank()) {
+                        Text(
+                            text = "No hay turnos que coincidan con la búsqueda.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text(
+                            text = rec.transcription.ifBlank { "Todavía no hay transcripción." },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 
             item { Spacer(modifier = Modifier.height(32.dp)) }
         }
     }
+}
+
+@Composable
+private fun SpeakerTurnRow(turn: SpeakerTurn) {
+    val accent = when (turn.speaker % 4) {
+        0 -> MaterialTheme.colorScheme.primary
+        1 -> MaterialTheme.colorScheme.tertiary
+        2 -> MaterialTheme.colorScheme.secondary
+        else -> MaterialTheme.colorScheme.error
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Box(
+            modifier = Modifier
+                .padding(top = 5.dp)
+                .size(8.dp)
+                .background(accent, RoundedCornerShape(50))
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = turn.label,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = accent
+                )
+                Text(
+                    text = formatElapsed(turn.startMs),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Text(
+                text = turn.text,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+internal fun formatElapsed(milliseconds: Long): String {
+    val totalSeconds = (milliseconds.coerceAtLeast(0L) / 1_000L)
+    val hours = totalSeconds / 3_600
+    val minutes = (totalSeconds % 3_600) / 60
+    val seconds = totalSeconds % 60
+    return if (hours > 0) "%d:%02d:%02d".format(hours, minutes, seconds)
+    else "%02d:%02d".format(minutes, seconds)
 }
 
 internal fun countTextMatches(text: String, query: String): Int {

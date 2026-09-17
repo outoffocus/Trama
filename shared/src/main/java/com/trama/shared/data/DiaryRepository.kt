@@ -240,6 +240,9 @@ class DiaryRepository(
         id, transcription, durationSeconds, status, processedLocally, processedBy
     )
 
+    suspend fun updateRecordingDiarization(id: Long, diarizationJson: String?) =
+        recordingDao?.updateDiarization(id, diarizationJson)
+
     suspend fun getRecordingsByStatuses(statuses: List<String>): List<Recording> =
         recordingDao?.getByStatuses(statuses) ?: emptyList()
 

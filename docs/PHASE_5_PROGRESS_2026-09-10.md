@@ -20,11 +20,9 @@
 
 ## Diarización
 
-El proyecto incluye las clases nativas de `sherpa-onnx` y un modelo de *speaker embedding* utilizado para «Solo mi voz». No incluye el modelo de segmentación Pyannote requerido para detectar turnos de hablante. Por tanto, la diarización aún no está implementada y la interfaz no afirma lo contrario.
+Implementada el 17 de septiembre de 2026 con el segmentador Pyannote cuantizado oficial de `sherpa-onnx` y el modelo de *speaker embedding* local. El PCM se segmenta y agrupa en el dispositivo; las reuniones largas usan ventanas de cinco minutos y las identidades se reconcilian entre ventanas por similitud vocal.
 
-Para completarla hacen falta: incorporar y licenciar un modelo compatible, ejecutar segmentación sobre el PCM conservado, transcribir por intervalos, guardar segmentos con tiempos y hablantes anónimos, permitir renombrarlos manualmente y medir errores con reuniones reales de 2–4 personas. La identificación de la voz entrenada no sustituye esta segmentación.
-
-No existe actualmente una tabla de turnos ni etiquetas `Hablante 1/2` en la interfaz. El procesamiento por bloques descrito arriba protege contexto y recuperación, pero no atribuye frases o acciones a una persona.
+Los turnos se persisten con inicio, fin, interlocutor anónimo y texto en Room 20. La pantalla de reunión presenta `Interlocutor 1/2/...`, color y marca temporal. La alineación de palabras dentro de cada bloque Whisper es aproximada y las voces simultáneas no se separan físicamente.
 
 ## Pendiente
 
@@ -35,7 +33,7 @@ No existe actualmente una tabla de turnos ni etiquetas `Hablante 1/2` en la inte
   aislamiento de sugerencias hasta su aprobación y persistencia al reabrir. Registrar
   también el tiempo desde «Transcribiendo» hasta «Lista».
 - Relacionar cada acción con el intervalo exacto de audio que la sustenta.
-- Añadir segmentos diarizados y asignación manual de nombres cuando exista un modelo validado.
-- Incorporar y validar un modelo de segmentación de hablantes con licencia compatible antes de mostrar diarización en producto.
+- Añadir asignación manual de nombres a los interlocutores.
+- Calibrar umbrales con reuniones reales de 2–4 participantes y distintos entornos acústicos.
 - Medir solapamientos, atribuciones erróneas, tiempo de proceso y consumo en el dispositivo objetivo.
 - Validar edición de notas, recuperación del audio y navegación de origen en uso real; el usuario realizará el despliegue cuando lo considere.

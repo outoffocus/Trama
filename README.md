@@ -23,7 +23,7 @@ Situacion a fecha `2026-09-17`:
 - Home puede mostrar estados tecnicos de escucha solo si el ajuste `Estado tecnico en inicio` esta activado
 - la navegación principal separa `Hoy`, `Acciones` y `Recuerdos`; reuniones, lugares, búsqueda y ajustes se abren desde esos recorridos
 - `DailyPage` y el markdown privado por fecha funcionan como memoria tecnica persistida
-- Room esta en la version 19, con memoria y acciones separadas, revisiones, confirmación humana persistida, esquemas versionados y pruebas de migración
+- Room está en la versión 20, con memoria y acciones separadas, revisiones, confirmación humana persistida, turnos de interlocutor, esquemas versionados y pruebas de migración
 - CI compila, ejecuta tests y lint, valida migraciones y comprueba la alineacion nativa de 16 KB
 - Hoy conserva el calendario y el desplazamiento por días; Acciones distingue tareas de sugerencias y Recuerdos unifica notas, lugares y reuniones
 - Ajustes separa cuatro áreas básicas de IA, audio, ubicación y diagnóstico avanzados
@@ -156,7 +156,10 @@ Las sugerencias confirmadas conservan por separado la confianza automática y la
 - las acciones de reunión nacen como sugerencias y no entran en el timeline general hasta que el usuario las aprueba
 - el audio de una reunión se conserva para recuperación y reintento; el dictado breve de correcciones vive solo en memoria y no se guarda
 - existe verificación opcional de la voz del propietario mediante *speaker embeddings*
-- **la diarización real todavía no está implementada**: el proyecto no incluye un modelo de segmentación de hablantes ni guarda turnos con tiempos y etiquetas. Ver [`docs/IMPLEMENTATION_STATUS_2026-09-17.md`](docs/IMPLEMENTATION_STATUS_2026-09-17.md)
+- la diarización se ejecuta completamente en el dispositivo con el segmentador Pyannote cuantizado de Sherpa y el modelo de *speaker embeddings*
+- las reuniones largas se dividen en ventanas de cinco minutos para limitar memoria; las huellas de voz mantienen las identidades entre ventanas
+- Room guarda turnos con tiempo, interlocutor anónimo y texto; el detalle muestra `Interlocutor 1`, `Interlocutor 2`, etc. con colores y marcas de tiempo
+- la atribución textual se alinea con los intervalos reales de voz dentro de cada bloque Whisper; no identifica nombres ni separa físicamente voces solapadas
 
 ## Privacidad
 
@@ -209,7 +212,7 @@ comprobaciones en cada push a `main`, pull request o lanzamiento manual.
 
 ### P0
 
-- incorporar y validar un modelo local de segmentación para diarización, persistir turnos y permitir renombrar hablantes
+- validar y calibrar la diarización con reuniones reales de 2–4 personas y permitir renombrar interlocutores
 - completar las pruebas físicas de reunión de 60 minutos, escucha prolongada, batería, restauración y reloj
 - completar una politica de retencion y borrado verificable para audio y datos derivados
 
@@ -238,7 +241,7 @@ La mejor forma de avanzar sin romper el producto es estabilizar fronteras: DI, V
 - [`ARCHITECTURE.md`](ARCHITECTURE.md): arquitectura actual, flujos y deuda vigente.
 - [`IMPROVEMENT_PLAN.md`](IMPROVEMENT_PLAN.md): fases ejecutadas y calibracion fisica pendiente.
 - [`docs/ANDROID_16KB_COMPATIBILITY.md`](docs/ANDROID_16KB_COMPATIBILITY.md): diagnostico, decisiones y verificacion de bibliotecas nativas.
-- [`docs/IMPLEMENTATION_STATUS_2026-09-17.md`](docs/IMPLEMENTATION_STATUS_2026-09-17.md): estado funcional actual, validación automatizada y pendientes físicos/diarización.
+- [`docs/IMPLEMENTATION_STATUS_2026-09-17.md`](docs/IMPLEMENTATION_STATUS_2026-09-17.md): estado funcional actual, validación automatizada y pendientes físicos.
 - [`docs/UX_NAVIGATION.md`](docs/UX_NAVIGATION.md): navegación preservada, accesos y jerarquía básico/avanzado.
 - [`docs/AMBIENT_CONTEXT.md`](docs/AMBIENT_CONTEXT.md): contrato, privacidad, límites y diagnóstico del contexto ambiental local.
 - [`docs/MVP_AND_UX_STUDY_2026-08-11.md`](docs/MVP_AND_UX_STUDY_2026-08-11.md): auditoría UX de partida e historial de decisiones.

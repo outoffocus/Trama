@@ -104,14 +104,16 @@ data class SyncRecording(
     val transcription: String,
     val durationSeconds: Int,
     val source: String,
-    val createdAt: Long
+    val createdAt: Long,
+    val diarizationJson: String? = null
 ) {
     fun toRecording(): Recording = Recording(
         transcription = transcription,
         durationSeconds = durationSeconds,
         source = Source.valueOf(source),
         createdAt = createdAt,
-        isSynced = true
+        isSynced = true,
+        diarizationJson = diarizationJson
     )
 
     companion object {
@@ -119,7 +121,8 @@ data class SyncRecording(
             transcription = recording.transcription,
             durationSeconds = recording.durationSeconds,
             source = recording.source.name,
-            createdAt = recording.createdAt
+            createdAt = recording.createdAt,
+            diarizationJson = recording.diarizationJson
         )
     }
 }

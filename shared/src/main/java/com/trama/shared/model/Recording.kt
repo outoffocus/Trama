@@ -20,7 +20,9 @@ data class Recording(
     val isSynced: Boolean = false,
     /** App-private PCM file retained so interrupted transcription can be retried. */
     val audioFilePath: String? = null,
-    val audioSampleRateHz: Int = 16_000
+    val audioSampleRateHz: Int = 16_000,
+    /** JSON list of timestamped speaker turns. Audio remains entirely on device. */
+    val diarizationJson: String? = null
 )
 
 object RecordingStatus {

@@ -21,7 +21,7 @@ import com.trama.shared.model.TimelineEvent
         DwellDetectionState::class,
         DailyPage::class
     ],
-    version = 19,
+    version = 20,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -247,6 +247,12 @@ abstract class DiaryDatabase : RoomDatabase() {
                          AND parentEntryId IS NULL AND sourceCaptureId IS NULL
                          AND humanDecision IS NULL"""
                 )
+            }
+        }
+
+        val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE recordings ADD COLUMN diarizationJson TEXT DEFAULT NULL")
             }
         }
     }

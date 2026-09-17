@@ -8,6 +8,13 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 
 @Serializable
+data class TranscribedAudioChunk(
+    val startMs: Long,
+    val endMs: Long,
+    val text: String
+)
+
+@Serializable
 data class RecordingTranscriptionCheckpoint(
     val sourceLength: Long,
     val sampleRateHz: Int,
@@ -17,10 +24,11 @@ data class RecordingTranscriptionCheckpoint(
     val acceptedChunks: Int,
     val rejectedChunks: Int,
     val rejectReasons: List<String>,
+    val acceptedSegments: List<TranscribedAudioChunk> = emptyList(),
     val filterVersion: Int = 1
 ) {
     companion object {
-        const val CURRENT_FILTER_VERSION = 2
+        const val CURRENT_FILTER_VERSION = 3
     }
 }
 
