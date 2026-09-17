@@ -131,6 +131,20 @@ class DiaryRepositoryTest {
         assertEquals(5L, result[0].id)
     }
 
+    @Test
+    fun `updateRecordingNotes preserves recording and replaces editable notes`() = runBlocking {
+        val repo = DiaryRepository(fakeDao, fakeRecordingDao)
+        fakeRecordingDao.recordings.add(makeRecording(id = 7))
+
+        repo.updateRecordingNotes(7, "Reunión semanal", "Resumen corregido", "[\"Decisión\"]")
+
+        val updated = repo.getRecordingByIdOnce(7)
+        assertEquals("Reunión semanal", updated?.title)
+        assertEquals("Resumen corregido", updated?.summary)
+        assertEquals("[\"Decisión\"]", updated?.keyPoints)
+        assertEquals(makeRecording(id = 7).transcription, updated?.transcription)
+    }
+
     // ── DiaryEntry delegation ──
 
     @Test
@@ -164,7 +178,7 @@ class DiaryRepositoryTest {
     fun `deleteById delegates to diaryDao`() = runBlocking {
         val repo = DiaryRepository(fakeDao)
         repo.deleteById(5L)
-        assertEquals(5L, fakeDao.lastDeletedId)
+        assertEquals(listOf(5L), fakeDao.lastDeletedFamilyIds)
     }
 
     @Test
@@ -182,6 +196,7 @@ private class FakeDiaryDao : DiaryDao {
     val unsyncedEntries = mutableListOf<DiaryEntry>()
     var existsResult = false
     var lastDeletedId: Long? = null
+    var lastDeletedFamilyIds: List<Long>? = null
     var lastSyncedIds: List<Long>? = null
 
     override fun getById(id: Long): Flow<DiaryEntry?> = flowOf(null)
@@ -189,7 +204,7 @@ private class FakeDiaryDao : DiaryDao {
     override fun getAll(): Flow<List<DiaryEntry>> = flowOf(emptyList())
     override fun getPending(): Flow<List<DiaryEntry>> = flowOf(emptyList())
     override fun getSuggested(): Flow<List<DiaryEntry>> = flowOf(emptyList())
-    override suspend fun markSuggested(id: Long) {}
+    override suspend fun markSuggested(id: Long): Int = 1
     override fun getCompleted(): Flow<List<DiaryEntry>> = flowOf(emptyList())
     override fun getOverdue(now: Long): Flow<List<DiaryEntry>> = flowOf(emptyList())
     override fun byDateRange(startTime: Long, endTime: Long): Flow<List<DiaryEntry>> = flowOf(emptyList())
@@ -199,29 +214,54 @@ private class FakeDiaryDao : DiaryDao {
     override suspend fun insert(entry: DiaryEntry): Long { inserted.add(entry); return inserted.size.toLong() }
     override suspend fun delete(entry: DiaryEntry): Int = 1
     override suspend fun deleteById(id: Long) { lastDeletedId = id }
-    override suspend fun updateText(id: Long, text: String) {}
+    override suspend fun updateText(id: Long, text: String, editedAt: Long): Int = 1
     override suspend fun updateCreatedAt(id: Long, createdAt: Long) {}
     override suspend fun markSynced(ids: List<Long>): Int { lastSyncedIds = ids; return ids.size }
     override suspend fun existsByCreatedAtAndText(createdAt: Long, text: String): Boolean = existsResult
     override suspend fun getByCreatedAtAndText(createdAt: Long, text: String): DiaryEntry? =
         inserted.find { it.createdAt == createdAt && it.text == text }
+    override suspend fun getBySourceCaptureId(sourceCaptureId: String): DiaryEntry? =
+        inserted.find { it.sourceCaptureId == sourceCaptureId }
     override suspend fun deleteByIds(ids: List<Long>) {}
+    override suspend fun deleteFamiliesByIds(ids: List<Long>) {
+        lastDeletedFamilyIds = ids
+    }
     override suspend fun updateLLMReview(id: Long, correctedText: String?, confidence: Float) {}
     override suspend fun updateProcessingBackend(id: Long, backend: String?) {}
-    override suspend fun markCompleted(id: Long, completedAt: Long) {}
-    override suspend fun markDiscarded(id: Long, now: Long) {}
-    override suspend fun markPending(id: Long) {}
-    override suspend fun confirmSuggested(id: Long, source: String, confirmedAt: Long) {}
+    override suspend fun markCompleted(id: Long, completedAt: Long): Int = 1
+    override suspend fun markDiscarded(id: Long, now: Long): Int = 1
+    override suspend fun restoreDiscardedSuggestion(id: Long): Int = 1
+    override suspend fun autoDiscard(id: Long, expectedRevision: Long, now: Long): Int = 1
+    override suspend fun markPending(id: Long): Int = 1
+    override suspend fun confirmSuggested(id: Long, source: String, confirmedAt: Long): Int = 1
     override suspend fun markCompletedByIds(ids: List<Long>, completedAt: Long) {}
-    override suspend fun updateAIProcessing(id: Long, cleanText: String, actionType: String, dueDate: Long?, priority: String, confidence: Float) {}
+    override suspend fun updateAIProcessing(id: Long, cleanText: String, actionType: String, dueDate: Long?, priority: String, confidence: Float): Int = 1
+    override suspend fun applyUserReanalysis(id: Long, inputText: String, cleanText: String, actionType: String, dueDate: Long?, priority: String, confidence: Float): Int = 1
+    override suspend fun updateExternalState(id: Long, state: String, eventId: Long?, updatedAt: Long): Int = 1
+    override suspend fun getDerivedAction(parentEntryId: Long, sourceCaptureId: String): DiaryEntry? = null
+    override suspend fun supersedeDerivedActions(parentEntryId: Long, keepSourceCaptureId: String, now: Long): Int = 0
     override fun getLatest(): Flow<DiaryEntry?> = flowOf(null)
     override fun getLatestPending(): Flow<DiaryEntry?> = flowOf(null)
     override suspend fun getLatestPendingOnce(): DiaryEntry? = null
+    override suspend fun getLatestMemoryOnce(): DiaryEntry? = null
     override fun countAll(): Flow<Int> = flowOf(0)
     override fun countPending(): Flow<Int> = flowOf(0)
     override fun countCompletedToday(startOfDay: Long): Flow<Int> = flowOf(0)
     override suspend fun markDuplicate(id: Long, originalId: Long) {}
+    override suspend fun updateParentEntry(id: Long, parentEntryId: Long?): Int = 1
     override suspend fun clearDuplicate(id: Long) {}
+    override suspend fun discardDuplicate(id: Long, now: Long): Int {
+        val index = inserted.indexOfFirst { it.id == id }
+        if (index < 0) return 0
+        inserted[index] = inserted[index].copy(
+            status = "DISCARDED",
+            completedAt = now,
+            duplicateOfId = null,
+            userConfirmedAt = now,
+            verificationSource = "CALENDAR_DISCARD"
+        )
+        return 1
+    }
     override fun getDuplicates(): Flow<List<DiaryEntry>> = flowOf(emptyList())
     override suspend fun getRecentPendingForDedup(): List<DiaryEntry> = emptyList()
     override suspend fun getRecentActiveForDedup(): List<DiaryEntry> =
@@ -230,7 +270,7 @@ private class FakeDiaryDao : DiaryDao {
             .sortedByDescending { it.createdAt }
             .take(80)
     override suspend fun markCompletedByKey(createdAt: Long, text: String, completedAt: Long): Int = 0
-    override suspend fun deleteByKey(createdAt: Long, text: String): Int = 0
+    override suspend fun deleteByKey(createdAt: Long, text: String, now: Long): Int = 0
     override fun getByRecordingId(recordingId: Long): Flow<List<DiaryEntry>> = flowOf(emptyList())
     override suspend fun getByRecordingIdOnce(recordingId: Long): List<DiaryEntry> = emptyList()
     override suspend fun deleteByRecordingId(recordingId: Long) {}
@@ -248,7 +288,14 @@ private class FakeRecordingDao : RecordingDao {
     val inserted = mutableListOf<Recording>()
 
     override fun getAll(): Flow<List<Recording>> = flowOf(recordings.toList())
+    override fun getByDateRange(start: Long, end: Long): Flow<List<Recording>> = flowOf(recordings.filter { it.createdAt in start..end }.sortedBy { it.createdAt })
     override suspend fun getAllOnce(): List<Recording> = recordings.toList()
+    override fun search(query: String): Flow<List<Recording>> = flowOf(
+        recordings.filter {
+            listOfNotNull(it.title, it.transcription, it.summary, it.keyPoints)
+                .any { value -> value.contains(query, ignoreCase = true) }
+        }
+    )
     override fun getById(id: Long): Flow<Recording?> = flowOf(recordings.find { it.id == id })
     override suspend fun getByIdOnce(id: Long): Recording? = recordings.find { it.id == id }
     override suspend fun insert(recording: Recording): Long { inserted.add(recording); return inserted.size.toLong() }
@@ -260,6 +307,16 @@ private class FakeRecordingDao : RecordingDao {
     override suspend fun getByStatuses(statuses: List<String>): List<Recording> =
         recordings.filter { it.processingStatus in statuses }
     override suspend fun updateProcessingResult(id: Long, title: String, summary: String, keyPoints: String?, status: String, processedLocally: Boolean, processedBy: String?) {}
+    override suspend fun updateNotes(id: Long, title: String?, summary: String?, keyPoints: String?) {
+        val index = recordings.indexOfFirst { it.id == id }
+        if (index >= 0) {
+            recordings[index] = recordings[index].copy(
+                title = title,
+                summary = summary,
+                keyPoints = keyPoints
+            )
+        }
+    }
     override fun count(): Flow<Int> = flowOf(recordings.size)
     override suspend fun getUnsynced(): List<Recording> = emptyList()
     override suspend fun markSynced(ids: List<Long>) {}
@@ -273,8 +330,11 @@ private class FakeTimelineEventDao : TimelineEventDao {
     override suspend fun getAllOnce(): List<TimelineEvent> = emptyList()
     override fun byDateRange(startTime: Long, endTime: Long): Flow<List<TimelineEvent>> = flowOf(emptyList())
     override suspend fun byDateRangeOnce(startTime: Long, endTime: Long): List<TimelineEvent> = emptyList()
+    override fun calendarOverlapping(startTime: Long, endTime: Long): Flow<List<TimelineEvent>> =
+        flowOf(emptyList())
     override suspend fun getByIdOnce(id: Long): TimelineEvent? = null
     override suspend fun getLatestByType(type: String): TimelineEvent? = null
+    override suspend fun getDwellByStart(startTimestamp: Long): TimelineEvent? = null
     override suspend fun getByTypeSourceAndDataJson(type: String, source: String, dataJson: String): TimelineEvent? = null
     override suspend fun getByNaturalKey(type: String, timestamp: Long, title: String): TimelineEvent? = null
     override fun getByPlaceId(placeId: Long): Flow<List<TimelineEvent>> = flowOf(emptyList())
@@ -290,6 +350,7 @@ private class FakeTimelineEventDao : TimelineEventDao {
 private class FakePlaceDao : PlaceDao {
     override fun getAll(): Flow<List<Place>> = flowOf(emptyList())
     override suspend fun getAllOnce(): List<Place> = emptyList()
+    override fun search(query: String): Flow<List<Place>> = flowOf(emptyList())
     override fun getById(id: Long): Flow<Place?> = flowOf(null)
     override suspend fun getByIdOnce(id: Long): Place? = null
     override suspend fun getByNaturalKey(name: String, latitude: Double, longitude: Double): Place? = null

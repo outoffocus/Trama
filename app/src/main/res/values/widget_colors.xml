@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="widget_background">#F208090A</color>
+    <color name="widget_surface">#FF171A1C</color>
+    <color name="widget_text">#FFF4F0E8</color>
+    <color name="widget_muted">#FF9A958C</color>
+    <color name="widget_teal">#FF79B8A6</color>
+    <color name="widget_red">#FFE06A5C</color>
+    <color name="widget_amber">#FFD48A52</color>
+    <color name="widget_green">#FF79B8A6</color>
+    <color name="widget_watch">#FF6EA1FF</color>
+    <color name="widget_fab_selected_icon">#FFFFFFFF</color>
+    <color name="widget_rail">#33FFFFFF</color>
+</resources>

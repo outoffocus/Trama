@@ -39,7 +39,14 @@ data class SyncEntry(
     val cleanText: String? = null,
     val dueDate: Long? = null,
     val priority: String = "NORMAL",
-    val processingBackend: String? = null
+    val processingBackend: String? = null,
+    val sourceCaptureId: String? = null,
+    val contentKind: String = EntryContentKind.ACTION,
+    val parentEntryId: Long? = null,
+    val revision: Long = 0,
+    val humanDecision: String? = null,
+    val humanDecisionAt: Long? = null,
+    val triggerPhrase: String? = null
 ) {
     fun toDiaryEntry(): DiaryEntry = DiaryEntry(
         text = text,
@@ -55,7 +62,14 @@ data class SyncEntry(
         cleanText = cleanText,
         dueDate = dueDate,
         priority = priority,
-        processingBackend = processingBackend
+        processingBackend = processingBackend,
+        sourceCaptureId = sourceCaptureId,
+        contentKind = contentKind,
+        parentEntryId = null,
+        revision = revision,
+        humanDecision = humanDecision,
+        humanDecisionAt = humanDecisionAt,
+        triggerPhrase = triggerPhrase
     )
 
     companion object {
@@ -73,7 +87,14 @@ data class SyncEntry(
             cleanText = entry.cleanText,
             dueDate = entry.dueDate,
             priority = entry.priority,
-            processingBackend = entry.processingBackend
+            processingBackend = entry.processingBackend,
+            sourceCaptureId = entry.sourceCaptureId,
+            contentKind = entry.contentKind,
+            parentEntryId = entry.parentEntryId,
+            revision = entry.revision,
+            humanDecision = entry.humanDecision,
+            humanDecisionAt = entry.humanDecisionAt,
+            triggerPhrase = entry.triggerPhrase
         )
     }
 }

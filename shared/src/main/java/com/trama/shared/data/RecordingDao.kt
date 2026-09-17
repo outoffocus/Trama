@@ -12,8 +12,23 @@ interface RecordingDao {
     @Query("SELECT * FROM recordings ORDER BY createdAt DESC")
     fun getAll(): Flow<List<Recording>>
 
+    @Query("SELECT * FROM recordings WHERE createdAt BETWEEN :start AND :end ORDER BY createdAt ASC")
+    fun getByDateRange(start: Long, end: Long): Flow<List<Recording>>
+
     @Query("SELECT * FROM recordings ORDER BY createdAt DESC")
     suspend fun getAllOnce(): List<Recording>
+
+    @Query(
+        """
+        SELECT * FROM recordings
+        WHERE COALESCE(title, '') LIKE '%' || :query || '%' COLLATE NOCASE
+           OR transcription LIKE '%' || :query || '%' COLLATE NOCASE
+           OR COALESCE(summary, '') LIKE '%' || :query || '%' COLLATE NOCASE
+           OR COALESCE(keyPoints, '') LIKE '%' || :query || '%' COLLATE NOCASE
+        ORDER BY createdAt DESC
+        """
+    )
+    fun search(query: String): Flow<List<Recording>>
 
     @Query("SELECT * FROM recordings WHERE id = :id")
     fun getById(id: Long): Flow<Recording?>
@@ -72,6 +87,11 @@ interface RecordingDao {
         keyPoints: String?, status: String,
         processedLocally: Boolean = false, processedBy: String? = null
     )
+
+    @Query("""UPDATE recordings
+              SET title = :title, summary = :summary, keyPoints = :keyPoints
+              WHERE id = :id""")
+    suspend fun updateNotes(id: Long, title: String?, summary: String?, keyPoints: String?)
 
     @Query("SELECT COUNT(*) FROM recordings")
     fun count(): Flow<Int>

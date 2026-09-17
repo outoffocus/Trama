@@ -155,6 +155,33 @@ class IntentPatternTest {
     }
 
     @Test
+    fun `version two preset gains new reminder forms without restoring removed phrases`() {
+        val stored = IntentPattern(
+            id = "recordatorios",
+            label = "Recordatorios",
+            triggers = listOf("nota mental"),
+            presetVersion = 2
+        )
+
+        val restored = IntentPattern.deserialize(IntentPattern.serialize(listOf(stored)))
+            .first { it.id == "recordatorios" }
+
+        assertTrue(restored.triggers.containsAll(listOf("recuerda", "recordarme", "recordar")))
+        assertTrue("recuérdame" !in restored.triggers)
+        assertEquals(IntentPattern.CURRENT_PRESET_VERSION, restored.presetVersion)
+    }
+
+    @Test
+    fun `current preset preserves all built-in patterns disabled`() {
+        val disabled = IntentPattern.DEFAULTS.map { it.copy(enabled = false) }
+
+        val restored = IntentPattern.deserialize(IntentPattern.serialize(disabled))
+
+        assertEquals(IntentPattern.DEFAULTS.size, restored.size)
+        assertTrue(restored.none { it.enabled })
+    }
+
+    @Test
     fun `legacy expanded preset is compacted while custom additions survive`() {
         val legacy = IntentPattern(
             id = "tareas",

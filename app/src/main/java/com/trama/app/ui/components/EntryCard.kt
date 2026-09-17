@@ -26,7 +26,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -279,19 +278,28 @@ private fun EntryActionIconButton(
     Surface(
         onClick = onClick,
         modifier = Modifier.padding(end = 8.dp),
-        shape = CircleShape,
+        shape = RoundedCornerShape(999.dp),
         color = tint.copy(alpha = 0.13f)
     ) {
-        Box(
-            modifier = Modifier.size(40.dp),
-            contentAlignment = Alignment.Center
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
                 imageVector = icon,
-                contentDescription = contentDescription,
+                contentDescription = null,
                 modifier = Modifier.size(18.dp),
                 tint = tint
             )
+            if (!contentDescription.isNullOrBlank()) {
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = contentDescription,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = tint
+                )
+            }
         }
     }
 }

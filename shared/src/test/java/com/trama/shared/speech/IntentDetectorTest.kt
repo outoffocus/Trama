@@ -79,6 +79,58 @@ class IntentDetectorTest {
     }
 
     @Test
+    fun `continuous gate only accepts configured phrases`() {
+        assertNotNull(detector.detect("tengo que comprar pan mañana"))
+        assertNull(detector.detectConfigured("tengo que comprar pan mañana"))
+        assertNull(detector.detectConfigured("hay que comprar pan mañana"))
+        assertEquals(
+            "recordatorios",
+            detector.detectConfigured("recuérdame comprar pan mañana")?.pattern?.id
+        )
+
+        detector.setCustomKeywords(listOf("proyecto atlas"))
+        assertEquals(
+            "proyecto atlas",
+            detector.detectConfigured("revisar proyecto atlas mañana")?.customKeyword
+        )
+    }
+
+    @Test
+    fun `continuous gate accepts common explicit reminder forms`() {
+        listOf(
+            "recuerda comprar pan mañana",
+            "recordarme comprar pan mañana",
+            "recordar comprar pan mañana"
+        ).forEach { phrase ->
+            assertEquals(
+                phrase,
+                "recordatorios",
+                detector.detectConfigured(phrase)?.pattern?.id
+            )
+        }
+    }
+
+    @Test
+    fun `continuous gate honors configured reminder trigger without requiring an action verb`() {
+        assertEquals(
+            "recordatorios",
+            detector.detectConfigured("recordar al dermatólogo el lunes")?.pattern?.id
+        )
+        // Full semantic classification remains conservative after the gate.
+        assertNull(detector.detect("recordar la infancia me pone triste"))
+    }
+
+    @Test
+    fun `continuous gate accepts an exact configured single word independently of profile`() {
+        detector.setCustomKeywords(listOf("trama"))
+
+        CaptureProfile.entries.forEach { profile ->
+            detector.setCaptureProfile(profile)
+            assertEquals("trama", detector.detectConfigured("trama")?.customKeyword)
+        }
+    }
+
+    @Test
     fun `word boundaries prevent matches inside larger words`() {
         detector.setCustomKeywords(listOf("app", "cita", "recordar"))
 

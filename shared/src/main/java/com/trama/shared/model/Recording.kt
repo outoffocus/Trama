@@ -28,6 +28,7 @@ object RecordingStatus {
     const val TRANSCRIBING = "TRANSCRIBING"
     const val PENDING = "PENDING"
     const val PROCESSING = "PROCESSING"
+    const val TRANSCRIPT_ONLY = "TRANSCRIPT_ONLY"
     const val COMPLETED = "COMPLETED"
     const val FAILED = "FAILED"
 }

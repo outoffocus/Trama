@@ -17,6 +17,7 @@ class DiagnosticsAnalyzerTest {
             event("ASR_GATE", "OK", "segment_finalized", mapOf("reason" to "unmatched_segment_cap", "windowMs" to "30000")),
             event("ASR_GATE", "OK", meta = mapOf("reason" to "uncertain_gate_fallback", "windowMs" to "10000")),
             event("ASR_GATE", "NO_MATCH", "uncertain_gate_fallback_blocked", mapOf("reason" to "cooldown")),
+            event("ASR_GATE", "NO_MATCH", "gate_eval_skipped", mapOf("reason" to "ambient_backoff")),
             event("SERVICE", "OK", "service_stop_requested", mapOf("reason" to "home_primary_stop")),
             event("SERVICE", "REJECT", "media_playback_pause", mapOf("reason" to "poll")),
             event("ASR_FINAL", "REJECT", "media_playback_blocked_window", mapOf("windowMs" to "8000")),
@@ -54,6 +55,8 @@ class DiagnosticsAnalyzerTest {
         val analysis = DiagnosticsAnalyzer.analyze(events, entries, emptyList())
 
         assertEquals(2, analysis.funnel.finalTranscripts)
+        assertEquals(1, analysis.funnel.gateAccepted)
+        assertEquals(0, analysis.funnel.gateRejected)
         assertEquals(3, analysis.funnel.speakerRejected)
         assertEquals(75, analysis.quality.speakerRejectRatePct)
         assertEquals(50, analysis.quality.savedPerFinalTranscriptPct)
@@ -116,6 +119,18 @@ class DiagnosticsAnalyzerTest {
         assertTrue(
             analysis.recommendations.any { it.contains("fallos de watchdog sin causa exportada") }
         )
+    }
+
+    @Test
+    fun `recording pause is not reported as an unexpected service stop`() {
+        val events = listOf(
+            CaptureLog.Event(1_000, "SERVICE", "OK", "listener_paused_for_recording"),
+            CaptureLog.Event(1_005, "SERVICE", "REJECT", "onDestroy")
+        )
+
+        val analysis = DiagnosticsAnalyzer.analyze(events, emptyList(), emptyList())
+
+        assertEquals(0, analysis.quality.unexpectedServiceStops)
     }
 
     @Test

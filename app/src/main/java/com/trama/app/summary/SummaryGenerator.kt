@@ -187,7 +187,7 @@ class SummaryGenerator(private val context: Context) {
             val missedActions = missedEntries.map { entry ->
                 SuggestedAction(
                     type = inferActionType(entry.displayText),
-                    title = (entry.cleanText ?: entry.displayText).take(100),
+                    title = ActionTextNormalizer.focus(entry.cleanText ?: entry.displayText).take(100),
                     entryIds = listOf(entry.id),
                     capturedAt = entry.createdAt
                 )
@@ -280,7 +280,7 @@ private data class LocalSummaryAction(
 ) {
     fun toSuggestedAction(): SuggestedAction = SuggestedAction(
         type = try { ActionType.valueOf(type) } catch (_: Exception) { ActionType.NOTE },
-        title = title,
+        title = ActionTextNormalizer.focus(title),
         description = description,
         datetime = datetime,
         contact = contact

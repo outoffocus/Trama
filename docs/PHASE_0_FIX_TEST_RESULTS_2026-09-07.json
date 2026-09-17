@@ -1,0 +1,26 @@
+{
+  "command": "./gradlew :app:testDebugUnitTest :shared:testDebugUnitTest :wear:testDebugUnitTest :app:assembleDebug :wear:assembleDebug :shared:compileDebugAndroidTestKotlin --offline",
+  "result": "BUILD SUCCESSFUL",
+  "modules": {
+    "app": {
+      "tests": 356,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "shared": {
+      "tests": 173,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "wear": {
+      "tests": 66,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "instrumented_execution": "pending; offline UTP dependencies unavailable",
+  "installed_on_user_device": false
+}

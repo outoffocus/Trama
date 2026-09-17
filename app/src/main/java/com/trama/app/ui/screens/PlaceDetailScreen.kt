@@ -84,6 +84,7 @@ fun PlaceDetailScreen(
     val scope = rememberCoroutineScope()
     val place by repository.getPlaceById(placeId).collectAsState(initialValue = null)
     val events by repository.getTimelineEventsByPlaceId(placeId).collectAsState(initialValue = emptyList())
+    val visitEvents = events.filter { it.type == com.trama.shared.model.TimelineEventType.DWELL }
     val dateFormat = remember { SimpleDateFormat("d MMM yyyy, HH:mm", Locale("es")) }
 
     val currentPlace = place
@@ -114,6 +115,30 @@ fun PlaceDetailScreen(
         return
     }
 
+    var showVisitEditor by remember { mutableStateOf(false) }
+    var editingVisit by remember { mutableStateOf<com.trama.shared.model.TimelineEvent?>(null) }
+    var savingVisit by remember { mutableStateOf(false) }
+    var visitError by remember { mutableStateOf<String?>(null) }
+    val knownPlaces by repository.getPlaces().collectAsState(initialValue = emptyList())
+    if (showVisitEditor) {
+        VisitEditorDialog(event = editingVisit, initialPlace = currentPlace, places = knownPlaces,
+            saving = savingVisit, error = visitError, onDismiss = { showVisitEditor = false },
+            onSave = { targetPlaceId, start, end ->
+                if (!savingVisit) {
+                    savingVisit = true
+                    scope.launch {
+                        try {
+                            com.trama.app.capture.SaveVisit(repository)(editingVisit?.id, targetPlaceId, start, end)
+                            showVisitEditor = false
+                        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                        catch (e: IllegalArgumentException) { visitError = e.message }
+                        catch (_: Exception) { visitError = "No se ha podido guardar la visita" }
+                        finally { savingVisit = false }
+                    }
+                }
+            })
+    }
+
     var editedName by remember(currentPlace.id, currentPlace.name) { mutableStateOf(currentPlace.name) }
     var editedRating by remember(currentPlace.id, currentPlace.rating) { mutableStateOf(currentPlace.rating ?: 0) }
     var opinionText by remember(currentPlace.id, currentPlace.opinionText) { mutableStateOf(currentPlace.opinionText.orEmpty()) }
@@ -123,6 +148,7 @@ fun PlaceDetailScreen(
     var isTranscribingOpinion by remember(currentPlace.id) { mutableStateOf(false) }
     var opinionInputError by remember(currentPlace.id) { mutableStateOf<String?>(null) }
     var activeDictationCapture by remember { mutableStateOf<OfflineDictationCapture?>(null) }
+    var editingPlace by remember(currentPlace.id) { mutableStateOf(false) }
 
     fun appendOpinionTranscript(spokenText: String) {
         opinionText = buildString {
@@ -191,6 +217,33 @@ fun PlaceDetailScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
                     }
                 },
+                actions = {
+                    if (editingPlace) {
+                        TextButton(
+                            enabled = editedName.trim().isNotBlank(),
+                            onClick = {
+                                scope.launch {
+                                    repository.withTransaction {
+                                        if (editedName.trim() != currentPlace.name) {
+                                            renamePlace(currentPlace.id, editedName.trim())
+                                            updateTimelineEventTitlesForPlace(currentPlace.id, editedName.trim())
+                                        }
+                                        updatePlaceOpinion(
+                                            id = currentPlace.id,
+                                            rating = editedRating.takeIf { it > 0 },
+                                            opinionText = opinionText.trim().ifBlank { null },
+                                            opinionSummary = currentPlace.opinionSummary,
+                                            opinionUpdatedAt = System.currentTimeMillis()
+                                        )
+                                    }
+                                    editingPlace = false
+                                }
+                            }
+                        ) { Text("Guardar") }
+                    } else {
+                        TextButton(onClick = { editingPlace = true }) { Text("Editar") }
+                    }
+                },
                 colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background
                 )
@@ -207,30 +260,24 @@ fun PlaceDetailScreen(
                 eyebrow = currentPlace.type ?: "Lugar",
                 title = currentPlace.name,
                 accent = LocalTramaColors.current.teal,
-                meta = currentPlace.lastVisitAt?.let { "Última visita ${dateFormat.format(Date(it))}" },
+                meta = listOfNotNull(
+                    currentPlace.locality,
+                    currentPlace.lastVisitAt?.let { "Última visita ${dateFormat.format(Date(it))}" }
+                ).joinToString(" · ").ifBlank { null },
             )
             Column(
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
 
-            OutlinedTextField(
-                value = editedName,
-                onValueChange = { editedName = it },
-                label = { Text("Nombre") },
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Button(
-                onClick = {
-                    scope.launch {
-                        repository.renamePlace(currentPlace.id, editedName.trim())
-                        repository.updateTimelineEventTitlesForPlace(currentPlace.id, editedName.trim())
-                    }
-                },
-                enabled = editedName.trim().isNotBlank() && editedName.trim() != currentPlace.name
-            ) {
-                Text("Guardar nombre")
+            if (editingPlace) {
+                OutlinedTextField(
+                    value = editedName,
+                    onValueChange = { editedName = it },
+                    label = { Text("Nombre") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
             }
 
             SectionRule(title = "Ficha")
@@ -239,6 +286,9 @@ fun PlaceDetailScreen(
                     Text("Visitas: ${currentPlace.visitCount}", style = MaterialTheme.typography.bodyMedium)
                     currentPlace.lastVisitAt?.let {
                         Text("Última visita: ${dateFormat.format(Date(it))}", style = MaterialTheme.typography.bodySmall)
+                    }
+                    currentPlace.address?.takeIf { it.isNotBlank() }?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall)
                     }
                     Text(
                         "Lat ${"%.5f".format(currentPlace.latitude)}, Lon ${"%.5f".format(currentPlace.longitude)}",
@@ -263,7 +313,10 @@ fun PlaceDetailScreen(
                         )
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             (1..5).forEach { star ->
-                                IconButton(onClick = { editedRating = if (editedRating == star) 0 else star }) {
+                                IconButton(
+                                    enabled = editingPlace,
+                                    onClick = { editedRating = if (editedRating == star) 0 else star }
+                                ) {
                                     Icon(
                                         imageVector = if (star <= editedRating) Icons.Default.Star else Icons.Default.StarBorder,
                                         contentDescription = "$star estrellas",
@@ -284,31 +337,15 @@ fun PlaceDetailScreen(
                         label = { Text("Qué te pareció") },
                         placeholder = { Text("Comida, servicio, ambiente, precio...") },
                         minLines = 4,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        readOnly = !editingPlace
                     )
 
+                    if (editingPlace) {
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Button(
-                            onClick = {
-                                scope.launch {
-                                    repository.updatePlaceOpinion(
-                                        id = currentPlace.id,
-                                        rating = editedRating.takeIf { it > 0 },
-                                        opinionText = opinionText.trim().ifBlank { null },
-                                        opinionSummary = currentPlace.opinionSummary,
-                                        opinionUpdatedAt = System.currentTimeMillis()
-                                    )
-                                }
-                            },
-                            enabled = editedRating != (currentPlace.rating ?: 0) ||
-                                opinionText.trim() != currentPlace.opinionText.orEmpty().trim()
-                        ) {
-                            Text("Guardar opinión")
-                        }
-
                         TextButton(
                             onClick = {
                                 if (isDictating) {
@@ -339,6 +376,7 @@ fun PlaceDetailScreen(
                             )
                         }
                     }
+                    }
 
                     opinionInputError?.let {
                         Text(
@@ -348,7 +386,7 @@ fun PlaceDetailScreen(
                         )
                     }
 
-                    Button(
+                    if (editingPlace) Button(
                         onClick = {
                             scope.launch {
                                 isSummarizing = true
@@ -383,7 +421,7 @@ fun PlaceDetailScreen(
                                 isSummarizing = false
                             }
                         },
-                        enabled = opinionText.trim().isNotBlank() && !isSummarizing && !isDictating && !isTranscribingOpinion,
+                        enabled = opinionText.trim().length >= 120 && !isSummarizing && !isDictating && !isTranscribingOpinion,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         if (isSummarizing) {
@@ -391,6 +429,13 @@ fun PlaceDetailScreen(
                         } else {
                             Text("Resumir mi opinión")
                         }
+                    }
+                    if (editingPlace && opinionText.trim().isNotEmpty() && opinionText.trim().length < 120) {
+                        Text(
+                            "El texto es breve; se guardará tal cual sin generar un resumen.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
 
                     currentPlace.opinionSummary?.takeIf { it.isNotBlank() }?.let { summary ->
@@ -426,6 +471,7 @@ fun PlaceDetailScreen(
             ) {
                 FilterChip(
                     selected = currentPlace.isHome,
+                    enabled = editingPlace,
                     onClick = {
                         scope.launch {
                             if (currentPlace.isHome) repository.clearHomePlace(currentPlace.id)
@@ -439,6 +485,7 @@ fun PlaceDetailScreen(
                 )
                 FilterChip(
                     selected = currentPlace.isWork,
+                    enabled = editingPlace,
                     onClick = {
                         scope.launch {
                             if (currentPlace.isWork) repository.clearWorkPlace(currentPlace.id)
@@ -467,11 +514,15 @@ fun PlaceDetailScreen(
             }
 
             Spacer(modifier = Modifier.height(4.dp))
-            SectionRule(title = "Historial", count = events.take(20).size.takeIf { it > 0 })
-            events.take(20).forEach { event ->
-                TextButton(onClick = {}) {
+            SectionRule(title = "Historial", count = visitEvents.take(20).size.takeIf { it > 0 })
+            TextButton(onClick = { editingVisit = null; visitError = null; showVisitEditor = true }) { Text("Añadir visita") }
+            visitEvents.take(20).forEach { event ->
+                TextButton(
+                    onClick = { editingVisit = event; visitError = null; showVisitEditor = true },
+                    enabled = event.endTimestamp != null && !DwellDurationFormatter.isActive(event)
+                ) {
                     Text(
-                        "${dateFormat.format(Date(event.timestamp))} · ${DwellDurationFormatter.formatHours(event.timestamp, event.endTimestamp)}",
+                        "${dateFormat.format(Date(event.timestamp))} · ${DwellDurationFormatter.formatVisit(event)}",
                         modifier = Modifier.fillMaxWidth()
                     )
                 }

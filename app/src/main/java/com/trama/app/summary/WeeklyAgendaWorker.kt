@@ -35,7 +35,11 @@ class WeeklyAgendaWorker(
     override suspend fun doWork(): Result {
         return try {
             val agenda = AgendaBriefingBuilder.build(applicationContext)
-            showNotification(agenda)
+            if (!androidx.core.app.NotificationManagerCompat.from(applicationContext).areNotificationsEnabled()) {
+                Log.w(TAG, "Weekly agenda not delivered: notifications disabled")
+                return Result.failure()
+            }
+            if (!showNotification(agenda)) return Result.failure()
             Log.i(TAG, "Weekly agenda posted: ${agenda.shortText}")
             Result.success()
         } catch (e: Exception) {
@@ -44,7 +48,7 @@ class WeeklyAgendaWorker(
         }
     }
 
-    private fun showNotification(agenda: AgendaBriefing) {
+    private fun showNotification(agenda: AgendaBriefing): Boolean {
         val manager = applicationContext.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
             NotificationChannel(
@@ -55,6 +59,12 @@ class WeeklyAgendaWorker(
                 description = "Resumen de eventos y tareas para la semana"
             }
         )
+
+        if (android.os.Build.VERSION.SDK_INT >= 26 &&
+            manager.getNotificationChannel(CHANNEL_ID)?.importance == NotificationManager.IMPORTANCE_NONE) {
+            Log.w(TAG, "Weekly agenda not delivered: channel disabled")
+            return false
+        }
 
         val intent = Intent(applicationContext, MainActivity::class.java).apply {
             putExtra("navigate_to", NAVIGATE_TO_AGENDA)
@@ -78,5 +88,6 @@ class WeeklyAgendaWorker(
             .build()
 
         manager.notify(NOTIFICATION_ID, notification)
+        return true
     }
 }

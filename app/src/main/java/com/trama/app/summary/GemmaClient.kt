@@ -11,6 +11,7 @@ import com.google.mediapipe.tasks.genai.llminference.LlmInferenceSession
 import java.io.ByteArrayOutputStream
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -163,6 +164,8 @@ object GemmaClient {
 
                     Log.d(TAG, "Generated ${response?.length ?: 0} chars")
                     response?.trim()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
                 } catch (e: Exception) {
                     Log.w(TAG, "Generation failed: ${e.javaClass.simpleName}: ${e.message}")
                     releaseInternal()
@@ -197,6 +200,8 @@ object GemmaClient {
 
                     Log.d(TAG, "Generated multimodal ${response?.length ?: 0} chars")
                     response?.trim()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
                 } catch (e: Throwable) {
                     Log.w(TAG, "Multimodal generation failed: ${e.javaClass.simpleName}: ${e.message}")
                     releaseInternal()
@@ -231,6 +236,8 @@ object GemmaClient {
 
                     Log.d(TAG, "Generated file multimodal ${response?.length ?: 0} chars")
                     response?.trim()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
                 } catch (e: Throwable) {
                     Log.w(TAG, "File multimodal generation failed: ${e.javaClass.simpleName}: ${e.message}")
                     releaseInternal()

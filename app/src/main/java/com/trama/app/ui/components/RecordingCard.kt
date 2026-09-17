@@ -148,7 +148,36 @@ fun RecordingCard(
                 )
             }
 
+            Text(
+                text = recordingStatusLabel(recording),
+                style = MaterialTheme.typography.labelSmall,
+                color = if (recording.processingStatus == RecordingStatus.FAILED) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.padding(top = 6.dp)
+            )
+
         }
         }
     }
+}
+
+internal fun recordingStatusLabel(recording: Recording): String = when (recording.processingStatus) {
+    RecordingStatus.CAPTURING -> "Grabando audio"
+    RecordingStatus.TRANSCRIBING -> "Audio guardado · transcribiendo"
+    RecordingStatus.PROCESSING -> "Audio guardado · preparando notas"
+    RecordingStatus.COMPLETED -> if (recording.processedBy == "LOCAL_PARTIAL") {
+        "Análisis parcial · toca para revisar"
+    } else {
+        "Lista"
+    }
+    RecordingStatus.TRANSCRIPT_ONLY -> "Transcripción lista · pendiente de analizar"
+    RecordingStatus.FAILED -> if (recording.audioFilePath.isNullOrBlank()) {
+        "Error de grabación"
+    } else {
+        "Error al procesar · audio conservado"
+    }
+    else -> if (recording.audioFilePath.isNullOrBlank()) "Pendiente" else "Audio guardado · pendiente"
 }

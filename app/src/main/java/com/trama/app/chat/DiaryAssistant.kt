@@ -5,24 +5,19 @@ import android.util.Log
 import com.trama.app.summary.GemmaClient
 import com.trama.shared.data.DiaryRepository
 import java.text.Normalizer
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
 /**
  * Multi-turn diary assistant.
  *
- * Priority chain per message:
- *   1. Deterministic local retrieval for grounded questions.
- *   2. Gemma local   — if model is downloaded & enabled. Multi-turn is simulated by
- *                       appending the full conversation history to the prompt on every call.
- *   3. No model      — returns a user-facing error string.
+ * Every factual answer starts with deterministic local retrieval. If the local model is
+ * available, it may improve the wording using only those retrieved facts. Queries without
+ * enough evidence return guidance instead of an ungrounded generated answer.
  *
  * Call clearHistory() to start a fresh conversation (also resets context cache).
  */
 class DiaryAssistant(
     private val context: Context,
-    private val contextBuilder: DiaryContextBuilder,
     repository: DiaryRepository
 ) {
 
@@ -33,45 +28,25 @@ class DiaryAssistant(
 
     // All inference and context retrieval stays on-device.
 
-    // ── Gemma state (manual history for simulated multi-turn) ────────────────
-    // Each entry is Pair(role, text): role is "Usuario" or "Asistente"
-    private val localHistory = mutableListOf<Pair<String, String>>()
     private var lastDeterministicQuery: ChatQuery? = null
 
     // ── Public API ────────────────────────────────────────────────────────────
 
-    suspend fun send(userMessage: String): String {
+    suspend fun send(userMessage: String): String = sendReply(userMessage).text
+
+    suspend fun sendReply(userMessage: String): DiaryAssistantReply {
         val deterministic = tryDeterministicAnswer(userMessage)
         if (deterministic != null) return deterministic
-
-        val modelDownloaded = GemmaClient.isModelDownloaded(context)
-        val modelEnabled = GemmaClient.isLocalModelEnabled(context)
-
-        // Try Gemma local model. Keep installation, activation and runtime failures distinct:
-        // telling users to download an existing model makes the recovery path impossible.
-        if (modelDownloaded && modelEnabled) {
-            try {
-                val reply = sendWithLocalModel(userMessage)
-                if (reply != null) return reply
-            } catch (t: Throwable) {
-                // Catch Throwable (not just Exception) — LiteRT-LM can throw native errors
-                Log.w(TAG, "Local model failed: ${t.javaClass.simpleName}: ${t.message}")
-            }
-        }
-
-        return LocalModelChatMessage.forState(
-            downloaded = modelDownloaded,
-            enabled = modelEnabled
+        return DiaryAssistantReply(
+            "No he encontrado datos suficientes para responder con seguridad. Prueba indicando qué buscas y, si aplica, una fecha o un lugar."
         )
     }
 
     fun clearHistory() {
-        localHistory.clear()
         lastDeterministicQuery = null
-        contextBuilder.invalidate()
     }
 
-    private suspend fun tryDeterministicAnswer(userMessage: String): String? {
+    private suspend fun tryDeterministicAnswer(userMessage: String): DiaryAssistantReply? {
         val query = resolveFollowUpQuery(queryInterpreter.interpret(userMessage), userMessage)
         if (query.intent == ChatIntent.UNKNOWN) return null
         rememberQueryScope(query)
@@ -79,7 +54,10 @@ class DiaryAssistant(
         val retrieved = contextRetriever.retrieve(query) ?: return null
         val factualAnswer = answerComposer.compose(query, retrieved) ?: return null
         lastDeterministicQuery = query
-        return tryGroundedLocalAnswer(query, retrieved, factualAnswer) ?: factualAnswer
+        return DiaryAssistantReply(
+            text = tryGroundedLocalAnswer(query, retrieved, factualAnswer) ?: factualAnswer,
+            sources = DiaryAssistantSources.from(query, retrieved)
+        )
     }
 
     private fun rememberQueryScope(query: ChatQuery) {
@@ -178,62 +156,6 @@ class DiaryAssistant(
         }
     }
 
-    // ── Gemma local (simulated multi-turn) ────────────────────────────────────
-
-    private suspend fun sendWithLocalModel(userMessage: String): String? {
-        // Use size-limited context to avoid overflowing the LiteRT-LM KV cache
-        val compactContext = contextBuilder.getContextForLocalModel()
-        val today = todayString()
-
-        // System instruction: diary context + persona.
-        // Passed separately so GemmaClient can inject it as a proper system turn
-        // (LiteRT-LM: ConversationConfig.systemInstruction; MediaPipe: <start_of_turn>system).
-        val systemInstruction = buildLocalSystemPrompt(compactContext, today)
-
-        // Prompt: only conversation history + current question (no context duplication)
-        val prompt = buildString {
-            val historyWindow = localHistory.takeLast(MAX_LOCAL_HISTORY_MESSAGES)
-            if (historyWindow.isNotEmpty()) {
-                historyWindow.forEach { (role, text) ->
-                    appendLine("$role: $text")
-                }
-            }
-            appendLine("Usuario: $userMessage")
-            append("Asistente:")
-        }
-
-        val reply = GemmaClient.generate(
-            context = context,
-            prompt = prompt,
-            maxTokens = 1024,
-            systemInstruction = systemInstruction
-        ) ?: return null
-
-        // Store exchange in local history
-        localHistory.add("Usuario" to userMessage)
-        localHistory.add("Asistente" to reply)
-
-        return reply
-    }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private fun buildLocalSystemPrompt(diaryContext: String, today: String) = buildString {
-        appendLine("Eres el asistente personal local de Trama.")
-        appendLine("El contexto incluido es una vista compacta y puede estar truncado por límites del modelo on-device.")
-        appendLine("Para preguntas factuales, usa solo hechos presentes en el contexto o en los hechos recuperados por la app.")
-        appendLine("Si no tienes información suficiente, dilo con claridad; no inventes datos.")
-        appendLine("Responde siempre en español, de forma directa y concisa.")
-        appendLine("Fecha actual: $today.")
-        appendLine()
-        append(diaryContext)
-    }
-
-    private fun todayString(): String =
-        SimpleDateFormat("EEEE d 'de' MMMM yyyy", Locale("es"))
-            .format(Date())
-            .replaceFirstChar { it.uppercase() }
-
     private fun normalize(value: String): String =
         Normalizer.normalize(value, Normalizer.Form.NFD)
             .replace("\\p{Mn}+".toRegex(), "")
@@ -241,18 +163,70 @@ class DiaryAssistant(
 
     companion object {
         private const val TAG = "DiaryAssistant"
-        /** Max conversation messages kept in local history (Gemma 4 E4B: 128K token window) */
-        private const val MAX_LOCAL_HISTORY_MESSAGES = 60 // 30 user + 30 assistant
     }
 }
 
-internal object LocalModelChatMessage {
-    fun forState(downloaded: Boolean, enabled: Boolean): String = when {
-        !downloaded ->
-            "Para preguntas abiertas, instala el modelo local en Ajustes → IA local."
-        !enabled ->
-            "El modelo local ya está instalado, pero está desactivado. Activa «Usar modelo local» en Ajustes → IA local."
-        else ->
-            "El modelo local está instalado y activado, pero no ha podido iniciarse. Revisa el modelo en Ajustes → IA local e inténtalo de nuevo."
+data class DiaryAssistantReply(
+    val text: String,
+    val sources: List<DiaryAssistantSource> = emptyList()
+)
+
+sealed interface DiaryAssistantSource {
+    val id: Long
+    val label: String
+
+    data class Entry(override val id: Long, override val label: String) : DiaryAssistantSource
+    data class Place(override val id: Long, override val label: String) : DiaryAssistantSource
+    data class Recording(override val id: Long, override val label: String) : DiaryAssistantSource
+}
+
+internal object DiaryAssistantSources {
+    fun from(query: ChatQuery, context: ChatRetrievedContext): List<DiaryAssistantSource> {
+        val sources: List<DiaryAssistantSource> = when (context) {
+            is ChatRetrievedContext.Day -> buildList<DiaryAssistantSource> {
+                when (query.intent) {
+                    ChatIntent.COMPLETED_TASKS -> context.completedEntries.forEach {
+                        add(DiaryAssistantSource.Entry(it.id, it.displayText))
+                    }
+                    ChatIntent.DAY_PLACES, ChatIntent.FIRST_PLACE, ChatIntent.LAST_PLACE -> Unit
+                    else -> {
+                        context.entries.forEach { add(DiaryAssistantSource.Entry(it.id, it.displayText)) }
+                        context.recordings.forEach {
+                            add(DiaryAssistantSource.Recording(it.id, it.title ?: "Grabación"))
+                        }
+                    }
+                }
+                if (query.intent != ChatIntent.COMPLETED_TASKS) {
+                    context.timelineEvents.mapNotNull { it.placeId }.forEach { placeId ->
+                        context.placesById[placeId]?.let { add(DiaryAssistantSource.Place(it.id, it.name)) }
+                    }
+                }
+            }
+            is ChatRetrievedContext.PlaceLookup -> context.results.map {
+                DiaryAssistantSource.Place(it.place.id, it.place.name)
+            }
+            is ChatRetrievedContext.PlaceCollection -> context.places.map {
+                DiaryAssistantSource.Place(it.place.id, it.place.name)
+            }
+            is ChatRetrievedContext.GenericFacts -> buildList<DiaryAssistantSource> {
+                context.entries.forEach { add(DiaryAssistantSource.Entry(it.id, it.displayText)) }
+                context.recordings.forEach {
+                    add(DiaryAssistantSource.Recording(it.id, it.title ?: "Grabación"))
+                }
+                context.timelineEvents.mapNotNull { it.placeId }.forEach { placeId ->
+                    context.placesById[placeId]?.let { add(DiaryAssistantSource.Place(it.id, it.name)) }
+                }
+            }
+        }
+        return sources.distinctBy { source ->
+            val kind = when (source) {
+                is DiaryAssistantSource.Entry -> "entry"
+                is DiaryAssistantSource.Place -> "place"
+                is DiaryAssistantSource.Recording -> "recording"
+            }
+            "$kind:${source.id}"
+        }.take(MAX_SOURCES)
     }
+
+    private const val MAX_SOURCES = 6
 }

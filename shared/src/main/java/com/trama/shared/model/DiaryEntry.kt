@@ -1,10 +1,14 @@
 package com.trama.shared.model
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import java.util.Locale
 
-@Entity(tableName = "diary_entries")
+@Entity(
+    tableName = "diary_entries",
+    indices = [Index(value = ["parentEntryId", "sourceCaptureId"], name = "index_diary_entries_parent_source", unique = true)]
+)
 data class DiaryEntry(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
@@ -31,7 +35,20 @@ data class DiaryEntry(
     val duplicateOfId: Long? = null,                // ID of original entry if this is a duplicate
     val sourceRecordingId: Long? = null,             // ID of the Recording this action was extracted from
     val userConfirmedAt: Long? = null,               // explicit human confirmation timestamp
-    val verificationSource: String? = null           // where the human confirmation happened
+    val verificationSource: String? = null,          // where the human confirmation happened
+    // Trust contract added in schema v18. A durable memory is never used as the
+    // mutable action proposal: processing creates ACTION rows linked to it.
+    val contentKind: String = EntryContentKind.ACTION,
+    val sourceCaptureId: String? = null,
+    val parentEntryId: Long? = null,
+    val revision: Long = 0,
+    val humanDecision: String? = null,
+    val humanDecisionAt: Long? = null,
+    val triggerPhrase: String? = null,
+    val triggerConfigVersion: Long? = null,
+    val externalState: String? = null,
+    val externalEventId: Long? = null,
+    val externalUpdatedAt: Long? = null
 ) {
     /** Display text: cleanText > raw Whisper text */
     val displayText: String
@@ -71,10 +88,28 @@ object EntryVerificationSource {
 
 /** Entry lifecycle status */
 object EntryStatus {
+    const val SAVED = "SAVED" // Durable memory; enrichment cannot hide it.
     const val PENDING = "PENDING"
     const val COMPLETED = "COMPLETED"
     const val DISCARDED = "DISCARDED"
     const val SUGGESTED = "SUGGESTED" // Extracted from recording, awaiting user confirmation
+}
+
+object EntryContentKind {
+    const val MEMORY = "MEMORY"
+    const val ACTION = "ACTION"
+}
+
+object EntryHumanDecision {
+    const val ACCEPTED = "ACCEPTED"
+    const val COMPLETED = "COMPLETED"
+    const val DISCARDED = "DISCARDED"
+}
+
+object EntryExternalState {
+    const val SCHEDULED = "SCHEDULED"
+    const val EDITOR_OPENED = "EDITOR_OPENED"
+    const val FAILED = "FAILED"
 }
 
 /** Action type detected by AI */

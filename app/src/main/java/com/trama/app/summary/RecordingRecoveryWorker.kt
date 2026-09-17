@@ -8,6 +8,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.trama.app.audio.PcmRecordingStorage
+import com.trama.app.service.RecordingState
 import com.trama.shared.data.DatabaseProvider
 import com.trama.shared.model.RecordingStatus
 
@@ -35,7 +36,14 @@ class RecordingRecoveryWorker(
         val interrupted = repository.getRecordingsByStatuses(
             listOf(RecordingStatus.CAPTURING, RecordingStatus.TRANSCRIBING)
         )
+        var retryNeeded = false
         interrupted.forEach { recording ->
+            if (RecordingState.isRecording.value &&
+                RecordingState.activeRecordingId.value == recording.id
+            ) {
+                Log.i(TAG, "Skipping active recording ${recording.id}")
+                return@forEach
+            }
             val file = PcmRecordingStorage.resolveManagedFile(
                 applicationContext,
                 recording.audioFilePath
@@ -48,6 +56,8 @@ class RecordingRecoveryWorker(
             val finalized = runCatching { PcmRecordingStorage.finalizePending(file) }
                 .getOrElse { error ->
                     Log.e(TAG, "Could not finalize recording ${recording.id}", error)
+                    if (runAttemptCount < 3) retryNeeded = true
+                    else repository.updateRecordingStatus(recording.id, RecordingStatus.FAILED)
                     return@forEach
                 }
             repository.updateCapturedRecordingAudio(
@@ -62,6 +72,6 @@ class RecordingRecoveryWorker(
             )
             RecordingTranscriptionWorker.enqueue(applicationContext, recording.id)
         }
-        return Result.success()
+        return if (retryNeeded) Result.retry() else Result.success()
     }
 }

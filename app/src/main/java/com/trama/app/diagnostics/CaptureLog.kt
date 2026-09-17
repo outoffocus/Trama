@@ -77,8 +77,14 @@ object CaptureLog {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = false }
     private val fileLock = ReentrantLock()
+    private val rotationSchedule = LogRotationSchedule()
 
     @Volatile private var file: File? = null
+    @Volatile private var contentLoggingEnabled: Boolean = false
+
+    fun setContentLoggingEnabled(enabled: Boolean) {
+        contentLoggingEnabled = enabled
+    }
 
     /** Wire the log to a file under the app's private storage. Safe to call repeatedly. */
     fun init(context: Context) {
@@ -107,15 +113,19 @@ object CaptureLog {
         } else {
             meta
         }
+        val visibleText = text.takeIf { contentLoggingEnabled }
         val metaStr = guardedMeta
             .filterValues { it != null }
+            .filterKeys { key ->
+                contentLoggingEnabled || key.lowercase() !in SENSITIVE_META_KEYS
+            }
             .mapValues { (_, v) -> v.toString() }
 
         // Logcat line — keep short and parseable.
         val metaText = if (metaStr.isEmpty()) "" else " " + metaStr.entries.joinToString(" ") { (k, v) ->
             "$k=${sanitize(v)}"
         }
-        val textPart = if (text.isNullOrBlank()) "" else " text=\"${sanitize(text.take(160))}\""
+        val textPart = if (visibleText.isNullOrBlank()) "" else " text=\"${sanitize(visibleText.take(160))}\""
         Log.i(TAG, "gate=${gate.name} result=${result.name}$textPart$metaText")
 
         // File append.
@@ -123,7 +133,7 @@ object CaptureLog {
         val line = try {
             json.encodeToString(
                 Event.serializer(),
-                Event(ts = ts, gate = gate.name, result = result.name, text = text, meta = metaStr)
+                Event(ts = ts, gate = gate.name, result = result.name, text = visibleText, meta = metaStr)
             )
         } catch (_: Throwable) {
             return
@@ -137,6 +147,11 @@ object CaptureLog {
             }
         }
     }
+
+    private val SENSITIVE_META_KEYS = setOf(
+        "text", "transcript", "transcriptpreview", "gatetext", "trigger",
+        "triggertext", "signaltext", "originaltext", "cleantext"
+    )
 
     /**
      * Convenience helper to log a user-initiated entry deletion.
@@ -211,9 +226,9 @@ object CaptureLog {
 
     private fun rotateIfNeeded(f: File) {
         if (!f.exists()) return
-        if (f.length() < MAX_FILE_BYTES) return
+        if (!rotationSchedule.shouldRotate(f.length(), System.nanoTime())) return
         val cutoff = System.currentTimeMillis() - RETENTION_MS
-        val kept = try {
+        val recent = try {
             f.readLines().filter { line ->
                 val ev = try {
                     json.decodeFromString(Event.serializer(), line)
@@ -225,12 +240,20 @@ object CaptureLog {
         } catch (_: Throwable) {
             return
         }
-        f.writeText(kept.joinToString("\n", postfix = "\n"))
+        val kept = ArrayDeque<String>()
+        var keptBytes = 0L
+        for (line in recent.asReversed()) {
+            val lineBytes = line.toByteArray(Charsets.UTF_8).size + 1L
+            if (keptBytes + lineBytes > MAX_FILE_BYTES) break
+            kept.addFirst(line)
+            keptBytes += lineBytes
+        }
+        f.writeText(kept.joinToString("\n", postfix = if (kept.isEmpty()) "" else "\n"))
     }
 
     private fun sanitize(s: String): String =
         s.replace('\n', ' ').replace('\r', ' ').replace("\"", "'").trim()
 
     private const val RETENTION_MS = 72L * 60 * 60 * 1000 // 72h
-    private const val MAX_FILE_BYTES = 2L * 1024 * 1024   // 2 MB - rotate opportunistically
+    private const val MAX_FILE_BYTES = 2L * 1024 * 1024
 }

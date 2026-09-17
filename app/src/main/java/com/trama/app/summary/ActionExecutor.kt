@@ -1,10 +1,8 @@
 package com.trama.app.summary
 
-import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.provider.AlarmClock
 import android.provider.CalendarContract
 import android.util.Log
 import android.widget.Toast
@@ -34,7 +32,7 @@ object ActionExecutor {
                 ActionType.REMINDER -> createReminder(context, action)
                 ActionType.TODO -> createTodo(context, action)
                 ActionType.MESSAGE -> sendMessage(context, action)
-                ActionType.CALL -> makeCall(context, action)
+                ActionType.CALL -> createReminder(context, action)
                 ActionType.NOTE -> showNote(context, action)
             }
         } catch (e: Exception) {
@@ -165,22 +163,16 @@ object ActionExecutor {
     }
 
     private fun createReminder(context: Context, action: SuggestedAction) {
-        val intent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
-            putExtra(AlarmClock.EXTRA_MESSAGE, action.title)
-            putExtra(AlarmClock.EXTRA_SKIP_UI, false)
-
-            action.datetime?.let { dt ->
-                try {
-                    val date = isoFormat.parse(dt)
-                    if (date != null) {
-                        val cal = java.util.Calendar.getInstance().apply { time = date }
-                        putExtra(AlarmClock.EXTRA_HOUR, cal.get(java.util.Calendar.HOUR_OF_DAY))
-                        putExtra(AlarmClock.EXTRA_MINUTES, cal.get(java.util.Calendar.MINUTE))
-                    }
-                } catch (_: Exception) {}
+        if (CalendarHelper.hasWriteCalendarPermission(context)) {
+            val id = CalendarHelper.insertEventFromAction(context, action, isReminder = true)
+            if (id != null) {
+                Toast.makeText(context, "Evento con aviso creado", Toast.LENGTH_SHORT).show()
+                return
             }
         }
-        context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        // A clock alarm cannot represent the requested calendar date.
+        createCalendarEventViaIntent(context, action)
+        Toast.makeText(context, "Revisa la fecha y el aviso en Calendario", Toast.LENGTH_LONG).show()
     }
 
     private fun createTodo(context: Context, action: SuggestedAction) {
@@ -188,23 +180,80 @@ object ActionExecutor {
     }
 
     private fun sendMessage(context: Context, action: SuggestedAction) {
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, action.description.ifBlank { action.title })
+        val source = listOf(action.title, action.description, action.contact.orEmpty())
+            .joinToString(" ")
+        if (!EmailActionClassifier.isEmail(source)) {
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, action.description.ifBlank { action.title })
+            }
+            context.startActivity(
+                Intent.createChooser(shareIntent, "Enviar")
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+            return
         }
-        val chooser = Intent.createChooser(intent, "Enviar mensaje a ${action.contact ?: "..."}")
-        context.startActivity(chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-    }
+        val recipient = action.contact
+            ?.takeIf { EMAIL_REGEX.matches(it.trim()) }
+            ?.trim()
+            .orEmpty()
+        val body = action.description.ifBlank { action.title }
+        val gmailIntent = Intent(Intent.ACTION_SENDTO).apply {
+            data = Uri.parse("mailto:${Uri.encode(recipient)}")
+            `package` = GMAIL_PACKAGE
+            putExtra(Intent.EXTRA_SUBJECT, action.title)
+            putExtra(Intent.EXTRA_TEXT, body)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        if (gmailIntent.resolveActivity(context.packageManager) != null) {
+            context.startActivity(gmailIntent)
+            Toast.makeText(context, "Revisa y envía el correo en Gmail", Toast.LENGTH_SHORT).show()
+            return
+        }
 
-    private fun makeCall(context: Context, action: SuggestedAction) {
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            data = Uri.parse("content://contacts/people/")
+        val emailIntent = Intent(Intent.ACTION_SENDTO).apply {
+            data = Uri.parse("mailto:${Uri.encode(recipient)}")
+            putExtra(Intent.EXTRA_SUBJECT, action.title)
+            putExtra(Intent.EXTRA_TEXT, body)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        Toast.makeText(context, "Busca a: ${action.contact ?: action.title}", Toast.LENGTH_LONG).show()
+        if (emailIntent.resolveActivity(context.packageManager) != null) {
+            context.startActivity(emailIntent)
+            Toast.makeText(context, "Revisa y envía el correo", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        Toast.makeText(context, "No se encontró una app de correo", Toast.LENGTH_LONG).show()
     }
 
     private fun showNote(context: Context, action: SuggestedAction) {
-        Toast.makeText(context, action.title, Toast.LENGTH_LONG).show()
+        val text = action.description.ifBlank { action.title }
+        val keepIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            `package` = "com.google.android.keep"
+            putExtra(Intent.EXTRA_SUBJECT, action.title)
+            putExtra(Intent.EXTRA_TEXT, text)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        if (keepIntent.resolveActivity(context.packageManager) != null) {
+            context.startActivity(keepIntent)
+            Toast.makeText(context, "Revisa y guarda la nota en Keep", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        context.startActivity(
+            Intent.createChooser(shareIntent, "Guardar en una app de notas")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
     }
+
+    private const val GMAIL_PACKAGE = "com.google.android.gm"
+    private val EMAIL_REGEX = Regex(
+        "[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}",
+        RegexOption.IGNORE_CASE
+    )
 }

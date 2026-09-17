@@ -10,6 +10,9 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import com.trama.shared.model.TimelineEvent
+import com.trama.shared.model.TimelineEventType
+import java.util.Calendar
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -497,6 +500,31 @@ class ActionItemProcessorTest {
         assertTrue(prompt.contains("resuelve referencias"))
         assertTrue(prompt.contains("Contestarle el mensaje a Sadoth"))
         assertTrue(prompt.contains("A Luis le toca pagar la piscina"))
+    }
+
+    @Test
+    fun `calendar context is bounded and normalizes event text`() {
+        val start = Calendar.getInstance().apply {
+            set(2026, Calendar.SEPTEMBER, 14, 10, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val events = (1..15).map { index ->
+            TimelineEvent(
+                id = index.toLong(),
+                type = TimelineEventType.CALENDAR,
+                timestamp = start + index * 60_000L,
+                title = "Reunión   de\nproducto $index",
+                subtitle = "Oficina\nDescripción que no debe entrar"
+            )
+        }
+
+        val context = processor.formatCalendarContext(events).orEmpty()
+
+        assertTrue(context.startsWith("Calendario próximo (7 días):"))
+        assertEquals(12, context.lineSequence().count { it.startsWith("- ") })
+        assertTrue(context.contains("Reunión de producto 1 · Oficina"))
+        assertTrue(!context.contains("Descripción que no debe entrar"))
+        assertTrue(!context.contains("producto 13"))
     }
 
     @Test

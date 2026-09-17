@@ -103,6 +103,7 @@ class ChatContextRetriever(
         } else {
             repository.getAllOnce()
         }
+            .filter { it.status != com.trama.shared.model.EntryStatus.DISCARDED }
             .filter { matchesGenericEntry(it, query) }
             .sortedWith(
                 compareByDescending<DiaryEntry> { genericEntryScore(it, query) }

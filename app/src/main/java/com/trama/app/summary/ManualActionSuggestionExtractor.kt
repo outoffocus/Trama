@@ -159,8 +159,8 @@ object ManualActionSuggestionExtractor {
     private fun isTemporal(token: String): Boolean = token in TEMPORAL_TOKENS
 
     private fun cleanText(raw: String, displayTrigger: String?): String {
-        val rawTrimmed = raw.trim()
-        val hasOwnTrigger = leadingTriggerRegex.containsMatchIn(rawTrimmed)
+        val hasOwnTrigger = leadingTriggerRegex.containsMatchIn(raw.trim())
+        val rawTrimmed = ActionTextNormalizer.focus(raw)
         val noTrigger = rawTrimmed.replaceFirst(leadingTriggerRegex, "")
         val cleaned = noTrigger
             .trim()

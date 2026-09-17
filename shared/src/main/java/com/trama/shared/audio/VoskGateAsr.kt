@@ -29,12 +29,15 @@ class VoskGateAsr(
     override val name: String
         get() = if (isAvailable) "vosk-gate:model" else "vosk-gate:unavailable"
 
-    override val isAvailable: Boolean
+    override val isAvailable: Boolean by lazy {
         // Check that the acoustic model file exists AND has real content.
         // A non-empty directory listing alone is not enough — placeholder 0-byte files
         // are committed to VCS and would make listAssets() return non-empty even when
         // the real model hasn't been downloaded yet.
-        get() = assetCache.assetSize("$MODEL_DIR/am/final.mdl") > 0L
+        // APK assets cannot change during this instance's lifetime. The capture
+        // loop checks this on every audio frame, so never reopen the model here.
+        assetCache.assetSize("$MODEL_DIR/am/final.mdl") > 0L
+    }
 
     override suspend fun transcribe(window: CapturedAudioWindow, languageTag: String): String? {
         val pcm = window.mergedPcm()

@@ -6,10 +6,13 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.trama.app.backup.BackupScheduler
 import com.trama.app.service.ServiceController
 import com.trama.app.service.ContinuousListeningPolicy
 import com.trama.app.service.ListenerRecoveryNotifier
 import com.trama.app.summary.RecordingRecoveryWorker
+import com.trama.app.summary.SummaryScheduler
+import com.trama.app.summary.WeeklyAgendaScheduler
 import com.trama.app.ui.SettingsDataStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -19,23 +22,42 @@ import kotlinx.coroutines.launch
 class BootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
-
-        RecordingRecoveryWorker.enqueue(context)
+        val action = intent.action ?: return
+        if (!ScheduleRecoveryPolicy.isSupported(action)) return
+        val isBoot = action == Intent.ACTION_BOOT_COMPLETED
+        if (isBoot) RecordingRecoveryWorker.enqueue(context)
 
         val pendingResult = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val autoStart = SettingsDataStore(context).autoStart.first()
+                val settings = SettingsDataStore(context)
+                SummaryScheduler.schedule(context)
+                BackupScheduler.reconcile(
+                    context = context,
+                    enabled = settings.backupEnabled.first(),
+                    hour = settings.backupHour.first(),
+                    minute = settings.backupMinute.first(),
+                    realignExisting = true
+                )
+                if (settings.weeklyAgendaEnabled.first()) {
+                    WeeklyAgendaScheduler.schedule(
+                        context,
+                        settings.weeklyAgendaDayOfWeek.first(),
+                        settings.weeklyAgendaHour.first()
+                    )
+                }
+                Log.i("ScheduleRecovery", "Schedules realigned after $action")
+
+                if (!isBoot) return@launch
+
+                val autoStart = settings.autoStart.first()
                 val shouldRestore = ServiceController.shouldBeRunning(context)
                 if (ContinuousListeningPolicy.shouldRequestBootReactivation(
                         continuousListeningEnabled = shouldRestore,
                         reminderEnabled = autoStart
                     )
                 ) {
-                    // A microphone foreground service cannot be started directly
-                    // from BOOT_COMPLETED on current Android versions. Ask for an
-                    // explicit user interaction instead.
+                    // Android requires a visible user action before starting the microphone.
                     val notified = ListenerRecoveryNotifier.show(context, reason = "boot_completed")
                     Log.i(
                         "BootReceiver",
@@ -46,7 +68,7 @@ class BootReceiver : BroadcastReceiver() {
                     Log.i("BootReceiver", "Boot completed, listening or reminder disabled")
                 }
 
-                val locationEnabled = SettingsDataStore(context).locationEnabled.first()
+                val locationEnabled = settings.locationEnabled.first()
                 val hasFineLocationPermission = ContextCompat.checkSelfPermission(
                     context,
                     android.Manifest.permission.ACCESS_FINE_LOCATION
@@ -64,4 +86,12 @@ class BootReceiver : BroadcastReceiver() {
             }
         }
     }
+}
+
+internal object ScheduleRecoveryPolicy {
+    fun isSupported(action: String): Boolean = action in setOf(
+        Intent.ACTION_BOOT_COMPLETED,
+        Intent.ACTION_TIME_CHANGED,
+        Intent.ACTION_TIMEZONE_CHANGED
+    )
 }

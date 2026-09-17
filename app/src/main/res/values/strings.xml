@@ -1,4 +1,42 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Trama</string>
+    <string name="widget_title">TRAMA</string>
+    <string name="widget_description">Todas las acciones de hoy y controles rápidos de Trama</string>
+    <string name="widget_today">HOY · TRAMA</string>
+    <string name="widget_today_actions">ACCIONES</string>
+    <string name="widget_preview_date">Martes, 15 septiembre</string>
+    <string name="widget_refresh">Actualizar widget</string>
+    <string name="widget_empty">Todo al día</string>
+    <string name="widget_timeline_empty">Tu día está despejado</string>
+    <string name="widget_zero_pending">0 pendientes</string>
+    <string name="widget_zero_events">0 eventos</string>
+    <string name="widget_zero_actions">0 acciones</string>
+    <string name="widget_actions_empty">No hay acciones para hoy</string>
+    <string name="widget_device_action">Pasar escucha al reloj</string>
+    <string name="widget_status_listening">Escuchando · En teléfono</string>
+    <string name="widget_status_trigger">Palabra clave reconocida · En teléfono</string>
+    <string name="widget_status_watch">Escuchando · En reloj</string>
+    <string name="widget_status_starting">Iniciando escucha · En teléfono</string>
+    <string name="widget_status_paused">Escucha pausada · En teléfono</string>
+    <string name="widget_status_failed">Error de escucha · En teléfono</string>
+    <string name="widget_status_processing">Procesando reunión · En teléfono</string>
+    <string name="widget_status_idle">En espera · En teléfono</string>
+    <string name="widget_status_recording" formatted="false">Grabando · %s · En teléfono</string>
+    <string name="widget_start_listening">Iniciar escucha</string>
+    <string name="widget_pause_listening">Pausar escucha</string>
+    <string name="widget_start_recording">Grabar reunión</string>
+    <string name="widget_stop_recording">Detener grabación</string>
+    <plurals name="widget_pending_count">
+        <item quantity="one">%d pendiente</item>
+        <item quantity="other">%d pendientes</item>
+    </plurals>
+    <plurals name="widget_timeline_count">
+        <item quantity="one">%d evento</item>
+        <item quantity="other">%d eventos</item>
+    </plurals>
+    <plurals name="widget_action_count">
+        <item quantity="one">%d acción</item>
+        <item quantity="other">%d acciones</item>
+    </plurals>
 </resources>

@@ -123,7 +123,7 @@ fun SectionRule(
 }
 
 /** Status pill shown in headers. Single-line state indicator with a glowing dot. */
-enum class TramaStatus { Idle, Listening, Recording, Watch, Location, Error }
+enum class TramaStatus { Idle, Listening, TriggerRecognized, Recording, Watch, Location, Error }
 
 @Composable
 fun StatusPill(
@@ -136,6 +136,7 @@ fun StatusPill(
     val (dot, bg, fg, defaultLabel) = when (status) {
         TramaStatus.Idle -> Quad(t.dimText, t.dimText.copy(alpha = 0.18f), t.mutedText, "Inactivo")
         TramaStatus.Listening -> Quad(t.amber, t.amberBg, t.amber, "Escuchando")
+        TramaStatus.TriggerRecognized -> Quad(t.teal, t.teal.copy(alpha = 0.18f), t.teal, "Palabra clave reconocida")
         TramaStatus.Recording -> Quad(t.red, t.redBg, t.red, "Grabando")
         TramaStatus.Watch -> Quad(t.watch, t.watchBg, t.watch, "En el reloj")
         TramaStatus.Location -> Quad(t.teal, t.tealBg, t.teal, "Ubicación activa")

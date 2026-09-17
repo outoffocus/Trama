@@ -3,7 +3,9 @@ package com.trama.app.summary
 import android.Manifest
 import android.content.ContentUris
 import android.content.Context
+import android.content.ContentProviderOperation
 import android.content.ContentValues
+import android.database.Cursor
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -100,6 +102,17 @@ object CalendarHelper {
             return emptyList()
         }
         return queryEvents(context, startMillis, endMillis, calendarIds)
+    }
+
+    /** Only successful, complete reads may be used to remove imported events. */
+    fun getEventsForRangeResult(
+        context: Context,
+        startMillis: Long,
+        endMillis: Long,
+        calendarIds: Set<Long>
+    ): Result<List<CalendarEvent>> = runCatching {
+        check(hasCalendarPermission(context)) { "Calendar read permission unavailable" }
+        queryEventsOrThrow(context, startMillis, endMillis, calendarIds)
     }
 
     fun openEvent(context: Context, event: CalendarEvent) {
@@ -199,7 +212,7 @@ object CalendarHelper {
                 startMillis = event.timestamp,
                 endMillis = event.endTimestamp ?: event.timestamp,
                 location = null,
-                allDay = false
+                allDay = CalendarImportIdentity.allDay(event.dataJson)
             )
         )
     }
@@ -251,8 +264,19 @@ object CalendarHelper {
         startMs: Long,
         endMs: Long,
         calendarIds: Set<Long>? = null
+    ): List<CalendarEvent> = runCatching {
+        queryEventsOrThrow(context, startMs, endMs, calendarIds)
+    }.getOrElse {
+        Log.e(TAG, "Failed to query calendar events", it)
+        emptyList()
+    }
+
+    private fun queryEventsOrThrow(
+        context: Context,
+        startMs: Long,
+        endMs: Long,
+        calendarIds: Set<Long>? = null
     ): List<CalendarEvent> {
-        val events = mutableListOf<CalendarEvent>()
         if (calendarIds != null && calendarIds.isEmpty()) {
             return emptyList()
         }
@@ -274,7 +298,7 @@ object CalendarHelper {
             .appendPath(endMs.toString())
             .build()
 
-        try {
+        run {
             val selection = calendarIds
                 ?.takeIf { it.isNotEmpty() }
                 ?.joinToString(
@@ -286,27 +310,27 @@ object CalendarHelper {
                 ?.takeIf { it.isNotEmpty() }
                 ?.map { it.toString() }
                 ?.toTypedArray()
-            context.contentResolver.query(
+            val cursor = context.contentResolver.query(
                 uri, projection, selection, selectionArgs,
                 "${CalendarContract.Instances.BEGIN} ASC"
-            )?.use { cursor ->
-                while (cursor.moveToNext()) {
-                    events.add(
-                        CalendarEvent(
-                            id = cursor.getLong(0),
-                            calendarId = cursor.getLong(1),
-                            title = cursor.getString(2) ?: "(sin título)",
-                            description = cursor.getString(3),
-                            startMillis = cursor.getLong(4),
-                            endMillis = cursor.getLong(5),
-                            location = cursor.getString(6),
-                            allDay = cursor.getInt(7) == 1
-                        )
-                    )
-                }
+            ) ?: error("Calendar provider returned no cursor")
+            return readEventCursor(cursor)
+        }
+    }
+
+    internal fun readEventCursor(cursor: Cursor?): List<CalendarEvent> {
+        checkNotNull(cursor) { "Calendar provider returned no cursor" }
+        val events = mutableListOf<CalendarEvent>()
+        cursor.use {
+            while (cursor.moveToNext()) {
+                events += CalendarEvent(
+                    id = cursor.getLong(0), calendarId = cursor.getLong(1),
+                    title = cursor.getString(2) ?: "(sin título)",
+                    description = cursor.getString(3), startMillis = cursor.getLong(4),
+                    endMillis = cursor.getLong(5), location = cursor.getString(6),
+                    allDay = cursor.getInt(7) == 1
+                )
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to query calendar events", e)
         }
 
         return events
@@ -314,7 +338,7 @@ object CalendarHelper {
 
     /**
      * Insert a new calendar event directly via ContentResolver.
-     * @param reminderMinutes If > 0, adds a reminder notification N minutes before the event.
+     * @param reminderMinutes null means no reminder; zero means at the event start.
      * Returns the event ID if successful, null otherwise.
      */
     fun insertEvent(
@@ -324,7 +348,7 @@ object CalendarHelper {
         startMillis: Long,
         endMillis: Long = startMillis + 3600_000, // default 1 hour
         location: String? = null,
-        reminderMinutes: Int = 0
+        reminderMinutes: Int? = null
     ): Long? {
         if (!hasWriteCalendarPermission(context)) {
             Log.w(TAG, "No WRITE_CALENDAR permission")
@@ -337,48 +361,8 @@ object CalendarHelper {
             return null
         }
 
-        val values = ContentValues().apply {
-            put(CalendarContract.Events.CALENDAR_ID, calendarId)
-            put(CalendarContract.Events.TITLE, title)
-            put(CalendarContract.Events.DESCRIPTION, description ?: "")
-            put(CalendarContract.Events.DTSTART, startMillis)
-            put(CalendarContract.Events.DTEND, endMillis)
-            put(CalendarContract.Events.EVENT_TIMEZONE, TimeZone.getDefault().id)
-            location?.let { put(CalendarContract.Events.EVENT_LOCATION, it) }
-        }
-
-        return try {
-            val uri = context.contentResolver.insert(CalendarContract.Events.CONTENT_URI, values)
-            val eventId = uri?.let { ContentUris.parseId(it) }
-            Log.i(TAG, "Calendar event created: id=$eventId, title='$title'")
-
-            // Add reminder if requested
-            if (eventId != null && reminderMinutes > 0) {
-                addReminder(context, eventId, reminderMinutes)
-            }
-
-            eventId
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to insert calendar event", e)
-            null
-        }
-    }
-
-    /**
-     * Add a reminder (notification) to an existing calendar event.
-     */
-    private fun addReminder(context: Context, eventId: Long, minutesBefore: Int) {
-        val reminderValues = ContentValues().apply {
-            put(CalendarContract.Reminders.EVENT_ID, eventId)
-            put(CalendarContract.Reminders.MINUTES, minutesBefore)
-            put(CalendarContract.Reminders.METHOD, CalendarContract.Reminders.METHOD_ALERT)
-        }
-        try {
-            context.contentResolver.insert(CalendarContract.Reminders.CONTENT_URI, reminderValues)
-            Log.i(TAG, "Reminder added: $minutesBefore min before event $eventId")
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to add reminder", e)
-        }
+        return insertEventInCalendar(context, calendarId, title, description,
+            startMillis, endMillis, location, reminderMinutes)
     }
 
     /**
@@ -401,7 +385,7 @@ object CalendarHelper {
             title = action.title,
             description = action.description.ifBlank { null },
             startMillis = startMillis,
-            reminderMinutes = if (isReminder) 15 else 0
+            reminderMinutes = if (isReminder) 15 else null
         )
     }
 
@@ -536,9 +520,17 @@ object CalendarHelper {
         startMillis: Long,
         endMillis: Long = startMillis + 3600_000,
         location: String? = null,
-        reminderMinutes: Int = 0
+        reminderMinutes: Int? = null
     ): Long? {
         if (!hasWriteCalendarPermission(context)) return null
+
+        findMatchingEventId(
+            context, calendarId, title, description, startMillis, endMillis,
+            location, reminderMinutes
+        )?.let { existingId ->
+            Log.i(TAG, "Reusing existing calendar event $existingId for an identical dispatch")
+            return existingId
+        }
 
         val values = ContentValues().apply {
             put(CalendarContract.Events.CALENDAR_ID, calendarId)
@@ -551,15 +543,87 @@ object CalendarHelper {
         }
 
         return try {
-            val uri = context.contentResolver.insert(CalendarContract.Events.CONTENT_URI, values)
-            val eventId = uri?.let { ContentUris.parseId(it) }
-            Log.i(TAG, "Calendar event created in cal=$calendarId: id=$eventId, title='$title'")
-            if (eventId != null && reminderMinutes > 0) addReminder(context, eventId, reminderMinutes)
-            eventId
+            val operations = arrayListOf(
+                ContentProviderOperation.newInsert(CalendarContract.Events.CONTENT_URI)
+                    .withValues(values).build()
+            )
+            if (reminderMinutes != null) {
+                require(reminderMinutes >= 0) { "Invalid reminder offset" }
+                operations += ContentProviderOperation.newInsert(CalendarContract.Reminders.CONTENT_URI)
+                    .withValueBackReference(CalendarContract.Reminders.EVENT_ID, 0)
+                    .withValue(CalendarContract.Reminders.MINUTES, reminderMinutes)
+                    .withValue(CalendarContract.Reminders.METHOD, CalendarContract.Reminders.METHOD_ALERT)
+                    .build()
+            }
+            val results = context.contentResolver.applyBatch(CalendarContract.AUTHORITY, operations)
+            check(results.size == operations.size && results.all { it.uri != null }) {
+                "Calendar provider did not confirm the complete event and reminder"
+            }
+            ContentUris.parseId(checkNotNull(results[0].uri))
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to insert calendar event", e)
+            Log.e(TAG, "Failed to save calendar event and reminder", e)
             null
         }
+    }
+
+    /** Makes a repeated confirmation idempotent when the provider already committed it. */
+    private fun findMatchingEventId(
+        context: Context,
+        calendarId: Long,
+        title: String,
+        description: String?,
+        startMillis: Long,
+        endMillis: Long,
+        location: String?,
+        reminderMinutes: Int?
+    ): Long? {
+        if (!hasCalendarPermission(context)) return null
+        return runCatching {
+            context.contentResolver.query(
+                CalendarContract.Events.CONTENT_URI,
+                arrayOf(
+                    CalendarContract.Events._ID,
+                    CalendarContract.Events.DESCRIPTION,
+                    CalendarContract.Events.DTEND,
+                    CalendarContract.Events.EVENT_LOCATION
+                ),
+                "${CalendarContract.Events.CALENDAR_ID} = ? AND " +
+                    "${CalendarContract.Events.DTSTART} = ? AND " +
+                    "${CalendarContract.Events.TITLE} = ? AND " +
+                    "${CalendarContract.Events.DELETED} = 0",
+                arrayOf(calendarId.toString(), startMillis.toString(), title),
+                null
+            )?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    val eventId = cursor.getLong(0)
+                    val samePayload = cursor.getString(1).orEmpty() == description.orEmpty() &&
+                        cursor.getLong(2) == endMillis &&
+                        cursor.getString(3).orEmpty() == location.orEmpty()
+                    if (samePayload && hasExpectedReminder(context, eventId, reminderMinutes)) {
+                        return@use eventId
+                    }
+                }
+                null
+            }
+        }.onFailure { error ->
+            Log.w(TAG, "Unable to check for an existing calendar event", error)
+        }.getOrNull()
+    }
+
+    private fun hasExpectedReminder(context: Context, eventId: Long, minutes: Int?): Boolean {
+        if (minutes == null) return true
+        return context.contentResolver.query(
+            CalendarContract.Reminders.CONTENT_URI,
+            arrayOf(CalendarContract.Reminders._ID),
+            "${CalendarContract.Reminders.EVENT_ID} = ? AND " +
+                "${CalendarContract.Reminders.MINUTES} = ? AND " +
+                "${CalendarContract.Reminders.METHOD} = ?",
+            arrayOf(
+                eventId.toString(), minutes.toString(),
+                CalendarContract.Reminders.METHOD_ALERT.toString()
+            ),
+            null
+        )?.use { it.moveToFirst() } == true
     }
 
     /**

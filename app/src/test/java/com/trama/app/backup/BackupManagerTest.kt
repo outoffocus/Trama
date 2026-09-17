@@ -208,6 +208,8 @@ class BackupManagerTest {
                     name = "Casa",
                     latitude = 42.0,
                     longitude = -8.0,
+                    locality = "Vigo",
+                    address = "Rúa de exemplo, 1",
                     createdAt = 10,
                     updatedAt = 11
                 )
@@ -229,6 +231,8 @@ class BackupManagerTest {
         assertEquals(1, decoded.timelineEvents.size)
         assertEquals(2L, decoded.timelineEvents.single().placeId)
         assertEquals("Casa", decoded.places.single().name)
+        assertEquals("Vigo", decoded.places.single().locality)
+        assertEquals("Rúa de exemplo, 1", decoded.places.single().address)
         assertNotNull(decoded.dwellDetectionState)
         assertEquals("2026-08-09", decoded.dailyPages.single().date)
     }

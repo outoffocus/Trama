@@ -1,0 +1,502 @@
+{
+  "commit": "6176b92",
+  "date": "2026-09-07",
+  "command": "./gradlew :app:testDebugUnitTest :shared:testDebugUnitTest :wear:testDebugUnitTest --offline --rerun-tasks",
+  "build": "SUCCESSFUL",
+  "duration_seconds": 33,
+  "tasks_executed": 80,
+  "modules": {
+    "app": {
+      "totals": {
+        "tests": 347,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "suites": [
+        {
+          "name": "com.trama.app.ambient.AmbientContextTest",
+          "tests": 7,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.audio.CaptureGateResultPolicyTest",
+          "tests": 3,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.audio.CaptureProcessingSequencerTest",
+          "tests": 2,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.audio.CircularAudioBufferTest",
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.audio.ContextualCaptureAssemblerTest",
+          "tests": 3,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.audio.ContextualCapturePolicyTest",
+          "tests": 3,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.audio.PcmRecordingStorageTest",
+          "tests": 4,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.backup.BackupManagerTest",
+          "tests": 11,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.chat.ChatAnswerComposerTest",
+          "tests": 11,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.chat.ChatQueryInterpreterTest",
+          "tests": 16,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.chat.LocalModelChatMessageTest",
+          "tests": 3,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.diagnostics.CaptureMetricsTest",
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.diagnostics.DiagnosticsAnalyzerTest",
+          "tests": 4,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.location.DwellDetectorHysteresisTest",
+          "tests": 4,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.service.ContinuousListeningPolicyTest",
+          "tests": 3,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.service.DeduplicationManagerTest",
+          "tests": 11,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.service.IntentAcceptancePolicyTest",
+          "tests": 3,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.service.RecordingStateTest",
+          "tests": 15,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.service.ServiceControllerTest",
+          "tests": 5,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.service.UncertainGateFallbackPolicyTest",
+          "tests": 6,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.settings.SettingsEnforcementTest",
+          "tests": 12,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.settings.SettingsNavigationContractTest",
+          "tests": 3,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.speech.EntryValidatorHeuristicsTest",
+          "tests": 21,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.speech.IntentDetectorTest",
+          "tests": 19,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.speech.IntentPatternTest",
+          "tests": 15,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.summary.ActionItemProcessorTest",
+          "tests": 24,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.summary.ActionQualityGateProductTest",
+          "tests": 5,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.summary.DailyInsightExtractorTest",
+          "tests": 2,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.summary.DuplicateHeuristicsTest",
+          "tests": 2,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.summary.EntryActionBridgeTest",
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.summary.EntryModelTest",
+          "tests": 15,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.summary.LocalModelFileResolverTest",
+          "tests": 5,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.summary.ManualActionSuggestionExtractorTest",
+          "tests": 7,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.summary.RecordingProcessorTest",
+          "tests": 7,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.summary.SuggestedActionTest",
+          "tests": 12,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.summary.UserLearningDecisionEngineTest",
+          "tests": 6,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.ui.components.EntryCardLogicTest",
+          "tests": 26,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.ui.components.RecordingCardLogicTest",
+          "tests": 20,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.app.ui.screens.RecordingDetailLogicTest",
+          "tests": 29,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      ]
+    },
+    "shared": {
+      "totals": {
+        "tests": 172,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "suites": [
+        {
+          "name": "com.trama.shared.data.ConvertersTest",
+          "tests": 6,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.shared.data.DataModelIntegrationTest",
+          "tests": 10,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.shared.data.DiaryRepositoryTest",
+          "tests": 15,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.shared.data.MigrationTest",
+          "tests": 10,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.shared.data.SyncIntegrationTest",
+          "tests": 11,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.shared.model.DiaryEntryTest",
+          "tests": 12,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.shared.model.EntryActionTypeTest",
+          "tests": 4,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.shared.model.EntryPriorityTest",
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.shared.model.EntryStatusTest",
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.shared.model.RecordingStatusTest",
+          "tests": 2,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.shared.model.RecordingTest",
+          "tests": 6,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.shared.model.SourceTest",
+          "tests": 7,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.shared.model.StatusSyncPayloadTest",
+          "tests": 2,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.shared.model.SyncPayloadTest",
+          "tests": 6,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.shared.speech.CaptureIntentRulesTest",
+          "tests": 5,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.shared.speech.EntryValidatorHeuristicsTest",
+          "tests": 14,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.shared.speech.IntentDetectionCorpusTest",
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.shared.speech.IntentDetectorTest",
+          "tests": 26,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.shared.speech.IntentPatternTest",
+          "tests": 17,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.shared.speech.SimpleVADTest",
+          "tests": 12,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.shared.util.DayRangeTest",
+          "tests": 4,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      ]
+    },
+    "wear": {
+      "totals": {
+        "tests": 66,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "suites": [
+        {
+          "name": "com.trama.wear.service.KeywordListenerLogicTest",
+          "tests": 18,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.wear.service.PhoneticIntentDetectorTest",
+          "tests": 4,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.wear.service.RecordingControllerTest",
+          "tests": 16,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.wear.service.WatchServiceControllerTest",
+          "tests": 4,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.wear.sync.PhoneToWatchReceiverLogicTest",
+          "tests": 15,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        {
+          "name": "com.trama.wear.sync.WatchToPhoneSyncerTest",
+          "tests": 9,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      ]
+    }
+  }
+}

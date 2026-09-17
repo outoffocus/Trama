@@ -28,7 +28,6 @@ class GoogleCalendarSyncManager(context: Context) {
         val preferredIds = settings.visibleCalendarIds.first()
         val selectedIds = (preferredIds ?: googleCalendars.map { it.id }.toSet())
             .intersect(googleCalendars.map { it.id }.toSet())
-        if (selectedIds.isEmpty()) return
 
         val now = System.currentTimeMillis()
         val todayStart = Calendar.getInstance().apply {
@@ -43,81 +42,88 @@ class GoogleCalendarSyncManager(context: Context) {
             add(Calendar.DAY_OF_YEAR, 60)
         }.timeInMillis
 
-        val events = CalendarHelper.getEventsForRange(
+        val events = if (selectedIds.isEmpty()) emptyList() else CalendarHelper.getEventsForRangeResult(
             context = appContext,
             startMillis = todayStart,
             endMillis = rangeEnd,
             calendarIds = selectedIds
-        )
+        ).getOrElse { error ->
+            Log.w(TAG, "Calendar read failed; keeping imported events", error)
+            return
+        }
 
-        val calendarLabels = googleCalendars.associateBy({ it.id }, { it.displayName })
-        val importedFutureEvents = repository.getTimelineEventsByDateRangeOnce(todayStart, rangeEnd)
-            .filter {
-                it.type == TimelineEventType.CALENDAR &&
-                    it.source == TimelineEventSource.CALENDAR_IMPORT
-            }
-        val importedByPayload = importedFutureEvents.associateBy { it.dataJson.orEmpty() }
-        val seenPayloads = mutableSetOf<String>()
+        repository.withTransaction {
+            val calendarLabels = googleCalendars.associateBy({ it.id }, { it.displayName })
+            val importedFutureEvents = repository.getCalendarEventsOverlapping(todayStart, rangeEnd).first()
+                .filter {
+                    it.type == TimelineEventType.CALENDAR &&
+                        it.source == TimelineEventSource.CALENDAR_IMPORT
+                }
+            val importedByPayload = importedFutureEvents.associateBy { CalendarImportIdentity.key(it.dataJson) }
+            val seenPayloads = mutableSetOf<String>()
 
-        events.forEach { event ->
-            val payload = buildPayload(event)
-            seenPayloads += payload
+            events.forEach { event ->
+                val payload = buildPayload(event)
+                seenPayloads += requireNotNull(CalendarImportIdentity.key(payload))
 
-            val subtitle = buildSubtitle(
-                calendarLabel = calendarLabels[event.calendarId],
-                location = event.location,
-                description = event.description
-            )
-
-            val existing = importedByPayload[payload]
-                ?: repository.getTimelineEventByTypeSourceAndDataJson(
-                    type = TimelineEventType.CALENDAR,
-                    source = TimelineEventSource.CALENDAR_IMPORT,
-                    dataJson = payload
+                val subtitle = buildSubtitle(
+                    calendarLabel = calendarLabels[event.calendarId],
+                    location = event.location,
+                    description = event.description
                 )
 
-            if (existing == null) {
-                repository.insertTimelineEvent(
-                    TimelineEvent(
+                val start = if (event.allDay) CalendarImportIdentity.localAllDay(event.startMillis) else event.startMillis
+                val end = if (event.allDay) CalendarImportIdentity.localAllDay(event.endMillis) else event.endMillis
+                val existing = importedByPayload[CalendarImportIdentity.key(payload)]
+                    ?: repository.getTimelineEventByTypeSourceAndDataJson(
                         type = TimelineEventType.CALENDAR,
-                        timestamp = event.startMillis,
-                        endTimestamp = event.endMillis,
+                        source = TimelineEventSource.CALENDAR_IMPORT,
+                        dataJson = payload
+                    )
+
+                if (existing == null) {
+                    repository.insertTimelineEvent(
+                        TimelineEvent(
+                            type = TimelineEventType.CALENDAR,
+                            timestamp = start,
+                            endTimestamp = end,
+                            title = event.title,
+                            subtitle = subtitle,
+                            dataJson = payload,
+                            source = TimelineEventSource.CALENDAR_IMPORT
+                        )
+                    )
+                } else {
+                    val updated = existing.copy(
+                        timestamp = start,
+                        endTimestamp = end,
                         title = event.title,
                         subtitle = subtitle,
-                        dataJson = payload,
-                        source = TimelineEventSource.CALENDAR_IMPORT
+                        dataJson = payload
                     )
-                )
-            } else {
-                val updated = existing.copy(
-                    timestamp = event.startMillis,
-                    endTimestamp = event.endMillis,
-                    title = event.title,
-                    subtitle = subtitle,
-                    dataJson = payload
-                )
-                if (updated != existing) {
-                    repository.updateTimelineEvent(updated)
+                    if (updated != existing) {
+                        repository.updateTimelineEvent(updated)
+                    }
                 }
             }
-        }
 
-        val staleIds = importedFutureEvents
-            .filter { event ->
-                val payload = event.dataJson ?: return@filter false
-                val calendarId = parseCalendarId(payload)
-                calendarId in selectedIds && payload !in seenPayloads
+            val staleIds = importedFutureEvents
+                .filter { event ->
+                    val payload = event.dataJson ?: return@filter false
+                    val calendarId = parseCalendarId(payload)
+                    calendarId != null && (calendarId !in selectedIds || CalendarImportIdentity.key(payload) !in seenPayloads)
+                }
+                .map { it.id }
+            if (staleIds.isNotEmpty()) {
+                repository.deleteTimelineEventsByIds(staleIds)
             }
-            .map { it.id }
-        if (staleIds.isNotEmpty()) {
-            repository.deleteTimelineEventsByIds(staleIds)
-        }
 
-        Log.i(
-            TAG,
-            "Synced ${events.size} Google Calendar events from ${selectedIds.size} calendars " +
-                "(removed=${staleIds.size})"
-        )
+            Log.i(
+                TAG,
+                "Synced ${events.size} Google Calendar events from ${selectedIds.size} calendars " +
+                    "(removed=${staleIds.size})"
+            )
+        }
     }
 
     private fun buildPayload(event: CalendarHelper.CalendarEvent): String {
@@ -126,6 +132,7 @@ class GoogleCalendarSyncManager(context: Context) {
             .put("calendarId", event.calendarId)
             .put("eventId", event.id)
             .put("startMillis", event.startMillis)
+            .put("allDay", event.allDay)
             .toString()
     }
 

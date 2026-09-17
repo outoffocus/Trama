@@ -1,5 +1,7 @@
 package com.trama.wear.sync
 
+import com.trama.shared.sync.RecordingReceipt
+import com.trama.wear.audio.WatchRecordingFileStore
 import android.content.Context
 import android.util.Log
 import com.google.android.gms.wearable.DataEvent
@@ -40,6 +42,18 @@ class PhoneToWatchReceiver : WearableListenerService() {
                 val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
 
                 when {
+                    path.startsWith(RecordingReceipt.PATH + "/") -> {
+                        val createdAt = dataMap.getLong("createdAt")
+                        val bytes = dataMap.getLong("byteCount")
+                        val checksum = dataMap.getString("sha256").orEmpty()
+                        WatchRecordingFileStore.recoverable(applicationContext)
+                            .filter { it.createdAt == createdAt && it.kind != "CONTEXTUAL_TRIGGER" }
+                            .forEach { capture ->
+                                if (runCatching { RecordingReceipt.matches(capture.file, bytes, checksum) }.getOrDefault(false)) {
+                                    capture.file.delete()
+                                }
+                            }
+                    }
                     path == SETTINGS_PATH -> {
                         val patternsJson = dataMap.getString("intent_patterns_json")
                         val keywordsStr = dataMap.getString("keyword_mappings")
@@ -78,7 +92,7 @@ class PhoneToWatchReceiver : WearableListenerService() {
             Log.i(TAG, "Intent patterns received from phone")
         }
 
-        if (!keywordsStr.isNullOrBlank()) {
+        if (keywordsStr != null) {
             prefs.putString("keyword_mappings", keywordsStr)
         }
         if (!captureProfile.isNullOrBlank()) prefs.putString("capture_profile", captureProfile)

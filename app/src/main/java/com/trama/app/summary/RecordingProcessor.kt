@@ -8,6 +8,7 @@ import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.EntryProcessingBackend
 import com.trama.shared.model.EntryStatus
 import com.trama.shared.model.RecordingStatus
+import com.trama.shared.model.RecordingKeyPoints
 import com.trama.shared.model.Source
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -26,6 +27,8 @@ class RecordingProcessor(private val context: Context) {
 
     companion object {
         private const val TAG = "RecordingProcessor"
+        /** Keeps each local-model request within the conservative 4K-token context. */
+        private const val MAX_ANALYSIS_SEGMENT_CHARS = 6_000
     }
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true; coerceInputValues = true }
@@ -44,7 +47,8 @@ class RecordingProcessor(private val context: Context) {
         }
         AsrHallucinationDetector.detect(
             recording.transcription,
-            singleWordIsHallucination = false
+            singleWordIsHallucination = false,
+            conversationalSpeechIsHallucination = false
         )?.let { reason ->
             Log.w(TAG, "Recording $recordingId rejected as ASR hallucination: $reason")
             repository.updateRecordingStatus(recordingId, RecordingStatus.FAILED)
@@ -68,7 +72,11 @@ class RecordingProcessor(private val context: Context) {
         //    But if there are no actions yet (e.g. previous local attempt failed JSON),
         //    the local model must try again.
         val existingActions = repository.getByRecordingIdOnce(recordingId)
-        if (recording.processingStatus == RecordingStatus.COMPLETED && existingActions.isNotEmpty()) {
+        if (
+            recording.processingStatus == RecordingStatus.COMPLETED &&
+            recording.processedBy != "LOCAL_PARTIAL" &&
+            existingActions.isNotEmpty()
+        ) {
             Log.i(TAG, "Recording $recordingId already has ${existingActions.size} actions, keeping them")
             repository.updateRecordingStatus(recordingId, RecordingStatus.COMPLETED)
             return
@@ -77,7 +85,10 @@ class RecordingProcessor(private val context: Context) {
         // 2. Try local on-device model.
         val modelFile = GemmaClient.getModelFile(context)
         if (modelFile.exists()) {
-            val ok = tryLocalModel(recordingId, recording.transcription, recording.source, repository)
+            val ok = tryLocalModel(
+                recordingId, recording.transcription, recording.source,
+                recording.createdAt, repository
+            )
             if (ok) return
         }
 
@@ -91,6 +102,7 @@ class RecordingProcessor(private val context: Context) {
             source = recording.source,
             processedBy = "TRANSCRIPT_ONLY",
             confidence = 0.6f,
+            finalStatus = RecordingStatus.TRANSCRIPT_ONLY,
             repository = repository
         )
     }
@@ -101,11 +113,21 @@ class RecordingProcessor(private val context: Context) {
         recordingId: Long,
         transcription: String,
         source: Source,
+        capturedAt: Long,
         repository: DiaryRepository
     ): Boolean {
+        if (transcription.length > MAX_ANALYSIS_SEGMENT_CHARS) {
+            return tryLocalModelBySegments(
+                recordingId,
+                transcription,
+                source,
+                capturedAt,
+                repository
+            )
+        }
         return try {
             // Attempt 1: full prompt with JSON prefix forcing
-            val prompt = buildPrompt(transcription)
+            val prompt = buildPrompt(transcription, capturedAt)
             val responseText = GemmaClient.generate(context, prompt, maxTokens = 2048, responsePrefix = "{")
                 ?: throw Exception("Empty local model response")
             Log.d(TAG, "Local model response: ${responseText.take(300)}")
@@ -115,10 +137,9 @@ class RecordingProcessor(private val context: Context) {
             } catch (e: Exception) {
                 Log.w(TAG, "Local model JSON attempt 1 failed: ${e.message}")
                 // Attempt 2: simpler prompt, less likely to confuse the model
-                retryWithSimplePrompt(transcription, repository)
+                retryWithSimplePrompt(transcription, capturedAt, repository)
             }
 
-            repository.deleteByRecordingId(recordingId)
             saveResult(recordingId, result, transcription, source, "LOCAL", 0.8f, repository)
 
             Log.i(TAG, "Recording $recordingId processed via local model: '${result.title}', ${result.actionItems.size} actions")
@@ -136,10 +157,127 @@ class RecordingProcessor(private val context: Context) {
                 checkActionsForDuplicates(recordingId, repository)
             }
             true
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
         } catch (e: Exception) {
             Log.w(TAG, "Local model failed for recording $recordingId: ${e.javaClass.simpleName}", e)
             false
         }
+    }
+
+    private suspend fun tryLocalModelBySegments(
+        recordingId: Long,
+        transcription: String,
+        source: Source,
+        capturedAt: Long,
+        repository: DiaryRepository
+    ): Boolean {
+        return try {
+        val segments = splitTranscriptForAnalysis(transcription)
+        Log.i(TAG, "Analyzing long recording $recordingId in ${segments.size} bounded segments")
+        val analyses = mutableListOf<RecordingAnalysis>()
+        var failedSegments = 0
+        for ((index, segment) in segments.withIndex()) {
+            val analysis = try {
+                val response = GemmaClient.generate(
+                    context,
+                    buildPrompt(segment, capturedAt),
+                    maxTokens = 1_024,
+                    responsePrefix = "{"
+                ) ?: error("Empty segment response")
+                parseResponse(response)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (primaryError: Exception) {
+                Log.w(
+                    TAG,
+                    "Segment ${index + 1}/${segments.size} failed structured analysis; trying simple extraction",
+                    primaryError
+                )
+                try {
+                    retryWithSimplePrompt(segment, capturedAt, repository)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (fallbackError: Exception) {
+                    failedSegments += 1
+                    Log.w(
+                        TAG,
+                        "Segment ${index + 1}/${segments.size} could not be analyzed; preserving other segments",
+                        fallbackError
+                    )
+                    null
+                }
+            }
+            if (analysis != null) analyses += analysis
+        }
+        if (analyses.isEmpty()) return false
+        val merged = RecordingAnalysis(
+            title = analyses.firstOrNull()?.title ?: "Reunión",
+            summary = analyses.joinToString("\n\n") { it.summary }.take(6_000),
+            keyPoints = analyses.flatMap { it.keyPoints }.distinct().take(50),
+            actionItems = analyses.flatMap { it.actionItems }
+                .distinctBy { it.text.trim().lowercase(Locale.getDefault()) }
+        )
+        val partial = failedSegments > 0
+        saveResult(
+            recordingId,
+            merged,
+            transcription,
+            source,
+            if (partial) "LOCAL_PARTIAL" else "LOCAL",
+            if (partial) 0.7f else 0.8f,
+            repository
+        )
+        CaptureLog.event(
+            gate = CaptureLog.Gate.RECORDING,
+            result = if (merged.actionItems.isNotEmpty()) CaptureLog.Result.OK else CaptureLog.Result.NO_MATCH,
+            text = merged.title,
+            meta = mapOf(
+                "id" to recordingId,
+                "segments" to segments.size,
+                "failedSegments" to failedSegments,
+                "actions" to merged.actionItems.size,
+                "source" to if (partial) "LOCAL_PARTIAL" else "LOCAL"
+            )
+        )
+        if (merged.actionItems.isNotEmpty()) checkActionsForDuplicates(recordingId, repository)
+        true
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            Log.w(TAG, "Segmented local analysis failed for recording $recordingId", error)
+            false
+        }
+    }
+
+    private fun splitTranscriptForAnalysis(
+        transcription: String,
+        maxChars: Int = MAX_ANALYSIS_SEGMENT_CHARS
+    ): List<String> {
+        require(maxChars >= 100)
+        val clean = transcription.replace(Regex("\\s+"), " ").trim()
+        if (clean.isEmpty()) return emptyList()
+        val segments = mutableListOf<String>()
+        var start = 0
+        while (start < clean.length) {
+            val tentativeEnd = (start + maxChars).coerceAtMost(clean.length)
+            val end = if (tentativeEnd == clean.length) {
+                tentativeEnd
+            } else {
+                val sentenceEnd = listOf('.', '?', '!')
+                    .map { clean.lastIndexOf(it, tentativeEnd) }
+                    .maxOrNull()
+                    ?.plus(1)
+                    ?.takeIf { it > start + maxChars / 2 }
+                sentenceEnd
+                    ?: clean.lastIndexOf(' ', tentativeEnd).takeIf { it > start }
+                    ?: tentativeEnd
+            }
+            segments += clean.substring(start, end).trim()
+            start = end
+            while (start < clean.length && clean[start].isWhitespace()) start++
+        }
+        return segments.filter { it.isNotBlank() }
     }
 
     /**
@@ -148,12 +286,13 @@ class RecordingProcessor(private val context: Context) {
      */
     private suspend fun retryWithSimplePrompt(
         transcription: String,
+        capturedAt: Long,
         repository: DiaryRepository
     ): RecordingAnalysis {
         Log.i(TAG, "Retrying with simplified prompts")
 
         val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-            .format(Calendar.getInstance().time)
+            .format(java.util.Date(capturedAt))
 
         // Call 1: title + summary (plain text, no JSON needed)
         val titlePrompt = PromptTemplateStore.render(
@@ -211,7 +350,7 @@ class RecordingProcessor(private val context: Context) {
             val cleaned = JsonRepair.extractAndRepair(response)
             val items = json.decodeFromString<List<SimpleAction>>(cleaned)
             items.mapNotNull {
-                val text = it.text.trim()
+                val text = ActionTextNormalizer.focus(it.text)
                 val actionType = validateActionType(it.type ?: "GENERIC")
                 if (
                     text.isBlank() ||
@@ -240,12 +379,13 @@ class RecordingProcessor(private val context: Context) {
 
     // ── Shared ──
 
-    private fun buildPrompt(transcription: String): String {
+    private fun buildPrompt(transcription: String, capturedAt: Long): String {
+        val reference = Calendar.getInstance().apply { timeInMillis = capturedAt }
         val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-            .format(Calendar.getInstance().time)
+            .format(reference.time)
         val tomorrow = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-            .format(Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 1) }.time)
-        val weekdayDates = buildWeekdayDateContext()
+            .format((reference.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 1) }.time)
+        val weekdayDates = buildWeekdayDateContext(capturedAt)
         return PromptTemplateStore.render(
             context,
             PromptTemplateStore.RECORDING_ANALYSIS,
@@ -258,7 +398,7 @@ class RecordingProcessor(private val context: Context) {
         )
     }
 
-    private fun buildWeekdayDateContext(): String {
+    private fun buildWeekdayDateContext(capturedAt: Long): String {
         val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
         val weekdays = listOf(
             Calendar.MONDAY to "lunes",
@@ -270,7 +410,7 @@ class RecordingProcessor(private val context: Context) {
             Calendar.SUNDAY to "domingo"
         )
         return weekdays.joinToString(", ") { (day, label) ->
-            val cal = Calendar.getInstance()
+            val cal = Calendar.getInstance().apply { timeInMillis = capturedAt }
             while (cal.get(Calendar.DAY_OF_WEEK) != day) {
                 cal.add(Calendar.DAY_OF_YEAR, 1)
             }
@@ -289,7 +429,7 @@ class RecordingProcessor(private val context: Context) {
             summary = parsed.summary.trim(),
             keyPoints = parsed.keyPoints.map { it.trim() }.filter { it.isNotBlank() },
             actionItems = parsed.actionItems.mapNotNull { action ->
-                val text = action.text.trim()
+                val text = ActionTextNormalizer.focus(action.text)
                 if (text.isBlank()) null else action.copy(text = text)
             }
         )
@@ -318,76 +458,83 @@ class RecordingProcessor(private val context: Context) {
         )
     }
 
-    private suspend fun saveResult(
+    internal suspend fun saveResult(
         recordingId: Long,
         result: RecordingAnalysis,
         transcription: String,
         source: Source,
         processedBy: String,
         confidence: Float,
-        repository: DiaryRepository
+        repository: DiaryRepository,
+        finalStatus: String = RecordingStatus.COMPLETED
     ) {
-        repository.updateRecordingResult(
-            id = recordingId,
-            title = result.title,
-            summary = result.summary,
-            keyPoints = result.keyPoints.joinToString("\n"),
-            status = RecordingStatus.COMPLETED,
-            processedBy = processedBy
-        )
+        repository.withTransaction {
+            val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+            val existingActions = repository.getByRecordingIdOnce(recordingId)
+            val activeDedupEntries = repository.getRecentActiveForDedup().toMutableList()
+            val displayTrigger = ManualActionSuggestionExtractor.leadingDisplayTrigger(transcription)
+            for (action in result.actionItems) {
+                val actionText = withDisplayTrigger(ActionTextNormalizer.focus(action.text), displayTrigger)
+                if (existingActions.any { it.text.equals(actionText, ignoreCase = true) }) continue
+                val actionType = validateActionType(action.actionType)
+                if (!ActionQualityGate.isActionable(cleanText = actionText, actionType = actionType)) {
+                    Log.i(TAG, "Skipping non-actionable recording action: '$actionText' [${action.actionType}]")
+                    continue
+                }
+                val dueDate = action.dueDate?.let {
+                    try { dateFormat.parse(it)?.time } catch (_: Exception) { null }
+                }
 
-        val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        val activeDedupEntries = repository.getRecentActiveForDedup().toMutableList()
-        val displayTrigger = ManualActionSuggestionExtractor.leadingDisplayTrigger(transcription)
-        for (action in result.actionItems) {
-            val actionText = withDisplayTrigger(action.text, displayTrigger)
-            val actionType = validateActionType(action.actionType)
-            if (!ActionQualityGate.isActionable(cleanText = actionText, actionType = actionType)) {
-                Log.i(TAG, "Skipping non-actionable recording action: '$actionText' [${action.actionType}]")
-                continue
-            }
-            val dueDate = action.dueDate?.let {
-                try { dateFormat.parse(it)?.time } catch (_: Exception) { null }
-            }
+                val duplicate = DuplicateHeuristics.findLikelyDuplicate(
+                    text = actionText,
+                    existing = activeDedupEntries,
+                    newDueDate = dueDate
+                )
+                if (duplicate != null && duplicate.status == EntryStatus.PENDING) {
+                    Log.i(TAG, "Skipping recording action duplicate of pending entry ${duplicate.id}: '$actionText'")
+                    continue
+                }
 
-            val duplicate = DuplicateHeuristics.findLikelyDuplicate(
-                text = actionText,
-                existing = activeDedupEntries,
-                newDueDate = dueDate
+                val entry = DiaryEntry(
+                    text = actionText,
+                    keyword = "grabación",
+                    category = "Grabación",
+                    confidence = confidence,
+                    source = source,
+                    duration = 0,
+                    cleanText = actionText,
+                    actionType = actionType,
+                    priority = validatePriority(action.priority),
+                    dueDate = dueDate,
+                    wasReviewedByLLM = true,
+                    llmConfidence = confidence,
+                    processingBackend = if (
+                        processedBy.lowercase(Locale.getDefault()).let {
+                            it == "gemma" || it.startsWith("local") || it.startsWith("gemma_local")
+                        }
+                    ) EntryProcessingBackend.LOCAL else null,
+                    sourceRecordingId = recordingId,
+                    sourceCaptureId = "recording:$recordingId:action:${actionText.lowercase(Locale.getDefault()).hashCode()}",
+                    status = EntryStatus.SUGGESTED
+                )
+                val insertedId = repository.insert(entry)
+                val insertedEntry = entry.copy(id = insertedId)
+                activeDedupEntries += insertedEntry
+
+                if (duplicate != null && duplicate.status == EntryStatus.SUGGESTED) {
+                    repository.markDuplicate(duplicate.id, insertedId)
+                    Log.i(TAG, "Hiding suggested duplicate ${duplicate.id} in favor of recording action $insertedId")
+                }
+            }
+            repository.updateRecordingResult(
+                id = recordingId,
+                title = result.title,
+                summary = result.summary,
+                keyPoints = RecordingKeyPoints.encode(result.keyPoints),
+                status = finalStatus,
+                processedBy = processedBy
             )
-            if (duplicate != null && duplicate.status == EntryStatus.PENDING) {
-                Log.i(TAG, "Skipping recording action duplicate of pending entry ${duplicate.id}: '$actionText'")
-                continue
-            }
 
-            val entry = DiaryEntry(
-                text = actionText,
-                keyword = "grabación",
-                category = "Grabación",
-                confidence = confidence,
-                source = source,
-                duration = 0,
-                cleanText = actionText,
-                actionType = actionType,
-                priority = validatePriority(action.priority),
-                dueDate = dueDate,
-                wasReviewedByLLM = true,
-                llmConfidence = confidence,
-                processingBackend = when (processedBy.lowercase(Locale.getDefault())) {
-                    "local", "gemma", "gemma_local" -> EntryProcessingBackend.LOCAL
-                    else -> null
-                },
-                sourceRecordingId = recordingId,
-                status = EntryStatus.PENDING
-            )
-            val insertedId = repository.insert(entry)
-            val insertedEntry = entry.copy(id = insertedId)
-            activeDedupEntries += insertedEntry
-
-            if (duplicate != null && duplicate.status == EntryStatus.SUGGESTED) {
-                repository.markDuplicate(duplicate.id, insertedId)
-                Log.i(TAG, "Hiding suggested duplicate ${duplicate.id} in favor of recording action $insertedId")
-            }
         }
     }
 
@@ -495,7 +642,7 @@ Reglas:
     }
 
     @Serializable
-    private data class RecordingAnalysis(
+    internal data class RecordingAnalysis(
         val title: String,
         val summary: String,
         val keyPoints: List<String> = emptyList(),
@@ -503,7 +650,7 @@ Reglas:
     )
 
     @Serializable
-    private data class ActionItem(
+    internal data class ActionItem(
         val text: String,
         val actionType: String = "GENERIC",
         val priority: String = "NORMAL",

@@ -59,7 +59,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.trama.app.chat.DiaryAssistant
-import com.trama.app.chat.DiaryContextBuilder
+import com.trama.app.chat.DiaryAssistantSource
 import com.trama.app.ui.components.TramaChip
 import com.trama.app.ui.theme.LocalTramaColors
 import com.trama.shared.data.DatabaseProvider
@@ -70,6 +70,7 @@ import kotlinx.coroutines.withContext
 private data class ChatMessage(
     val text: String,
     val isUser: Boolean,
+    val sources: List<DiaryAssistantSource> = emptyList(),
     val id: Long = System.nanoTime()
 )
 
@@ -77,23 +78,28 @@ private val SUGGESTIONS = listOf(
     "¿Dónde estuve el martes?",
     "¿Qué restaurantes me gustaron?",
     "¿Qué tareas completé esta semana?",
-    "¿Con quién quedé en abril?",
+    "¿Qué apunté sobre el taller?",
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatScreen(onBack: () -> Unit) {
+fun ChatScreen(
+    initialQuery: String = "",
+    onBack: () -> Unit,
+    onEntryClick: (Long) -> Unit,
+    onPlaceClick: (Long) -> Unit,
+    onRecordingClick: (Long) -> Unit
+) {
     val context = LocalContext.current
     val repository = remember { DatabaseProvider.getRepository(context) }
-    val contextBuilder = remember { DiaryContextBuilder(repository) }
-    val assistant = remember { DiaryAssistant(context, contextBuilder, repository) }
+    val assistant = remember { DiaryAssistant(context, repository) }
     val t = LocalTramaColors.current
 
     var messages by remember { mutableStateOf(listOf<ChatMessage>()) }
-    var inputText by remember { mutableStateOf("") }
+    var inputText by remember(initialQuery) { mutableStateOf(initialQuery) }
     var isThinking by remember { mutableStateOf(false) }
     val entryCount by repository.countAll().collectAsState(initialValue = 0)
-    var memoryLabel by remember { mutableStateOf("memoria preparando indice") }
+    var memoryLabel by remember { mutableStateOf("Preparando el índice local") }
 
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
@@ -105,9 +111,8 @@ fun ChatScreen(onBack: () -> Unit) {
 
     LaunchedEffect(entryCount) {
         memoryLabel = withContext(Dispatchers.IO) {
-            val pages = repository.getAllDailyPagesOnce().size
             val places = repository.getAllPlacesOnce().size
-            "$entryCount entradas · $pages dias resumidos · $places sitios"
+            "$entryCount recuerdos · $places lugares"
         }
     }
 
@@ -119,11 +124,11 @@ fun ChatScreen(onBack: () -> Unit) {
         isThinking = true
         scope.launch {
             val reply = try {
-                withContext(Dispatchers.IO) { assistant.send(msg) }
+                withContext(Dispatchers.IO) { assistant.sendReply(msg) }
             } catch (t: Throwable) {
-                "Error inesperado: ${t.javaClass.simpleName}: ${t.message}"
+                com.trama.app.chat.DiaryAssistantReply("No he podido consultar tus recuerdos. Inténtalo de nuevo.")
             }
-            messages = messages + ChatMessage(reply, isUser = false)
+            messages = messages + ChatMessage(reply.text, isUser = false, sources = reply.sources)
             isThinking = false
         }
     }
@@ -135,7 +140,7 @@ fun ChatScreen(onBack: () -> Unit) {
                 TopAppBar(
                     title = {
                         Text(
-                            "Asistente",
+                            "Preguntar a tus recuerdos",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -221,7 +226,12 @@ fun ChatScreen(onBack: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(messages, key = { it.id }) { msg ->
-                    ChatBubble(msg)
+                    ChatBubble(
+                        msg = msg,
+                        onEntryClick = onEntryClick,
+                        onPlaceClick = onPlaceClick,
+                        onRecordingClick = onRecordingClick
+                    )
                 }
                 if (isThinking) {
                     item("thinking") { ThinkingBubble() }
@@ -293,7 +303,12 @@ private fun EmptyState(
 }
 
 @Composable
-private fun ChatBubble(msg: ChatMessage) {
+private fun ChatBubble(
+    msg: ChatMessage,
+    onEntryClick: (Long) -> Unit,
+    onPlaceClick: (Long) -> Unit,
+    onRecordingClick: (Long) -> Unit
+) {
     val t = LocalTramaColors.current
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -302,23 +317,54 @@ private fun ChatBubble(msg: ChatMessage) {
         val bg = if (msg.isUser) t.amberBg else t.surface
         val fg = if (msg.isUser) t.amber else MaterialTheme.colorScheme.onSurface
         val border = if (msg.isUser) t.amber.copy(alpha = 0.3f) else t.softBorder
-        Surface(
-            modifier = Modifier.widthIn(max = 300.dp),
-            shape = RoundedCornerShape(
-                topStart = 16.dp,
-                topEnd = 16.dp,
-                bottomStart = if (msg.isUser) 16.dp else 4.dp,
-                bottomEnd = if (msg.isUser) 4.dp else 16.dp
-            ),
-            color = bg,
-            border = BorderStroke(1.dp, border),
+        Column(
+            modifier = Modifier.widthIn(max = 320.dp),
+            horizontalAlignment = if (msg.isUser) Alignment.End else Alignment.Start
         ) {
-            Text(
-                text = msg.text,
-                style = MaterialTheme.typography.bodyMedium,
-                color = fg,
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
-            )
+            Surface(
+                shape = RoundedCornerShape(
+                    topStart = 16.dp,
+                    topEnd = 16.dp,
+                    bottomStart = if (msg.isUser) 16.dp else 4.dp,
+                    bottomEnd = if (msg.isUser) 4.dp else 16.dp
+                ),
+                color = bg,
+                border = BorderStroke(1.dp, border),
+            ) {
+                Text(
+                    text = msg.text,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = fg,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+                )
+            }
+            if (!msg.isUser && msg.sources.isNotEmpty()) {
+                Text(
+                    text = "Fuentes",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = t.mutedText,
+                    modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 2.dp)
+                )
+                msg.sources.forEach { source ->
+                    TextButton(
+                        onClick = {
+                            when (source) {
+                                is DiaryAssistantSource.Entry -> onEntryClick(source.id)
+                                is DiaryAssistantSource.Place -> onPlaceClick(source.id)
+                                is DiaryAssistantSource.Recording -> onRecordingClick(source.id)
+                            }
+                        },
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                    ) {
+                        Text(
+                            text = source.label,
+                            maxLines = 1,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = t.teal
+                        )
+                    }
+                }
+            }
         }
     }
 }

@@ -29,7 +29,7 @@ class SettingsNavigationContractTest {
         )
 
         assertEquals(4, basic.size)
-        assertTrue(SettingsSection.IA !in basic)
+        assertTrue(SettingsSection.entries.none { it.route == "ia" })
         assertTrue(SettingsSection.ADVANCED !in basic)
         assertNotEquals(SettingsSection.ROOT, SettingsSection.fromRoute("capture-memory"))
     }
@@ -40,7 +40,6 @@ class SettingsNavigationContractTest {
             setOf(
                 Routes.SETTINGS,
                 Routes.SEARCH,
-                Routes.CHAT,
                 Routes.AGENDA,
                 Routes.RECORDINGS_LIST
             ),

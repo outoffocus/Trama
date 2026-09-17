@@ -9,6 +9,16 @@ import org.junit.Test
 import java.util.Calendar
 
 class ManualActionSuggestionExtractorTest {
+    @Test
+    fun `long conversational context is removed from heuristic suggestion`() {
+        val suggestions = ManualActionSuggestionExtractor.extract(
+            "Estábamos hablando del viaje y tengo que llamar a Pedro mañana. Después seguimos con el hotel"
+        )
+
+        assertEquals(1, suggestions.size)
+        assertEquals("Llamar a Pedro mañana", suggestions.single().text)
+    }
+
 
     @Test
     fun `extract builds action suggestions from reminder text`() {

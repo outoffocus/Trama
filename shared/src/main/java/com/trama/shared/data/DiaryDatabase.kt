@@ -21,7 +21,7 @@ import com.trama.shared.model.TimelineEvent
         DwellDetectionState::class,
         DailyPage::class
     ],
-    version = 16,
+    version = 19,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -204,6 +204,49 @@ abstract class DiaryDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE diary_entries ADD COLUMN userConfirmedAt INTEGER DEFAULT NULL")
                 db.execSQL("ALTER TABLE diary_entries ADD COLUMN verificationSource TEXT DEFAULT NULL")
+            }
+        }
+        val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE places ADD COLUMN locality TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE places ADD COLUMN address TEXT DEFAULT NULL")
+            }
+        }
+        val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE diary_entries ADD COLUMN contentKind TEXT NOT NULL DEFAULT 'ACTION'")
+                db.execSQL("ALTER TABLE diary_entries ADD COLUMN sourceCaptureId TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE diary_entries ADD COLUMN parentEntryId INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE diary_entries ADD COLUMN revision INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE diary_entries ADD COLUMN humanDecision TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE diary_entries ADD COLUMN humanDecisionAt INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE diary_entries ADD COLUMN triggerPhrase TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE diary_entries ADD COLUMN triggerConfigVersion INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE diary_entries ADD COLUMN externalState TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE diary_entries ADD COLUMN externalEventId INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE diary_entries ADD COLUMN externalUpdatedAt INTEGER DEFAULT NULL")
+                db.execSQL("""UPDATE diary_entries
+                    SET contentKind = 'MEMORY', status = 'SAVED', completedAt = NULL,
+                        sourceCaptureId = 'legacy-manual:' || id
+                    WHERE isManual = 1 AND status = 'DISCARDED'""")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_diary_entries_parent_source ON diary_entries(parentEntryId, sourceCaptureId)")
+            }
+        }
+
+        val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Before schema 18, suggestions were stored as standalone actions.
+                // They have no durable source link, so they otherwise remain in the
+                // review tray forever. Preserve their text as memories and stop
+                // presenting them as current action suggestions.
+                db.execSQL(
+                    """UPDATE diary_entries
+                       SET contentKind = 'MEMORY', status = 'SAVED', completedAt = NULL,
+                           sourceCaptureId = 'legacy-suggestion:' || id
+                       WHERE contentKind = 'ACTION' AND status = 'SUGGESTED'
+                         AND parentEntryId IS NULL AND sourceCaptureId IS NULL
+                         AND humanDecision IS NULL"""
+                )
             }
         }
     }

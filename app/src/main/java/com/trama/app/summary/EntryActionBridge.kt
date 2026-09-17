@@ -1,11 +1,10 @@
 package com.trama.app.summary
 
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AddTask
+import androidx.compose.material.icons.automirrored.filled.NoteAdd
 import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.CalendarMonth
-import androidx.compose.material.icons.filled.Call
-import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.EntryActionType
@@ -23,134 +22,81 @@ object EntryActionBridge {
     private val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm", Locale.getDefault())
 
     fun build(entry: DiaryEntry): EntryQuickAction? {
-        if (entry.status != com.trama.shared.model.EntryStatus.PENDING &&
-            entry.status != com.trama.shared.model.EntryStatus.SUGGESTED
-        ) return null
+        // A suggestion must be explicitly accepted before it can trigger an
+        // external side effect such as creating a calendar event or Keep note.
+        if (entry.status != com.trama.shared.model.EntryStatus.PENDING) return null
 
         val title = entry.displayText.trim().ifBlank { return null }
         val datetime = entry.dueDate?.let { due ->
             isoFormat.format(Date(due))
         }
-        val reminderLike = looksLikeReminder(entry)
-
+        // Calls are reminders to contact someone, so Calendar handles them even
+        // when the model did not resolve a date yet (the review dialog asks for it).
+        // Emails keep their direct destination; other dated work also uses Calendar.
         return when (entry.actionType) {
-            EntryActionType.EVENT -> EntryQuickAction(
-                label = "Calendario",
-                icon = Icons.Default.CalendarMonth,
-                action = SuggestedAction(
-                    type = ActionType.CALENDAR_EVENT,
-                    title = title,
-                    description = entry.text,
-                    datetime = datetime
-                )
-            )
-
-            EntryActionType.CALL -> EntryQuickAction(
-                label = "Llamar",
-                icon = Icons.Default.Call,
-                action = SuggestedAction(
-                    type = ActionType.CALL,
-                    title = title,
-                    contact = extractContact(title)
-                )
-            )
-
-            EntryActionType.SEND,
-            EntryActionType.TALK_TO -> EntryQuickAction(
-                label = "Mensaje",
-                icon = Icons.AutoMirrored.Filled.Send,
-                action = SuggestedAction(
-                    type = ActionType.MESSAGE,
-                    title = title,
-                    description = title,
-                    contact = extractContact(title)
-                )
-            )
-
-            EntryActionType.BUY,
-            EntryActionType.REVIEW,
-            EntryActionType.GENERIC -> {
-                val type = when {
-                    datetime == null -> ActionType.TODO
-                    reminderLike -> ActionType.REMINDER
-                    else -> ActionType.CALENDAR_EVENT
-                }
-                EntryQuickAction(
-                    label = when (type) {
-                        ActionType.CALENDAR_EVENT -> "Calendario"
-                        ActionType.REMINDER -> "Recordatorio"
-                        else -> "Tarea"
-                    },
-                    icon = when (type) {
-                        ActionType.CALENDAR_EVENT -> Icons.Default.CalendarMonth
-                        ActionType.REMINDER -> Icons.Default.Alarm
-                        else -> Icons.Default.AddTask
-                    },
-                    action = SuggestedAction(
-                        type = type,
-                        title = title,
-                        description = entry.text,
-                        datetime = datetime
-                    )
-                )
+            EntryActionType.CALL -> calendarAction(entry, title, datetime)
+            EntryActionType.SEND -> emailAction(entry, title)
+            EntryActionType.EVENT -> calendarAction(entry, title, datetime)
+            else -> if (datetime != null) {
+                calendarAction(entry, title, datetime)
+            } else {
+                keepAction(entry, title)
             }
-
-            else -> null
         }
     }
 
-    private fun looksLikeReminder(entry: DiaryEntry): Boolean {
-        val lower = buildString {
-            append(entry.text)
-            append(' ')
-            append(entry.displayText)
-        }.lowercase(Locale.getDefault())
-
-        return listOf(
-            "recordar",
-            "recuerdame",
-            "recuérdame",
-            "acordarme",
-            "no olvidar",
-            "no olvidarme",
-            "tengo que",
-            "hay que",
-            "debo",
-            "deberia",
-            "debería",
-            "mañana",
-            "manana",
-            "pasado mañana",
-            "pasado manana",
-            "esta tarde",
-            "esta noche",
-            "esta mañana",
-            "esta manana",
-            "lunes",
-            "martes",
-            "miércoles",
-            "miercoles",
-            "jueves",
-            "viernes",
-            "sábado",
-            "sabado",
-            "domingo",
-            "fin de semana",
-            "finde"
-        ).any { marker -> lower.contains(marker) }
+    private fun emailAction(entry: DiaryEntry, title: String): EntryQuickAction {
+        val source = "$title ${entry.text}"
+        return EntryQuickAction(
+            label = if (EmailActionClassifier.isEmail(source)) "Gmail" else "Enviar",
+            icon = Icons.Default.Email,
+            action = SuggestedAction(
+                type = ActionType.MESSAGE,
+                title = title,
+                description = entry.text,
+                contact = EmailActionClassifier.recipient(source)
+            )
+        )
     }
 
-    private fun extractContact(text: String): String? {
-        val lower = text.lowercase(Locale.getDefault())
-        val markers = listOf("llamar a ", "hablar con ", "enviar a ", "mandar a ", "decir a ")
-        val marker = markers.firstOrNull { lower.contains(it) } ?: return null
-        val start = lower.indexOf(marker)
-        if (start < 0) return null
-        val raw = text.substring(start + marker.length)
-            .substringBefore(" mañana")
-            .substringBefore(" hoy")
-            .substringBefore(" luego")
-            .trim()
-        return raw.takeIf { it.isNotBlank() }
+    private fun calendarAction(
+        entry: DiaryEntry,
+        title: String,
+        datetime: String?
+    ): EntryQuickAction {
+        val type = if (entry.actionType == EntryActionType.EVENT) {
+            ActionType.CALENDAR_EVENT
+        } else {
+            ActionType.REMINDER
+        }
+        return EntryQuickAction(
+            label = if (type == ActionType.REMINDER) "Programar" else "Calendar",
+            icon = if (type == ActionType.REMINDER) Icons.Default.Alarm else Icons.Default.CalendarMonth,
+            action = SuggestedAction(
+                type = type,
+                title = title,
+                description = entry.text,
+                datetime = datetime
+            )
+        )
     }
+
+    private fun keepAction(entry: DiaryEntry, title: String): EntryQuickAction {
+        val sourceText = entry.text.trim()
+        val noteBody = if (sourceText.isBlank() || sourceText.equals(title, ignoreCase = true)) {
+            title
+        } else {
+            "$title\n\nContexto original:\n$sourceText"
+        }
+        return EntryQuickAction(
+            label = "Keep",
+            icon = Icons.AutoMirrored.Filled.NoteAdd,
+            action = SuggestedAction(
+                type = ActionType.NOTE,
+                title = title,
+                description = noteBody
+            )
+        )
+    }
+
 }

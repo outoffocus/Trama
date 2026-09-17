@@ -1,8 +1,13 @@
 package com.trama.app.ui.screens
 
 import android.Manifest
+import android.app.TimePickerDialog
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -79,6 +84,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.DisposableEffect
 import com.trama.app.diagnostics.CaptureLog
 import com.trama.app.diagnostics.CaptureMetrics
 import com.trama.app.diagnostics.DiagnosticsExportManager
@@ -90,9 +96,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.trama.app.audio.OfflineDictationCapture
 import com.trama.app.backup.AutoBackupWorker
@@ -107,28 +118,22 @@ import com.trama.app.service.ServiceController
 import com.trama.app.service.ContinuousListeningPolicy
 import com.trama.app.speech.IntentPattern
 import com.trama.shared.speech.CaptureProfile
-import com.trama.app.summary.ActionItemProcessor
 import com.trama.app.summary.CalendarHelper
 import com.trama.app.summary.GemmaClient
-import com.trama.app.summary.GoogleCalendarSyncManager
 import com.trama.app.summary.GemmaModelManager
-import com.trama.app.summary.PromptTemplateStore
-import com.trama.app.summary.SummaryScheduler
+import com.trama.app.summary.GoogleCalendarSyncManager
 import com.trama.app.ui.SettingsDataStore
 import com.trama.app.ui.theme.CategoryColors
-import com.trama.app.ui.theme.TimelineAccentPalette
-import com.trama.app.ui.theme.timelineAccentColor
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 enum class SettingsSection(val route: String, val title: String, val subtitle: String) {
     ROOT("root", "Ajustes", "Control general de la app"),
-    CAPTURE_MEMORY("capture-memory", "Captura y contexto", "Tareas, ambiente y frases"),
-    AGENDA_CALENDARS("agenda-calendars", "Agenda y calendarios", "Fuentes, avisos y resúmenes"),
-    PRIVACY_DATA("privacy-data", "Privacidad y copias", "Voz, respaldo e importación"),
-    APPEARANCE("appearance", "Apariencia", "Color y lectura del timeline"),
-    IA("ia", "IA local", "Modelo local, confianza y prompts"),
-    ADVANCED("advanced", "Audio y diagnóstico", "Captura, ubicación y herramientas técnicas");
+    CAPTURE_MEMORY("capture-memory", "Voz y capturas", "Frases de activación y contexto"),
+    AGENDA_CALENDARS("agenda-calendars", "Calendario y avisos", "Calendarios visibles y aviso semanal"),
+    PRIVACY_DATA("privacy-data", "Datos y privacidad", "Voz, copias y aprendizaje"),
+    APPEARANCE("appearance", "Apariencia", "Tema y legibilidad"),
+    ADVANCED("advanced", "Diagnóstico", "Audio, ubicación y estado técnico");
 
     companion object {
         fun fromRoute(route: String?): SettingsSection =
@@ -148,6 +153,7 @@ fun SettingsScreen(
     val settings = viewModel
     val repository = viewModel.repository
     val scope = rememberCoroutineScope()
+    var developerTaps by remember { mutableIntStateOf(0) }
 
     // Settings state
     val autoStart by settings.autoStart.collectAsState(initialValue = false)
@@ -157,8 +163,6 @@ fun SettingsScreen(
     val recordingDuration by settings.recordingDuration.collectAsState(
         initialValue = SettingsDataStore.DEFAULT_DURATION
     )
-    val summaryEnabled by settings.summaryEnabled.collectAsState(initialValue = true)
-    val summaryHour by settings.summaryHour.collectAsState(initialValue = SettingsDataStore.DEFAULT_SUMMARY_HOUR)
     val weeklyAgendaEnabled by settings.weeklyAgendaEnabled.collectAsState(initialValue = true)
     val weeklyAgendaDayOfWeek by settings.weeklyAgendaDayOfWeek.collectAsState(initialValue = SettingsDataStore.DEFAULT_WEEKLY_AGENDA_DAY_OF_WEEK)
     val weeklyAgendaHour by settings.weeklyAgendaHour.collectAsState(initialValue = SettingsDataStore.DEFAULT_WEEKLY_AGENDA_HOUR)
@@ -174,6 +178,7 @@ fun SettingsScreen(
     // Backup
     val backupEnabled by settings.backupEnabled.collectAsState(initialValue = false)
     val backupHour by settings.backupHour.collectAsState(initialValue = SettingsDataStore.DEFAULT_BACKUP_HOUR)
+    val backupMinute by settings.backupMinute.collectAsState(initialValue = SettingsDataStore.DEFAULT_BACKUP_MINUTE)
     val contextPreRoll by settings.contextPreRollSeconds.collectAsState(
         initialValue = SettingsDataStore.DEFAULT_CONTEXT_PRE_ROLL
     )
@@ -213,6 +218,7 @@ fun SettingsScreen(
     val watchDebugStatus by settings.watchDebugStatus.collectAsState(initialValue = "")
     val watchDebugTrigger by settings.watchDebugTrigger.collectAsState(initialValue = "")
     val locationEnabled by settings.locationEnabled.collectAsState(initialValue = false)
+    val placeOnlineLookupEnabled by settings.placeOnlineLookupEnabled.collectAsState(initialValue = false)
     val locationIntervalMinutes by settings.locationIntervalMinutes.collectAsState(
         initialValue = SettingsDataStore.DEFAULT_LOCATION_INTERVAL_MINUTES
     )
@@ -225,26 +231,8 @@ fun SettingsScreen(
     val locationExitRadiusMeters by settings.locationExitRadiusMeters.collectAsState(
         initialValue = SettingsDataStore.DEFAULT_LOCATION_EXIT_RADIUS_METERS
     )
-    val timelinePendingColorIndex by settings.timelineColorPending.collectAsState(
-        initialValue = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PENDING
-    )
-    val timelineCompletedColorIndex by settings.timelineColorCompleted.collectAsState(
-        initialValue = SettingsDataStore.DEFAULT_TIMELINE_COLOR_COMPLETED
-    )
-    val timelineRecordingColorIndex by settings.timelineColorRecording.collectAsState(
-        initialValue = SettingsDataStore.DEFAULT_TIMELINE_COLOR_RECORDING
-    )
-    val timelinePlaceColorIndex by settings.timelineColorPlace.collectAsState(
-        initialValue = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PLACE
-    )
-    val timelineCalendarColorIndex by settings.timelineColorCalendar.collectAsState(
-        initialValue = SettingsDataStore.DEFAULT_TIMELINE_COLOR_CALENDAR
-    )
     val themeMode by settings.themeMode.collectAsState(initialValue = SettingsDataStore.DEFAULT_THEME_MODE)
     val showOldEntriesExpanded by settings.showOldEntriesExpanded.collectAsState(initialValue = false)
-    val showAdvancedOptions by settings.showAdvancedOptions.collectAsState(
-        initialValue = SettingsDataStore.DEFAULT_SHOW_ADVANCED_OPTIONS
-    )
     val learnFromDeletions by settings.learnFromDeletions.collectAsState(initialValue = false)
     var deletionFeedbackCount by remember { mutableStateOf(com.trama.app.summary.DeletionFeedbackStore.count(context)) }
     val locationDebugStatus by LocationDebugState.status.collectAsState()
@@ -252,23 +240,29 @@ fun SettingsScreen(
     val locationDebugCandidate by LocationDebugState.candidate.collectAsState()
     val locationDebugActiveDwell by LocationDebugState.activeDwell.collectAsState()
 
-    // Gemma model
     val gemmaManager = remember { GemmaModelManager(context) }
     val gemmaState by gemmaManager.state.collectAsState()
-    val gemmaPrefs = remember { GemmaModelManager.getPrefs(context) }
+    var localModelEnabled by remember { mutableStateOf(GemmaClient.isLocalModelEnabled(context)) }
+    var showDeleteLocalModelDialog by remember { mutableStateOf(false) }
+    var showModelConfig by remember { mutableStateOf(false) }
+    var modelConfigVersion by remember { mutableIntStateOf(0) }
     var modelUrl by remember { mutableStateOf(GemmaModelManager.getModelUrl(context)) }
     var hfToken by remember { mutableStateOf(GemmaModelManager.getHfToken(context)) }
-    var actionableThreshold by remember {
-        mutableStateOf(ActionItemProcessor.getActionableConfidenceThreshold(context))
+    var modelTestInProgress by remember { mutableStateOf(false) }
+    var modelTestStatus by remember { mutableStateOf<String?>(null) }
+    val installedModels = remember(gemmaState, modelConfigVersion) {
+        GemmaModelManager.getInstalledModelFiles(context)
     }
-    val modelFilename = remember(modelUrl) { GemmaModelManager.filenameFromUrl(modelUrl) }
-    var showModelConfig by remember { mutableStateOf(false) }
+    val selectedModelName = remember(gemmaState, modelConfigVersion) {
+        GemmaClient.getModelFile(context).name
+    }
+    LaunchedEffect(gemmaState) {
+        localModelEnabled = GemmaClient.isLocalModelEnabled(context)
+    }
 
     // Sections expanded state
     var patternsExpanded by remember { mutableStateOf(false) }
     var correctionsExpanded by remember { mutableStateOf(false) }
-    var promptsExpanded by remember { mutableStateOf(false) }
-    var modelExpanded by remember { mutableStateOf(false) }
     // Auto-expand the speaker section when no enrollment exists yet, so users
     // who first reach Advanced see the call-to-action without an extra click.
     // Diagnostics confirm 100% of finals pass through when the profile is
@@ -279,7 +273,7 @@ fun SettingsScreen(
                 !speakerVerificationManager.isConfigured
         )
     }
-    var backupExpanded by remember { mutableStateOf(false) }
+    var backupExpanded by remember { mutableStateOf(true) }
     var readableCalendars by remember { mutableStateOf(emptyList<CalendarHelper.ReadableCalendar>()) }
     var hasCalendarReadPermission by remember {
         mutableStateOf(CalendarHelper.hasCalendarPermission(context))
@@ -341,7 +335,7 @@ fun SettingsScreen(
         AutoBackupWorker.runNow(context)
         scope.launch {
             settings.setBackupEnabled(true)
-            BackupScheduler.schedule(context, backupHour)
+            BackupScheduler.schedule(context, backupHour, backupMinute)
         }
         Toast.makeText(context, "Backup configurado — guardando ahora...", Toast.LENGTH_SHORT).show()
     }
@@ -412,6 +406,39 @@ fun SettingsScreen(
                 Toast.LENGTH_SHORT
             ).show()
         }
+    }
+
+    var notificationsEnabled by remember {
+        mutableStateOf(NotificationManagerCompat.from(context).areNotificationsEnabled())
+    }
+    var backgroundLocationGranted by remember {
+        mutableStateOf(
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.ACCESS_BACKGROUND_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {
+        notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
+                backgroundLocationGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
+                    ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.ACCESS_BACKGROUND_LOCATION
+                    ) == PackageManager.PERMISSION_GRANTED
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     val fineLocationPermissionLauncher = rememberLauncherForActivityResult(
@@ -526,27 +553,7 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             if (section == SettingsSection.ROOT) {
-                Surface(
-                    shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f)
-                ) {
-                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
-                        Text(
-                            text = "Menos ruido, más intención",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Aquí solo vive lo esencial. El resto está agrupado por intención para que ajustar Trama no se sienta como abrir una consola técnica.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                if (speakerBackendAvailable && !speakerConfigured) {
-                    Spacer(modifier = Modifier.height(12.dp))
+                if (continuousListeningEnabled && speakerBackendAvailable && !speakerConfigured) {
                     Surface(
                         shape = RoundedCornerShape(18.dp),
                         color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f),
@@ -585,7 +592,7 @@ fun SettingsScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 SectionHeader("Escucha automática")
 
@@ -620,19 +627,78 @@ fun SettingsScreen(
                     }
                 )
 
-                Spacer(modifier = Modifier.height(12.dp))
+                AnimatedVisibility(visible = continuousListeningEnabled) {
+                    Column {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        SettingToggle(
+                            title = "Avisarme tras reiniciar",
+                            subtitle = "Android necesita que confirmes de nuevo el uso del micrófono",
+                            checked = autoStart,
+                            onCheckedChange = { scope.launch { settings.setAutoStart(it) } }
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                SectionHeader("Diario de lugares")
 
                 SettingToggle(
-                    title = "Avisarme para reactivar la escucha",
-                    subtitle = if (continuousListeningEnabled) {
-                        "Después de reiniciar el dispositivo, Trama mostrará una notificación; Android no permite encender el micrófono sin tu confirmación"
+                    title = "Registrar lugares visitados",
+                    subtitle = if (locationEnabled) {
+                        "Añade una visita cuando permaneces el tiempo suficiente en un lugar."
                     } else {
-                        "Disponible cuando la escucha continua está activada"
+                        "Desactivado. Trama no construirá automáticamente tu recorrido diario."
                     },
-                    checked = autoStart,
-                    onCheckedChange = { scope.launch { settings.setAutoStart(it) } },
-                    enabled = continuousListeningEnabled
+                    checked = locationEnabled,
+                    onCheckedChange = { enabled ->
+                        val hasPermission = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.ACCESS_FINE_LOCATION
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (enabled && !hasPermission) {
+                            fineLocationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                        } else {
+                            scope.launch {
+                                settings.setLocationEnabled(enabled)
+                                if (enabled) ServiceController.startLocationTracking(context)
+                                else ServiceController.stopLocationTracking(context)
+                            }
+                        }
+                    }
                 )
+
+                if (locationEnabled && !backgroundLocationGranted) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
+                    ) {
+                        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                            Text(
+                                "El recorrido puede quedar incompleto",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                "Android no permitirá recuperar la ubicación automáticamente después de reiniciar. En Permisos > Ubicación elige «Permitir siempre».",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            TextButton(
+                                onClick = {
+                                    context.startActivity(
+                                        Intent(
+                                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                            Uri.parse("package:${context.packageName}")
+                                        )
+                                    )
+                                }
+                            ) {
+                                Text("Abrir permisos")
+                            }
+                        }
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(20.dp))
 
@@ -641,7 +707,7 @@ fun SettingsScreen(
                     icon = Icons.Default.Mic,
                     title = SettingsSection.CAPTURE_MEMORY.title,
                     subtitle = SettingsSection.CAPTURE_MEMORY.subtitle,
-                    summary = "Escucha ${if (continuousListeningEnabled) "activa" else "desactivada"} · tareas ${captureProfile.displayName()} · ambiente ${if (listeningFeatureAvailability.ambientContext) "activo" else "desactivado"}",
+                    summary = "Escucha ${if (continuousListeningEnabled) "activa" else "desactivada"} · ${intentPatterns.count { it.enabled }} categorías activas · ambiente ${if (listeningFeatureAvailability.ambientContext) "activo" else "desactivado"}",
                     onClick = { onOpenSection(SettingsSection.CAPTURE_MEMORY) },
                     accent = tramaColors.amber,
                 )
@@ -650,7 +716,7 @@ fun SettingsScreen(
                     icon = Icons.Default.CalendarMonth,
                     title = SettingsSection.AGENDA_CALENDARS.title,
                     subtitle = SettingsSection.AGENDA_CALENDARS.subtitle,
-                    summary = "Resumen diario ${if (summaryEnabled) "a las ${summaryHour}:00" else "desactivado"} · agenda semanal ${if (weeklyAgendaEnabled) "activa" else "desactivada"}",
+                    summary = "Google Calendar · aviso semanal ${if (weeklyAgendaEnabled) "activo" else "desactivado"}",
                     onClick = { onOpenSection(SettingsSection.AGENDA_CALENDARS) },
                     accent = tramaColors.teal,
                 )
@@ -659,7 +725,7 @@ fun SettingsScreen(
                     icon = Icons.Default.Security,
                     title = SettingsSection.PRIVACY_DATA.title,
                     subtitle = SettingsSection.PRIVACY_DATA.subtitle,
-                    summary = "Mi voz ${if (speakerConfigured) "configurada" else "sin configurar"} · copia diaria ${if (backupEnabled) "activa" else "desactivada"}",
+                    summary = "Análisis local ${if (gemmaState is GemmaModelManager.DownloadState.Downloaded) "disponible" else "sin descargar"} · copia ${if (backupEnabled) "activa" else "desactivada"}",
                     onClick = { onOpenSection(SettingsSection.PRIVACY_DATA) },
                     accent = tramaColors.watch,
                 )
@@ -668,41 +734,27 @@ fun SettingsScreen(
                     icon = Icons.Default.Palette,
                     title = SettingsSection.APPEARANCE.title,
                     subtitle = SettingsSection.APPEARANCE.subtitle,
-                    summary = "Acentos visuales y legibilidad del timeline",
+                    summary = "Tema y presentación de tareas anteriores",
                     onClick = { onOpenSection(SettingsSection.APPEARANCE) },
                     accent = tramaColors.warn,
                 )
                 Spacer(modifier = Modifier.height(20.dp))
 
-                SettingToggle(
-                    title = "Mostrar opciones avanzadas",
-                    subtitle = "Motores, modelos, prompts, ubicación y diagnóstico técnico",
-                    checked = showAdvancedOptions,
-                    onCheckedChange = { scope.launch { settings.setShowAdvancedOptions(it) } }
+                Text(
+                    text = "Trama",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .clickable {
+                            developerTaps += 1
+                            if (developerTaps >= 7) {
+                                developerTaps = 0
+                                onOpenSection(SettingsSection.ADVANCED)
+                            }
+                        }
+                        .padding(12.dp)
                 )
-
-                AnimatedVisibility(visible = showAdvancedOptions) {
-                    Column {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        SettingsNavigationCard(
-                            icon = Icons.Default.AutoAwesome,
-                            title = SettingsSection.IA.title,
-                            subtitle = SettingsSection.IA.subtitle,
-                            summary = "Modelo local, umbral de aceptación y prompts",
-                            onClick = { onOpenSection(SettingsSection.IA) },
-                            accent = tramaColors.teal,
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        SettingsNavigationCard(
-                            icon = Icons.Default.Tune,
-                            title = SettingsSection.ADVANCED.title,
-                            subtitle = SettingsSection.ADVANCED.subtitle,
-                            summary = "Contexto de audio, ubicación y métricas de captura",
-                            onClick = { onOpenSection(SettingsSection.ADVANCED) },
-                            accent = tramaColors.watch,
-                        )
-                    }
-                }
 
                 Spacer(modifier = Modifier.height(32.dp))
             } else {
@@ -862,7 +914,7 @@ fun SettingsScreen(
                     )
 
                     Text(
-                        "El audio solo vive en memoria y se descarta después de procesarse.",
+                        "En la escucha continua, el audio previo al trigger solo vive en memoria. Las reuniones sí guardan audio hasta que las elimines.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1044,130 +1096,31 @@ fun SettingsScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Aprender de mis decisiones", style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        "Las confirmaciones refuerzan patrones útiles y los descartes por ruido " +
-                            "ayudan a filtrar capturas similares. Todo se aprende en el dispositivo.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = learnFromDeletions,
-                    onCheckedChange = { scope.launch { settings.setLearnFromDeletions(it) } }
-                )
-            }
-            if (learnFromDeletions) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Patrones aprendidos: $deletionFeedbackCount",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(
-                        onClick = {
-                            com.trama.app.summary.DeletionFeedbackStore.clear(context)
-                            deletionFeedbackCount = 0
-                        },
-                        enabled = deletionFeedbackCount > 0
-                    ) {
-                        Text("Borrar lo aprendido")
-                    }
-                }
-            }
-
-            SectionDivider()
-
-            SectionHeader("Timeline")
-
-            Text(
-                "Cada tipo de evento puede tener su propio acento. Se usa de forma sutil en las cards para que el timeline sea más fácil de leer.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            TimelineColorPicker(
-                title = "Pendientes",
-                subtitle = "Entradas activas y tareas abiertas",
-                selectedIndex = timelinePendingColorIndex,
-                onSelect = { index -> scope.launch { settings.setTimelineColorPending(index) } }
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            TimelineColorPicker(
-                title = "Completadas",
-                subtitle = "Acciones ya resueltas",
-                selectedIndex = timelineCompletedColorIndex,
-                onSelect = { index -> scope.launch { settings.setTimelineColorCompleted(index) } }
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            TimelineColorPicker(
-                title = "Grabaciones",
-                subtitle = "Sesiones de voz y su procesado",
-                selectedIndex = timelineRecordingColorIndex,
-                onSelect = { index -> scope.launch { settings.setTimelineColorRecording(index) } }
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            TimelineColorPicker(
-                title = "Lugares",
-                subtitle = "Estancias y eventos de ubicación",
-                selectedIndex = timelinePlaceColorIndex,
-                onSelect = { index -> scope.launch { settings.setTimelineColorPlace(index) } }
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            TimelineColorPicker(
-                title = "Calendario",
-                subtitle = "Eventos leídos de tu agenda",
-                selectedIndex = timelineCalendarColorIndex,
-                onSelect = { index -> scope.launch { settings.setTimelineColorCalendar(index) } }
-            )
-
             SectionDivider()
             }
 
             if (section == SettingsSection.ADVANCED) {
             SectionHeader("Ubicacion")
 
-            SettingToggle(
-                title = "Deteccion de estancias",
-                subtitle = "Registra lugares visitados de forma pasiva",
-                checked = locationEnabled,
-                onCheckedChange = { enabled ->
-                    val hasPermission = ContextCompat.checkSelfPermission(
-                        context,
-                        android.Manifest.permission.ACCESS_FINE_LOCATION
-                    ) == PackageManager.PERMISSION_GRANTED
-                    if (enabled && !hasPermission) {
-                        fineLocationPermissionLauncher.launch(android.Manifest.permission.ACCESS_FINE_LOCATION)
-                    } else {
-                        scope.launch {
-                            settings.setLocationEnabled(enabled)
-                            if (enabled) ServiceController.startLocationTracking(context)
-                            else ServiceController.stopLocationTracking(context)
-                        }
-                    }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Identificar nombres por internet", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Consulta servicios de mapas enviando la ubicación de la visita. Puedes desactivarlo y poner los nombres tú.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
-            )
+                Switch(
+                    checked = placeOnlineLookupEnabled,
+                    onCheckedChange = { enabled ->
+                        scope.launch { settings.setPlaceOnlineLookupEnabled(enabled) }
+                    }
+                )
+            }
 
             AnimatedVisibility(visible = locationEnabled) {
                 Column {
@@ -1295,17 +1248,6 @@ fun SettingsScreen(
             // DICCIONARIO
             // ═══════════════════════════════════════════════════════════════
             if (section == SettingsSection.CAPTURE_MEMORY) {
-            SectionHeader("Qué debe capturar Trama")
-
-            CaptureProfileCard(
-                selectedProfile = captureProfile,
-                onProfileSelected = { profile ->
-                    scope.launch { settings.setCaptureProfile(profile) }
-                }
-            )
-
-            SectionDivider()
-
             SectionHeader("Contexto ambiental")
 
             SettingToggle(
@@ -1532,46 +1474,7 @@ fun SettingsScreen(
             if (section == SettingsSection.AGENDA_CALENDARS) {
             SectionHeader("Agenda y automatizaciones")
 
-            SettingToggle(
-                title = "Resumen diario",
-                subtitle = "Procesa el día y prepara su resumen y acciones sugeridas",
-                checked = summaryEnabled,
-                onCheckedChange = {
-                    scope.launch {
-                        settings.setSummaryEnabled(it)
-                        if (it) SummaryScheduler.schedule(context, summaryHour)
-                        else SummaryScheduler.cancel(context)
-                    }
-                }
-            )
-
-            AnimatedVisibility(visible = summaryEnabled) {
-                Column {
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Hora del resumen", style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.weight(1f))
-                        Text("${summaryHour}:00", style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold)
-                    }
-                    Slider(
-                        value = summaryHour.toFloat(),
-                        onValueChange = {
-                            val h = it.roundToInt()
-                            scope.launch {
-                                settings.setSummaryHour(h)
-                                SummaryScheduler.schedule(context, h)
-                            }
-                        },
-                        valueRange = 6f..23f, steps = 16,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    SectionHeader("Google Calendar")
+            SectionHeader("Google Calendar")
 
                     if (!hasCalendarReadPermission) {
                         Card(
@@ -1627,7 +1530,7 @@ fun SettingsScreen(
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    "Los cambios solo aplican hacia adelante. Lo ya importado no se borra.",
+                                    "Los próximos compromisos se actualizan según tu selección. Se conserva el historial anterior a hoy.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -1718,8 +1621,6 @@ fun SettingsScreen(
                             }
                         }
                     }
-                }
-            }
 
             SectionDivider()
 
@@ -1746,6 +1647,50 @@ fun SettingsScreen(
             AnimatedVisibility(visible = weeklyAgendaEnabled) {
                 Column {
                     Spacer(modifier = Modifier.height(12.dp))
+
+                    if (!notificationsEnabled) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer
+                            ),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Text(
+                                    "Avisos desactivados",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    "Trama no podrá mostrarte el aviso semanal.",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                TextButton(
+                                    onClick = {
+                                        if (Build.VERSION.SDK_INT >= 33 &&
+                                            ContextCompat.checkSelfPermission(
+                                                context,
+                                                Manifest.permission.POST_NOTIFICATIONS
+                                            ) != PackageManager.PERMISSION_GRANTED
+                                        ) {
+                                            notificationPermissionLauncher.launch(
+                                                Manifest.permission.POST_NOTIFICATIONS
+                                            )
+                                        } else {
+                                            context.startActivity(
+                                                android.content.Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                                    .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                            )
+                                        }
+                                    }
+                                ) {
+                                    Text("Activar avisos")
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
 
                     Text(
                         "Día",
@@ -1832,304 +1777,262 @@ fun SettingsScreen(
             SectionDivider()
             }
 
-            if (section == SettingsSection.IA) {
-            SectionHeader("Procesamiento inteligente")
-
-            Text(
-                "Todo el procesamiento inteligente se ejecuta en este dispositivo. Estos valores no son necesarios para la captura cotidiana.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Text(
-                "Los textos y grabaciones no se envían a servicios de IA externos.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Spacer(modifier = Modifier.height(14.dp))
-            Text(
-                "Exigencia para crear una tarea: ${"%.0f".format(actionableThreshold * 100)}%",
-                style = MaterialTheme.typography.bodyMedium
-            )
-            Text(
-                "Un valor bajo conserva más posibles acciones; uno alto descarta más ruido. El perfil Preciso sigue aplicando sus propias reglas de intención.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Slider(
-                value = actionableThreshold,
-                onValueChange = {
-                    actionableThreshold = it
-                    ActionItemProcessor.setActionableConfidenceThreshold(context, it)
-                },
-                valueRange = ActionItemProcessor.ACTIONABLE_THRESHOLD_RANGE,
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            SectionDivider()
-            }
-
-            if (section == SettingsSection.IA) {
-            CollapsibleSectionHeader(
-                title = "Prompts",
-                subtitle = "Edita los prompts del sistema sin tocar código",
-                expanded = promptsExpanded,
-                onToggle = { promptsExpanded = !promptsExpanded }
-            )
-
-            AnimatedVisibility(
-                visible = promptsExpanded,
-                enter = expandVertically(),
-                exit = shrinkVertically()
-            ) {
-                Column {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    PromptTemplateStore.definitions.forEach { definition ->
-                        PromptEditorCard(
-                            definition = definition,
-                            onSave = { PromptTemplateStore.set(context, definition.id, it) },
-                            onReset = { PromptTemplateStore.reset(context, definition.id) }
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-                    }
-                }
-            }
-
-            SectionDivider()
-            }
-
             // ═══════════════════════════════════════════════════════════════
-            // MODELO LOCAL
+            // SOLO MI VOZ
             // ═══════════════════════════════════════════════════════════════
-            if (section == SettingsSection.IA) {
-            CollapsibleSectionHeader(
-                title = "Modelo local",
-                subtitle = "Descarga, activa y configura el modelo en el dispositivo",
-                expanded = modelExpanded,
-                onToggle = { modelExpanded = !modelExpanded }
-            )
+            if (section == SettingsSection.PRIVACY_DATA) {
+            SectionHeader("Análisis local")
 
-            AnimatedVisibility(
-                visible = modelExpanded,
-                enter = expandVertically(),
-                exit = shrinkVertically()
-            ) {
-                Column {
-                    Spacer(modifier = Modifier.height(8.dp))
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
                 ),
-                shape = RoundedCornerShape(12.dp)
+                shape = RoundedCornerShape(16.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    // ── Status + action button ──
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                if (gemmaState is GemmaModelManager.DownloadState.Downloaded) {
-                                    GemmaClient.getModelFile(context).name
-                                } else {
-                                    modelFilename
-                                },
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                when (gemmaState) {
-                                    is GemmaModelManager.DownloadState.Downloaded -> {
-                                        val sizeMB = gemmaManager.getModelSizeMB()
-                                        "Descargado · $sizeMB MB"
-                                    }
-                                    is GemmaModelManager.DownloadState.Downloading ->
-                                        "Descargando ${(gemmaState as GemmaModelManager.DownloadState.Downloading).progress}%..."
-                                    is GemmaModelManager.DownloadState.Failed ->
-                                        (gemmaState as GemmaModelManager.DownloadState.Failed).message
-                                    else -> "No descargado"
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = when (gemmaState) {
-                                    is GemmaModelManager.DownloadState.Downloaded -> MaterialTheme.colorScheme.primary
-                                    is GemmaModelManager.DownloadState.Failed -> MaterialTheme.colorScheme.error
-                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
-                                }
-                            )
-                        }
-
-                        when (gemmaState) {
-                            is GemmaModelManager.DownloadState.NotDownloaded -> {
-                                FilledTonalButton(onClick = { gemmaManager.startDownload() }) {
-                                    Icon(Icons.Default.CloudDownload, null, Modifier.size(18.dp))
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("Descargar")
-                                }
-                            }
-                            is GemmaModelManager.DownloadState.Downloading -> {
-                                OutlinedButton(onClick = { gemmaManager.cancelDownload() }) {
-                                    Icon(Icons.Default.Close, null, Modifier.size(18.dp))
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("Cancelar")
-                                }
-                            }
-                            is GemmaModelManager.DownloadState.Downloaded -> {
-                                var showDeleteDialog by remember { mutableStateOf(false) }
-                                OutlinedButton(onClick = { showDeleteDialog = true }) {
-                                    Icon(Icons.Default.Delete, null, Modifier.size(18.dp))
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("Eliminar")
-                                }
-                                if (showDeleteDialog) {
-                                    AlertDialog(
-                                        onDismissRequest = { showDeleteDialog = false },
-                                        title = { Text("Eliminar modelo") },
-                                        text = { Text("Se liberará espacio pero no podrás procesar grabaciones sin conexión.") },
-                                        confirmButton = {
-                                            TextButton(onClick = {
-                                                gemmaManager.deleteModel()
-                                                showDeleteDialog = false
-                                            }) { Text("Eliminar", color = MaterialTheme.colorScheme.error) }
-                                        },
-                                        dismissButton = {
-                                            TextButton(onClick = { showDeleteDialog = false }) { Text("Cancelar") }
-                                        }
-                                    )
-                                }
-                            }
-                            is GemmaModelManager.DownloadState.Failed -> {
-                                FilledTonalButton(onClick = { gemmaManager.startDownload() }) {
-                                    Text("Reintentar")
-                                }
-                            }
-                        }
-                    }
-
-                    // ── Progress bar ──
-                    if (gemmaState is GemmaModelManager.DownloadState.Downloading) {
-                        Spacer(Modifier.height(8.dp))
-                        androidx.compose.material3.LinearProgressIndicator(
-                            progress = { (gemmaState as GemmaModelManager.DownloadState.Downloading).progress / 100f },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(4.dp)),
-                        )
-                    }
-
-                    Spacer(Modifier.height(8.dp))
                     Text(
-                        "Permite procesar grabaciones sin conexión a internet",
+                        "Procesamiento local",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        "Genera notas y acciones de reuniones sin enviar su contenido a servicios externos. También mejora la redacción de respuestas respaldadas por tus recuerdos.",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
                     )
 
-                    // ── Enable/disable local model ──
-                    if (gemmaState is GemmaModelManager.DownloadState.Downloaded) {
-                        Spacer(Modifier.height(8.dp))
-                        var localModelEnabled by remember {
-                            mutableStateOf(GemmaClient.isLocalModelEnabled(context))
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "Usar modelo local",
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                Text(
-                                    if (localModelEnabled) "Procesará sin conexión"
-                                    else "Instalado, pero no se usará",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                    when (val state = gemmaState) {
+                        is GemmaModelManager.DownloadState.NotDownloaded -> {
+                            FilledTonalButton(onClick = { gemmaManager.startDownload() }) {
+                                Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Descargar modelo")
                             }
-                            Switch(
+                        }
+                        is GemmaModelManager.DownloadState.Downloading -> {
+                            Text(
+                                "Descargando ${state.progress}%",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            androidx.compose.material3.LinearProgressIndicator(
+                                progress = { state.progress / 100f },
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+                            )
+                            TextButton(onClick = { gemmaManager.cancelDownload() }) {
+                                Text("Cancelar")
+                            }
+                        }
+                        is GemmaModelManager.DownloadState.Downloaded -> {
+                            SettingToggle(
+                                title = "Usar modelo local",
+                                subtitle = if (localModelEnabled) "Análisis de reuniones y respuestas mejoradas disponibles"
+                                else "El modelo está instalado, pero desactivado",
                                 checked = localModelEnabled,
                                 onCheckedChange = {
                                     localModelEnabled = it
                                     GemmaClient.setLocalModelEnabled(context, it)
                                 }
                             )
+                            Text(
+                                "Modelo activo: $selectedModelName",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                            TextButton(onClick = { showModelConfig = !showModelConfig }) {
+                                Icon(
+                                    if (showModelConfig) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text("Configurar modelo local")
+                            }
+                            AnimatedVisibility(visible = showModelConfig) {
+                                Column {
+                                    Text(
+                                        "Modelos instalados",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        modifier = Modifier.padding(vertical = 6.dp)
+                                    )
+                                    installedModels.forEach { file ->
+                                        val selected = file.name == selectedModelName
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .clickable {
+                                                    if (GemmaModelManager.selectInstalledModel(context, file.name)) {
+                                                        modelConfigVersion += 1
+                                                        modelTestStatus = null
+                                                    }
+                                                }
+                                                .padding(horizontal = 10.dp, vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                if (selected) Icons.Default.Check else Icons.Default.AutoAwesome,
+                                                contentDescription = null,
+                                                tint = if (selected) MaterialTheme.colorScheme.primary
+                                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(Modifier.width(8.dp))
+                                            Column(Modifier.weight(1f)) {
+                                                Text(file.name, style = MaterialTheme.typography.bodySmall)
+                                                Text(
+                                                    "${file.length() / (1024 * 1024)} MB",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = {
+                                            modelTestInProgress = true
+                                            modelTestStatus = null
+                                            scope.launch {
+                                                val response = GemmaClient.generate(
+                                                    context,
+                                                    "Responde exactamente con la palabra OK.",
+                                                    maxTokens = 8
+                                                )
+                                                modelTestStatus = if (response.isNullOrBlank()) {
+                                                    "Modelo incompatible con esta versión de Trama"
+                                                } else {
+                                                    "Modelo operativo"
+                                                }
+                                                modelTestInProgress = false
+                                            }
+                                        },
+                                        enabled = !modelTestInProgress && localModelEnabled
+                                    ) {
+                                        if (modelTestInProgress) {
+                                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                            Spacer(Modifier.width(8.dp))
+                                        }
+                                        Text(if (modelTestInProgress) "Probando…" else "Probar modelo")
+                                    }
+                                    modelTestStatus?.let { status ->
+                                        Text(
+                                            status,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (status == "Modelo operativo") MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.padding(top = 6.dp)
+                                        )
+                                    }
+
+                                    OutlinedTextField(
+                                        value = modelUrl,
+                                        onValueChange = { modelUrl = it },
+                                        label = { Text("URL del modelo (.task o .litertlm)") },
+                                        supportingText = {
+                                            Text("Archivo: ${GemmaModelManager.filenameFromUrl(modelUrl)}")
+                                        },
+                                        maxLines = 3,
+                                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp)
+                                    )
+                                    OutlinedTextField(
+                                        value = hfToken,
+                                        onValueChange = { hfToken = it },
+                                        label = { Text("Token HuggingFace (opcional)") },
+                                        visualTransformation = PasswordVisualTransformation(),
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                                    )
+                                    FilledTonalButton(
+                                        onClick = {
+                                            GemmaModelManager.setHfToken(context, hfToken)
+                                            GemmaModelManager.setModelUrl(context, modelUrl)
+                                            gemmaManager.startDownload()
+                                            modelConfigVersion += 1
+                                        },
+                                        enabled = modelUrl.isNotBlank(),
+                                        modifier = Modifier.padding(top = 8.dp)
+                                    ) {
+                                        Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("Descargar y usar esta URL")
+                                    }
+                                }
+                            }
+                            TextButton(onClick = { showDeleteLocalModelDialog = true }) {
+                                Text("Liberar espacio")
+                            }
                         }
-                    }
-
-                    // ── Config toggle ──
-                    Spacer(Modifier.height(4.dp))
-                    TextButton(
-                        onClick = { showModelConfig = !showModelConfig },
-                        modifier = Modifier.align(Alignment.End)
-                    ) {
-                        Icon(
-                            if (showModelConfig) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                            null, Modifier.size(16.dp)
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text("Configurar modelo")
-                    }
-
-                    // ── Expandable config fields ──
-                    AnimatedVisibility(visible = showModelConfig) {
-                        Column {
-                            Spacer(Modifier.height(4.dp))
-
-                            OutlinedTextField(
-                                value = modelUrl,
-                                onValueChange = {
-                                    modelUrl = it
-                                    GemmaModelManager.setModelUrl(context, it)
-                                },
-                                label = { Text("URL del modelo (.task o .litertlm)") },
-                                supportingText = {
-                                    Text("Archivo: $modelFilename")
-                                },
-                                singleLine = false,
-                                maxLines = 3,
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp)
+                        is GemmaModelManager.DownloadState.Failed -> {
+                            Text(
+                                state.message,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
                             )
-
-                            Spacer(Modifier.height(8.dp))
-
-                            OutlinedTextField(
-                                value = hfToken,
-                                onValueChange = {
-                                    hfToken = it
-                                    GemmaModelManager.setHfToken(context, it)
-                                },
-                                label = { Text("Token HuggingFace (opcional)") },
-                                supportingText = { Text("Necesario para modelos con acceso restringido") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp)
-                            )
+                            FilledTonalButton(onClick = { gemmaManager.startDownload() }) {
+                                Text("Reintentar")
+                            }
                         }
                     }
                 }
             }
+
+            if (showDeleteLocalModelDialog) {
+                AlertDialog(
+                    onDismissRequest = { showDeleteLocalModelDialog = false },
+                    title = { Text("Eliminar modelo local") },
+                    text = { Text("Se liberará espacio. Conservarás tus transcripciones y notas, y podrás volver a descargar el análisis.") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            gemmaManager.deleteModel()
+                            showDeleteLocalModelDialog = false
+                        }) { Text("Eliminar", color = MaterialTheme.colorScheme.error) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showDeleteLocalModelDialog = false }) { Text("Cancelar") }
+                    }
+                )
+            }
+
+            SectionDivider()
+
+            SectionHeader("Datos en el dispositivo")
+
+            SettingToggle(
+                title = "Aprender de mis decisiones",
+                subtitle = "Usa mis confirmaciones y descartes para mejorar las propuestas. Al desactivarlo, Trama deja de aprender y de usar ese historial.",
+                checked = learnFromDeletions,
+                onCheckedChange = { scope.launch { settings.setLearnFromDeletions(it) } }
+            )
+            if (deletionFeedbackCount > 0) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "$deletionFeedbackCount patrones aprendidos",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = {
+                        com.trama.app.summary.DeletionFeedbackStore.clear(context)
+                        deletionFeedbackCount = 0
+                    }) {
+                        Text("Borrar")
+                    }
                 }
             }
 
             SectionDivider()
-            }
 
-            // ═══════════════════════════════════════════════════════════════
-            // SOLO MI VOZ
-            // ═══════════════════════════════════════════════════════════════
-            if (section == SettingsSection.PRIVACY_DATA) {
             CollapsibleSectionHeader(
-                title = "Solo mi voz",
-                subtitle = "Verificacion offline despues de Whisper",
+                title = "Reconocer mi voz",
+                subtitle = "Ayuda a reducir capturas de otras personas. Puede equivocarse.",
                 expanded = speakerExpanded,
                 onToggle = { speakerExpanded = !speakerExpanded }
             )
@@ -2290,8 +2193,12 @@ fun SettingsScreen(
             // ═══════════════════════════════════════════════════════════════
             if (section == SettingsSection.PRIVACY_DATA) {
             CollapsibleSectionHeader(
-                title = "Copia de seguridad",
-                subtitle = "Exporta o automatiza el respaldo de tus datos",
+                title = "Copia de seguridad diaria",
+                subtitle = if (backupEnabled) {
+                    "Activa cada día alrededor de las %02d:%02d".format(backupHour, backupMinute)
+                } else {
+                    "Guarda datos y transcripciones; no incluye el audio"
+                },
                 expanded = backupExpanded,
                 onToggle = { backupExpanded = !backupExpanded }
             )
@@ -2305,9 +2212,9 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(8.dp))
 
             SettingToggle(
-                title = "Backup automatico diario",
+                title = "Copia automática",
                 subtitle = if (backupLocationName == null) "Pendiente: elige un archivo de destino"
-                    else "Actualiza diariamente el archivo elegido",
+                    else "Actualiza el archivo alrededor de la hora elegida, sin audio",
                 checked = backupEnabled,
                 onCheckedChange = {
                     if (it && backupLocationName == null) {
@@ -2316,7 +2223,7 @@ fun SettingsScreen(
                     }
                     scope.launch {
                         settings.setBackupEnabled(it)
-                        if (it) BackupScheduler.schedule(context, backupHour)
+                        if (it) BackupScheduler.schedule(context, backupHour, backupMinute)
                         else BackupScheduler.cancel(context)
                     }
                 }
@@ -2332,7 +2239,7 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Ubicacion", style = MaterialTheme.typography.bodyMedium)
+                            Text("Archivo de la copia", style = MaterialTheme.typography.bodyMedium)
                             Text(
                                 backupLocationName ?: "No configurada",
                                 style = MaterialTheme.typography.bodySmall,
@@ -2348,28 +2255,40 @@ fun SettingsScreen(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Hour slider
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Hora", style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.weight(1f))
-                        Text("${backupHour}:00", style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Hora de la copia", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "Alrededor de las %02d:%02d".format(backupHour, backupMinute),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        FilledTonalButton(
+                            onClick = {
+                                TimePickerDialog(
+                                    context,
+                                    { _, selectedHour, selectedMinute ->
+                                        scope.launch {
+                                            settings.setBackupTime(selectedHour, selectedMinute)
+                                            BackupScheduler.schedule(
+                                                context,
+                                                selectedHour,
+                                                selectedMinute
+                                            )
+                                        }
+                                    },
+                                    backupHour,
+                                    backupMinute,
+                                    true
+                                ).show()
+                            },
+                            shape = RoundedCornerShape(10.dp)
+                        ) { Text("Cambiar") }
                     }
-                    Slider(
-                        value = backupHour.toFloat(),
-                        onValueChange = {
-                            val h = it.roundToInt()
-                            scope.launch {
-                                settings.setBackupHour(h)
-                                BackupScheduler.schedule(context, h)
-                            }
-                        },
-                        valueRange = 0f..23f, steps = 22,
-                        modifier = Modifier.fillMaxWidth()
-                    )
                 }
             }
 
@@ -2410,7 +2329,7 @@ fun SettingsScreen(
                     ) {
                         Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Backup ahora")
+                        Text("Crear copia")
                     }
                 }
 
@@ -2421,7 +2340,7 @@ fun SettingsScreen(
                 ) {
                     Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Exportar")
+                    Text("Guardar otra copia")
                 }
 
                 OutlinedButton(
@@ -2431,12 +2350,12 @@ fun SettingsScreen(
                 ) {
                     Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Importar")
+                    Text("Restaurar una copia")
                 }
             }
 
             Text(
-                "Exportar permite guardar manualmente en otra ubicacion.",
+                "Restaurar añade los datos que falten. Los archivos de audio no forman parte de la copia.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp)
@@ -2498,7 +2417,7 @@ fun SettingsScreen(
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                "El gate usa estructuras gramaticales compactas y un vocabulario de acciones. Las frases de abajo son expresiones explícitas adicionales, no cientos de combinaciones internas.",
+                                "Solo las frases activas que aparecen debajo pueden iniciar una captura. Trama reconoce mayúsculas y acentos sin exigir que la frase esté al principio.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -2526,11 +2445,6 @@ fun SettingsScreen(
                             text = "Personalizable",
                             color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.14f),
                             contentColor = MaterialTheme.colorScheme.secondary
-                        )
-                        PatternLegendChip(
-                            text = "Tiempo fuera del gate",
-                            color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.14f),
-                            contentColor = MaterialTheme.colorScheme.tertiary
                         )
                     }
 
@@ -2933,148 +2847,6 @@ private fun CalendarSourceRow(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun TimelineColorPicker(
-    title: String,
-    subtitle: String,
-    selectedIndex: Int,
-    onSelect: (Int) -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-        ),
-        shape = RoundedCornerShape(16.dp)
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        subtitle,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Surface(
-                    shape = RoundedCornerShape(999.dp),
-                    color = timelineAccentColor(selectedIndex).copy(alpha = 0.14f)
-                ) {
-                    Text(
-                        TimelineAccentPalette[selectedIndex % TimelineAccentPalette.size].name,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = timelineAccentColor(selectedIndex),
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                TimelineAccentPalette.forEachIndexed { index, option ->
-                    val selected = index == selectedIndex
-                    Surface(
-                        modifier = Modifier
-                            .size(width = 34.dp, height = 22.dp)
-                            .clickable { onSelect(index) },
-                        shape = RoundedCornerShape(999.dp),
-                        color = option.color.copy(alpha = if (selected) 0.95f else 0.22f),
-                        border = androidx.compose.foundation.BorderStroke(
-                            1.dp,
-                            if (selected) option.color else option.color.copy(alpha = 0.28f)
-                        )
-                    ) {
-                        if (selected) {
-                            Row(
-                                modifier = Modifier.fillMaxSize(),
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    Icons.Default.Check,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(14.dp),
-                                    tint = Color.White
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun PromptEditorCard(
-    definition: PromptTemplateStore.PromptDefinition,
-    onSave: (String) -> Unit,
-    onReset: () -> Unit
-) {
-    val context = LocalContext.current
-    var value by remember(definition.id) {
-        mutableStateOf(PromptTemplateStore.get(context, definition.id))
-    }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-        ),
-        shape = RoundedCornerShape(16.dp)
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Text(
-                definition.title,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold
-            )
-            Text(
-                definition.subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            OutlinedTextField(
-                value = value,
-                onValueChange = { value = it },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 6,
-                maxLines = 16,
-                shape = RoundedCornerShape(12.dp)
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilledTonalButton(
-                    onClick = { onSave(value) },
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Text("Guardar")
-                }
-                OutlinedButton(
-                    onClick = {
-                        onReset()
-                        value = PromptTemplateStore.get(context, definition.id)
-                    },
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Text("Restablecer")
-                }
-            }
-        }
-    }
-}
-
 // ── Pattern Card ────────────────────────────────────────────────────────────
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -3212,7 +2984,7 @@ private fun IntentPatternCard(
 private fun patternDescription(pattern: IntentPattern): String {
     return when (pattern.id) {
         "recordatorios" -> "Frases explicitas para recordar algo."
-        "tareas" -> "Gramática personal + vocabulario de acciones; aquí solo se muestran excepciones explícitas."
+        "tareas" -> "Frases explícitas para capturar tareas pendientes."
         "comunicacion" -> "Acciones de llamar, escribir o mandar un mensaje."
         else -> if (pattern.isCustom) {
             "Categoria creada por ti para un caso concreto."
@@ -3276,8 +3048,8 @@ private fun PatternEditDialog(
                         modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp))
                     FilledTonalButton(
                         onClick = {
-                            val t = newTrigger.trim().lowercase()
-                            if (t.isNotBlank() && t !in triggers) { triggers = triggers + t; newTrigger = "" }
+                            triggers = mergeTriggerDraft(triggers, newTrigger)
+                            newTrigger = ""
                         },
                         enabled = newTrigger.trim().isNotBlank() && newTrigger.trim().lowercase() !in triggers,
                         shape = RoundedCornerShape(10.dp)
@@ -3290,11 +3062,11 @@ private fun PatternEditDialog(
                 onSave(
                     pattern.copy(
                         label = label.trim().ifBlank { pattern.label },
-                        triggers = triggers
+                        triggers = mergeTriggerDraft(triggers, newTrigger)
                     )
                 )
             },
-                enabled = triggers.isNotEmpty() && label.isNotBlank(), shape = RoundedCornerShape(10.dp)) {
+                enabled = (triggers.isNotEmpty() || newTrigger.isNotBlank()) && label.isNotBlank(), shape = RoundedCornerShape(10.dp)) {
                 Icon(Icons.Default.Check, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("Guardar")
             }
         },
@@ -3349,8 +3121,8 @@ private fun NewPatternDialog(
                         modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp))
                     FilledTonalButton(
                         onClick = {
-                            val t = newTrigger.trim().lowercase()
-                            if (t.isNotBlank() && t !in triggers) { triggers = triggers + t; newTrigger = "" }
+                            triggers = mergeTriggerDraft(triggers, newTrigger)
+                            newTrigger = ""
                         },
                         enabled = newTrigger.trim().isNotBlank(),
                         shape = RoundedCornerShape(10.dp)
@@ -3362,14 +3134,22 @@ private fun NewPatternDialog(
             Button(onClick = {
                 onSave(IntentPattern(
                     id = id.ifBlank { "custom_${System.currentTimeMillis()}" },
-                    label = label.trim(), triggers = triggers, isCustom = true
+                    label = label.trim(),
+                    triggers = mergeTriggerDraft(triggers, newTrigger),
+                    isCustom = true
                 ))
-            }, enabled = label.isNotBlank() && triggers.isNotEmpty() && id !in existingIds,
+            }, enabled = label.isNotBlank() && (triggers.isNotEmpty() || newTrigger.isNotBlank()) && id !in existingIds,
                 shape = RoundedCornerShape(10.dp)) { Text("Crear") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
         shape = RoundedCornerShape(24.dp)
     )
+}
+
+internal fun mergeTriggerDraft(existing: List<String>, draft: String): List<String> {
+    val pending = draft.trim().lowercase()
+    return (existing + pending.takeIf { it.isNotBlank() }.orEmpty())
+        .distinctBy(IntentPattern::normalizeTrigger)
 }
 
 // ── Test Phrase Dialog ──────────────────────────────────────────────────────
@@ -3400,7 +3180,7 @@ private fun TestPhraseDialog(
                     value = testPhrase,
                     onValueChange = {
                         testPhrase = it
-                        val detection = detector.detect(it)
+                        val detection = detector.detectConfigured(it)
                         result = if (detection != null) {
                             val weak = detection.scoreReasons.contains("weak_ownership")
                             val route = if (

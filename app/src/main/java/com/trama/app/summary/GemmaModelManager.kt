@@ -33,6 +33,7 @@ class GemmaModelManager(private val context: Context) {
 
         private const val KEY_MODEL_URL = "model_url"
         private const val KEY_HF_TOKEN = "hf_token"
+        private const val KEY_SELECTED_MODEL_FILENAME = "selected_model_filename"
 
         const val DEFAULT_URL = "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm"
 
@@ -43,7 +44,11 @@ class GemmaModelManager(private val context: Context) {
             getPrefs(context).getString(KEY_MODEL_URL, DEFAULT_URL) ?: DEFAULT_URL
 
         fun setModelUrl(context: Context, url: String) {
-            getPrefs(context).edit().putString(KEY_MODEL_URL, url.trim()).apply()
+            getPrefs(context).edit()
+                .putString(KEY_MODEL_URL, url.trim())
+                .remove(KEY_SELECTED_MODEL_FILENAME)
+                .apply()
+            GemmaClient.release()
         }
 
         fun getHfToken(context: Context): String =
@@ -60,7 +65,29 @@ class GemmaModelManager(private val context: Context) {
         }
 
         fun getModelFilename(context: Context): String =
-            filenameFromUrl(getModelUrl(context))
+            getPrefs(context).getString(KEY_SELECTED_MODEL_FILENAME, null)
+                ?.takeIf { selected ->
+                    selected == File(selected).name &&
+                        context.filesDir.resolve(selected).isFile
+                }
+                ?: filenameFromUrl(getModelUrl(context))
+
+        fun getInstalledModelFiles(context: Context): List<File> =
+            context.filesDir.listFiles().orEmpty()
+                .filter { file ->
+                    file.isFile && file.length() > 0L &&
+                        file.nameWithoutExtension.contains("gemma", ignoreCase = true) &&
+                        file.extension.lowercase() in setOf("task", "litertlm")
+                }
+                .sortedBy { it.name.lowercase() }
+
+        fun selectInstalledModel(context: Context, filename: String): Boolean {
+            val selected = getInstalledModelFiles(context).firstOrNull { it.name == filename }
+                ?: return false
+            getPrefs(context).edit().putString(KEY_SELECTED_MODEL_FILENAME, selected.name).apply()
+            GemmaClient.release()
+            return true
+        }
 
         /** Destination associated with the URL currently configured by the user. */
         fun getConfiguredModelFile(context: Context): File =
@@ -192,6 +219,9 @@ class GemmaModelManager(private val context: Context) {
                         val dest = getConfiguredModelFile(context)
                         tempFile.copyTo(dest, overwrite = true)
                         tempFile.delete()
+                        getPrefs(context).edit()
+                            .putString(KEY_SELECTED_MODEL_FILENAME, dest.name)
+                            .apply()
                         Log.i(TAG, "Model installed: ${dest.length() / (1024 * 1024)} MB")
                         DownloadState.Downloaded
                     } catch (e: Exception) {

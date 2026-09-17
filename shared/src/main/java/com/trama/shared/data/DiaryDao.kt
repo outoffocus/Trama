@@ -19,8 +19,9 @@ interface DiaryDao {
     @Query("SELECT * FROM diary_entries ORDER BY createdAt DESC")
     fun getAll(): Flow<List<DiaryEntry>>
 
-    /** All open items, including suggested tasks awaiting review. */
-    @Query("""SELECT * FROM diary_entries WHERE status IN ('PENDING','SUGGESTED')
+    /** Open items for general UI; meeting suggestions stay in their recording review. */
+    @Query("""SELECT * FROM diary_entries WHERE contentKind = 'ACTION'
+              AND (status = 'PENDING' OR (status = 'SUGGESTED' AND sourceRecordingId IS NULL))
               AND duplicateOfId IS NULL
               ORDER BY CASE priority
                 WHEN 'URGENT' THEN 0 WHEN 'HIGH' THEN 1
@@ -29,15 +30,15 @@ interface DiaryDao {
     fun getPending(): Flow<List<DiaryEntry>>
 
     /** Suggested items awaiting user review (low-confidence LLM extractions). */
-    @Query("SELECT * FROM diary_entries WHERE status = 'SUGGESTED' AND duplicateOfId IS NULL ORDER BY createdAt DESC")
+    @Query("SELECT * FROM diary_entries WHERE contentKind = 'ACTION' AND status = 'SUGGESTED' ORDER BY createdAt DESC")
     fun getSuggested(): Flow<List<DiaryEntry>>
 
     /** Completed items, most recent first */
-    @Query("SELECT * FROM diary_entries WHERE status = 'COMPLETED' ORDER BY completedAt DESC")
+    @Query("SELECT * FROM diary_entries WHERE contentKind = 'ACTION' AND status = 'COMPLETED' ORDER BY completedAt DESC")
     fun getCompleted(): Flow<List<DiaryEntry>>
 
     /** Pending items with a due date that has passed */
-    @Query("SELECT * FROM diary_entries WHERE status = 'PENDING' AND dueDate IS NOT NULL AND dueDate < :now ORDER BY dueDate ASC")
+    @Query("SELECT * FROM diary_entries WHERE contentKind = 'ACTION' AND status = 'PENDING' AND dueDate IS NOT NULL AND dueDate < :now ORDER BY dueDate ASC")
     fun getOverdue(now: Long = System.currentTimeMillis()): Flow<List<DiaryEntry>>
 
     /**
@@ -46,7 +47,8 @@ interface DiaryDao {
      * Tasks explicitly postponed to the future (dueDate > dayEnd) are excluded.
      */
     @Query("""SELECT * FROM diary_entries
-              WHERE status IN ('PENDING','SUGGESTED')
+              WHERE contentKind = 'ACTION'
+              AND (status = 'PENDING' OR (status = 'SUGGESTED' AND sourceRecordingId IS NULL))
               AND duplicateOfId IS NULL
               AND createdAt < :beforeDayStart
               AND (dueDate IS NULL OR dueDate <= :dayEnd)
@@ -56,7 +58,23 @@ interface DiaryDao {
               CASE WHEN dueDate IS NOT NULL THEN dueDate ELSE createdAt END ASC""")
     fun getPendingFromOtherDays(beforeDayStart: Long, dayEnd: Long): Flow<List<DiaryEntry>>
 
-    @Query("SELECT * FROM diary_entries WHERE createdAt BETWEEN :startTime AND :endTime ORDER BY createdAt DESC")
+    /**
+     * Canonical diary rows for a date range. A derived action replaces its source
+     * memory for the whole lifecycle, preventing the raw capture from resurfacing
+     * after the action is completed, discarded or deleted from the visible workflow.
+     */
+    @Query("""SELECT entry.* FROM diary_entries AS entry
+              WHERE entry.status != 'DISCARDED'
+                AND entry.createdAt BETWEEN :startTime AND :endTime
+                AND (
+                  entry.parentEntryId IS NOT NULL
+                  OR NOT EXISTS (
+                    SELECT 1 FROM diary_entries AS child
+                    WHERE child.parentEntryId = entry.id
+                      AND child.contentKind = 'ACTION'
+                  )
+                )
+              ORDER BY entry.createdAt DESC""")
     fun byDateRange(startTime: Long, endTime: Long): Flow<List<DiaryEntry>>
 
     /** Entries completed within a time range (by completedAt), regardless of creation date */
@@ -78,7 +96,8 @@ interface DiaryDao {
      */
     @Query("""
         SELECT * FROM diary_entries
-        WHERE status IN ('PENDING','SUGGESTED')
+        WHERE contentKind = 'ACTION'
+          AND (status = 'PENDING' OR (status = 'SUGGESTED' AND sourceRecordingId IS NULL))
           AND duplicateOfId IS NULL
           AND (
             (dueDate IS NOT NULL AND dueDate BETWEEN :dayStart AND :dayEnd)
@@ -98,7 +117,10 @@ interface DiaryDao {
     @Query("SELECT * FROM diary_entries ORDER BY createdAt DESC")
     suspend fun getAllOnce(): List<DiaryEntry>
 
-    @Query("SELECT * FROM diary_entries WHERE text LIKE '%' || :query || '%' OR cleanText LIKE '%' || :query || '%' ORDER BY createdAt DESC")
+    @Query("""SELECT * FROM diary_entries
+              WHERE status != 'DISCARDED' AND parentEntryId IS NULL
+                AND (text LIKE '%' || :query || '%' OR cleanText LIKE '%' || :query || '%')
+              ORDER BY createdAt DESC""")
     fun search(query: String): Flow<List<DiaryEntry>>
 
     @Insert
@@ -110,8 +132,11 @@ interface DiaryDao {
     @Query("DELETE FROM diary_entries WHERE id = :id")
     suspend fun deleteById(id: Long)
 
-    @Query("UPDATE diary_entries SET text = :text, cleanText = :text, correctedText = NULL WHERE id = :id")
-    suspend fun updateText(id: Long, text: String)
+    @Query("""UPDATE diary_entries SET cleanText = :text, correctedText = :text,
+              isSynced = 0, revision = revision + 1,
+              humanDecision = 'ACCEPTED', humanDecisionAt = :editedAt
+              WHERE id = :id""")
+    suspend fun updateText(id: Long, text: String, editedAt: Long = System.currentTimeMillis()): Int
 
     @Query("UPDATE diary_entries SET createdAt = :createdAt WHERE id = :id")
     suspend fun updateCreatedAt(id: Long, createdAt: Long)
@@ -129,9 +154,28 @@ interface DiaryDao {
     @Query("SELECT * FROM diary_entries WHERE createdAt = :createdAt AND text = :text LIMIT 1")
     suspend fun getByCreatedAtAndText(createdAt: Long, text: String): DiaryEntry?
 
+    @Query("SELECT * FROM diary_entries WHERE sourceCaptureId = :sourceCaptureId LIMIT 1")
+    suspend fun getBySourceCaptureId(sourceCaptureId: String): DiaryEntry?
+
     /** Batch delete by IDs */
     @Query("DELETE FROM diary_entries WHERE id IN (:ids)")
     suspend fun deleteByIds(ids: List<Long>)
+
+    /** Deletes selected rows together with their source memory and sibling derivations. */
+    @Query("""
+        DELETE FROM diary_entries
+        WHERE id IN (:ids)
+           OR parentEntryId IN (:ids)
+           OR id IN (
+               SELECT parentEntryId FROM diary_entries
+               WHERE id IN (:ids) AND parentEntryId IS NOT NULL
+           )
+           OR parentEntryId IN (
+               SELECT parentEntryId FROM diary_entries
+               WHERE id IN (:ids) AND parentEntryId IS NOT NULL
+           )
+    """)
+    suspend fun deleteFamiliesByIds(ids: List<Long>)
 
     /** Update LLM-corrected text and review status */
     @Query("UPDATE diary_entries SET correctedText = :correctedText, wasReviewedByLLM = 1, llmConfidence = :confidence WHERE id = :id")
@@ -142,54 +186,115 @@ interface DiaryDao {
     suspend fun updateProcessingBackend(id: Long, backend: String?)
 
     /** Mark entry as completed */
-    @Query("UPDATE diary_entries SET status = 'COMPLETED', completedAt = :completedAt WHERE id = :id")
-    suspend fun markCompleted(id: Long, completedAt: Long = System.currentTimeMillis())
+    @Query("""UPDATE diary_entries SET status = 'COMPLETED', completedAt = :completedAt,
+              humanDecision = 'COMPLETED', humanDecisionAt = :completedAt,
+              revision = revision + 1 WHERE id = :id AND contentKind = 'ACTION'""")
+    suspend fun markCompleted(id: Long, completedAt: Long = System.currentTimeMillis()): Int
 
     /** Mark entry as discarded */
-    @Query("UPDATE diary_entries SET status = 'DISCARDED', completedAt = :now WHERE id = :id")
-    suspend fun markDiscarded(id: Long, now: Long = System.currentTimeMillis())
+    @Query("""UPDATE diary_entries SET status = 'DISCARDED', completedAt = :now,
+              humanDecision = 'DISCARDED', humanDecisionAt = :now,
+              revision = revision + 1 WHERE id = :id AND contentKind = 'ACTION'""")
+    suspend fun markDiscarded(id: Long, now: Long = System.currentTimeMillis()): Int
+
+    /** Undo an explicit suggestion dismissal without reopening unrelated discarded actions. */
+    @Query("""UPDATE diary_entries SET status = 'SUGGESTED', completedAt = NULL,
+              humanDecision = NULL, humanDecisionAt = NULL, revision = revision + 1
+              WHERE id = :id AND contentKind = 'ACTION' AND status = 'DISCARDED'
+                AND humanDecision = 'DISCARDED'""")
+    suspend fun restoreDiscardedSuggestion(id: Long): Int
+
+    /** Automatic rejection is conditional and can never overwrite a human decision. */
+    @Query("""UPDATE diary_entries SET status = 'DISCARDED', completedAt = :now
+              WHERE id = :id AND contentKind = 'ACTION' AND revision = :expectedRevision
+                AND humanDecision IS NULL AND status IN ('PENDING','SUGGESTED')""")
+    suspend fun autoDiscard(id: Long, expectedRevision: Long, now: Long = System.currentTimeMillis()): Int
 
     /** Mark entry as suggested (awaiting user review) */
-    @Query("UPDATE diary_entries SET status = 'SUGGESTED' WHERE id = :id")
-    suspend fun markSuggested(id: Long)
+    @Query("""UPDATE diary_entries SET status = 'SUGGESTED'
+              WHERE id = :id AND contentKind = 'ACTION' AND humanDecision IS NULL
+                AND status = 'PENDING'""")
+    suspend fun markSuggested(id: Long): Int
 
     /** Reopen a completed/discarded entry back to pending */
-    @Query("UPDATE diary_entries SET status = 'PENDING', completedAt = NULL WHERE id = :id")
-    suspend fun markPending(id: Long)
+    @Query("""UPDATE diary_entries SET status = 'PENDING', completedAt = NULL,
+              humanDecision = NULL, humanDecisionAt = NULL, revision = revision + 1
+              WHERE id = :id AND contentKind = 'ACTION'""")
+    suspend fun markPending(id: Long): Int
 
     /** Confirm a suggestion as reliable without overwriting the model's own confidence. */
     @Query("""UPDATE diary_entries
         SET status = 'PENDING', completedAt = NULL,
-            userConfirmedAt = :confirmedAt, verificationSource = :source
-        WHERE id = :id""")
-    suspend fun confirmSuggested(id: Long, source: String, confirmedAt: Long = System.currentTimeMillis())
+            userConfirmedAt = :confirmedAt, verificationSource = :source,
+            humanDecision = 'ACCEPTED', humanDecisionAt = :confirmedAt,
+            revision = revision + 1
+        WHERE id = :id AND contentKind = 'ACTION' AND status = 'SUGGESTED'""")
+    suspend fun confirmSuggested(id: Long, source: String, confirmedAt: Long = System.currentTimeMillis()): Int
 
     /** Batch mark as completed */
-    @Query("UPDATE diary_entries SET status = 'COMPLETED', completedAt = :completedAt WHERE id IN (:ids)")
+    @Query("""UPDATE diary_entries SET status = 'COMPLETED', completedAt = :completedAt,
+              humanDecision = 'COMPLETED', humanDecisionAt = :completedAt,
+              revision = revision + 1 WHERE id IN (:ids) AND contentKind = 'ACTION'""")
     suspend fun markCompletedByIds(ids: List<Long>, completedAt: Long = System.currentTimeMillis())
 
     /** Update AI-processed fields after capture */
-    @Query("UPDATE diary_entries SET cleanText = :cleanText, actionType = :actionType, dueDate = :dueDate, priority = :priority, wasReviewedByLLM = 1, llmConfidence = :confidence WHERE id = :id")
-    suspend fun updateAIProcessing(id: Long, cleanText: String, actionType: String, dueDate: Long?, priority: String, confidence: Float)
+    @Query("""UPDATE diary_entries SET cleanText = :cleanText, actionType = :actionType,
+              dueDate = :dueDate, priority = :priority, wasReviewedByLLM = 1,
+              llmConfidence = :confidence
+              WHERE id = :id AND contentKind = 'ACTION'
+                AND humanDecision IS NULL AND status IN ('PENDING','SUGGESTED')""")
+    suspend fun updateAIProcessing(id: Long, cleanText: String, actionType: String,
+        dueDate: Long?, priority: String, confidence: Float): Int
+
+    /** Apply an explicit user-requested reanalysis without changing lifecycle state. */
+    @Query("""UPDATE diary_entries SET cleanText = :cleanText, correctedText = :inputText,
+              actionType = :actionType,
+              dueDate = :dueDate, priority = :priority, wasReviewedByLLM = 1,
+              llmConfidence = :confidence, processingBackend = 'LOCAL',
+              isSynced = 0, revision = revision + 1
+              WHERE id = :id AND contentKind = 'ACTION'""")
+    suspend fun applyUserReanalysis(id: Long, inputText: String, cleanText: String, actionType: String,
+        dueDate: Long?, priority: String, confidence: Float): Int
+
+    @Query("""UPDATE diary_entries SET externalState = :state,
+              externalEventId = :eventId, externalUpdatedAt = :updatedAt
+              WHERE id = :id AND contentKind = 'ACTION'""")
+    suspend fun updateExternalState(id: Long, state: String, eventId: Long?,
+        updatedAt: Long = System.currentTimeMillis()): Int
+
+    @Query("""SELECT * FROM diary_entries
+              WHERE parentEntryId = :parentEntryId AND contentKind = 'ACTION'
+                AND sourceCaptureId = :sourceCaptureId LIMIT 1""")
+    suspend fun getDerivedAction(parentEntryId: Long, sourceCaptureId: String): DiaryEntry?
+
+    @Query("""UPDATE diary_entries SET status = 'DISCARDED', completedAt = :now
+              WHERE parentEntryId = :parentEntryId AND contentKind = 'ACTION'
+                AND sourceCaptureId != :keepSourceCaptureId AND humanDecision IS NULL
+                AND status IN ('PENDING','SUGGESTED')""")
+    suspend fun supersedeDerivedActions(parentEntryId: Long, keepSourceCaptureId: String,
+        now: Long = System.currentTimeMillis()): Int
 
     /** Get only the most recent entry */
     @Query("SELECT * FROM diary_entries ORDER BY createdAt DESC LIMIT 1")
     fun getLatest(): Flow<DiaryEntry?>
 
     /** Get most recent pending entry (for watch home screen) */
-    @Query("SELECT * FROM diary_entries WHERE status = 'PENDING' ORDER BY createdAt DESC LIMIT 1")
+    @Query("SELECT * FROM diary_entries WHERE contentKind = 'ACTION' AND status = 'PENDING' ORDER BY createdAt DESC LIMIT 1")
     fun getLatestPending(): Flow<DiaryEntry?>
 
     /** One-shot latest pending entry for transactional dedup checks */
-    @Query("SELECT * FROM diary_entries WHERE status = 'PENDING' ORDER BY createdAt DESC LIMIT 1")
+    @Query("SELECT * FROM diary_entries WHERE contentKind = 'ACTION' AND status = 'PENDING' ORDER BY createdAt DESC LIMIT 1")
     suspend fun getLatestPendingOnce(): DiaryEntry?
+
+    @Query("SELECT * FROM diary_entries WHERE contentKind = 'MEMORY' ORDER BY createdAt DESC LIMIT 1")
+    suspend fun getLatestMemoryOnce(): DiaryEntry?
 
     /** Total entry count (lightweight) */
     @Query("SELECT COUNT(*) FROM diary_entries")
     fun countAll(): Flow<Int>
 
     /** Count pending items */
-    @Query("SELECT COUNT(*) FROM diary_entries WHERE status = 'PENDING'")
+    @Query("SELECT COUNT(*) FROM diary_entries WHERE contentKind = 'ACTION' AND status = 'PENDING'")
     fun countPending(): Flow<Int>
 
     /** Count completed today */
@@ -197,35 +302,56 @@ interface DiaryDao {
     fun countCompletedToday(startOfDay: Long): Flow<Int>
 
     /** Mark entry as duplicate of another */
-    @Query("UPDATE diary_entries SET duplicateOfId = :originalId WHERE id = :id")
+    @Query("""UPDATE diary_entries SET duplicateOfId = :originalId
+              WHERE id = :id AND contentKind = 'ACTION' AND humanDecision IS NULL
+                AND status IN ('PENDING','SUGGESTED')""")
     suspend fun markDuplicate(id: Long, originalId: Long)
 
+    @Query("UPDATE diary_entries SET parentEntryId = :parentEntryId WHERE id = :id")
+    suspend fun updateParentEntry(id: Long, parentEntryId: Long?): Int
+
     /** Clear duplicate flag */
-    @Query("UPDATE diary_entries SET duplicateOfId = NULL WHERE id = :id")
+    @Query("""UPDATE diary_entries SET duplicateOfId = NULL, revision = revision + 1
+              WHERE id = :id AND contentKind = 'ACTION'""")
     suspend fun clearDuplicate(id: Long)
 
+    /** Record a user's rejection as a terminal state and remove the duplicate link atomically. */
+    @Query("""UPDATE diary_entries
+        SET status = 'DISCARDED', completedAt = :now, duplicateOfId = NULL,
+            userConfirmedAt = :now, verificationSource = 'CALENDAR_DISCARD',
+            humanDecision = 'DISCARDED', humanDecisionAt = :now,
+            revision = revision + 1
+        WHERE id = :id AND contentKind = 'ACTION'""")
+    suspend fun discardDuplicate(id: Long, now: Long = System.currentTimeMillis()): Int
+
     /** Get all entries flagged as duplicates */
-    @Query("SELECT * FROM diary_entries WHERE duplicateOfId IS NOT NULL AND status = 'PENDING' ORDER BY createdAt DESC")
+    @Query("SELECT * FROM diary_entries WHERE contentKind = 'ACTION' AND duplicateOfId IS NOT NULL AND status IN ('PENDING','SUGGESTED') ORDER BY createdAt DESC")
     fun getDuplicates(): Flow<List<DiaryEntry>>
 
     /** Get recent pending entries for dedup comparison (last 50) */
-    @Query("SELECT * FROM diary_entries WHERE status = 'PENDING' AND duplicateOfId IS NULL ORDER BY createdAt DESC LIMIT 50")
+    @Query("SELECT * FROM diary_entries WHERE contentKind = 'ACTION' AND status = 'PENDING' AND duplicateOfId IS NULL ORDER BY createdAt DESC LIMIT 50")
     suspend fun getRecentPendingForDedup(): List<DiaryEntry>
 
     /** Get recent pending/suggested entries for dedup comparison (last 80). */
-    @Query("SELECT * FROM diary_entries WHERE status IN ('PENDING', 'SUGGESTED') AND duplicateOfId IS NULL ORDER BY createdAt DESC LIMIT 80")
+    @Query("SELECT * FROM diary_entries WHERE contentKind = 'ACTION' AND status IN ('PENDING', 'SUGGESTED') AND duplicateOfId IS NULL ORDER BY createdAt DESC LIMIT 80")
     suspend fun getRecentActiveForDedup(): List<DiaryEntry>
 
     /** Mark entry as completed by createdAt+text (for cross-device sync where IDs differ) */
-    @Query("UPDATE diary_entries SET status = 'COMPLETED', completedAt = :completedAt WHERE createdAt = :createdAt AND text = :text")
+    @Query("""UPDATE diary_entries SET status = 'COMPLETED', completedAt = :completedAt,
+              humanDecision = 'COMPLETED', humanDecisionAt = :completedAt,
+              revision = revision + 1
+              WHERE createdAt = :createdAt AND text = :text AND contentKind = 'ACTION'""")
     suspend fun markCompletedByKey(createdAt: Long, text: String, completedAt: Long = System.currentTimeMillis()): Int
 
     /** Delete entry by createdAt+text (for cross-device sync) */
-    @Query("DELETE FROM diary_entries WHERE createdAt = :createdAt AND text = :text")
-    suspend fun deleteByKey(createdAt: Long, text: String): Int
+    @Query("""UPDATE diary_entries SET status = 'DISCARDED', completedAt = :now,
+              humanDecision = 'DISCARDED', humanDecisionAt = :now,
+              revision = revision + 1
+              WHERE createdAt = :createdAt AND text = :text AND contentKind = 'ACTION'""")
+    suspend fun deleteByKey(createdAt: Long, text: String, now: Long = System.currentTimeMillis()): Int
 
     /** Get action items extracted from a specific recording */
-    @Query("SELECT * FROM diary_entries WHERE sourceRecordingId = :recordingId ORDER BY createdAt ASC")
+    @Query("SELECT * FROM diary_entries WHERE sourceRecordingId = :recordingId AND status != 'DISCARDED' ORDER BY createdAt ASC")
     fun getByRecordingId(recordingId: Long): Flow<List<DiaryEntry>>
 
     /** Get action items extracted from a specific recording (one-shot, for dedup) */
@@ -237,7 +363,7 @@ interface DiaryDao {
     suspend fun getCompletedSince(since: Long): List<DiaryEntry>
 
     /** All pending entries, priority-sorted, one-shot (for assistant context) */
-    @Query("""SELECT * FROM diary_entries WHERE status = 'PENDING' AND duplicateOfId IS NULL
+    @Query("""SELECT * FROM diary_entries WHERE contentKind = 'ACTION' AND status = 'PENDING' AND duplicateOfId IS NULL
               ORDER BY CASE priority
                 WHEN 'URGENT' THEN 0 WHEN 'HIGH' THEN 1
                 WHEN 'NORMAL' THEN 2 WHEN 'LOW' THEN 3 ELSE 4 END,

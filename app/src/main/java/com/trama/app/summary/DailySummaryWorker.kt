@@ -1,25 +1,13 @@
 package com.trama.app.summary
 
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
 import android.util.Log
-import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import com.trama.app.MainActivity
-import com.trama.app.NotificationConfig
-import com.trama.app.R
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Locale
 
 /**
- * WorkManager worker that runs daily at the configured time.
- * Queries the day's entries and generates a summary with the local model,
- * saves it, and shows a notification.
+ * Materializes the most recent completed day for private retrieval and chat context.
+ * It has no user-facing output: Home is built from source events and actionable items.
  */
 class DailySummaryWorker(
     context: Context,
@@ -28,35 +16,19 @@ class DailySummaryWorker(
 
     companion object {
         private const val TAG = "DailySummaryWorker"
-        const val CHANNEL_ID = NotificationConfig.CHANNEL_DAILY_SUMMARY
-        private const val NOTIFICATION_ID = NotificationConfig.ID_DAILY_SUMMARY
     }
 
     override suspend fun doWork(): Result {
-        Log.i(TAG, "Starting daily summary generation")
+        Log.i(TAG, "Starting private daily memory generation")
 
         try {
             val generator = DailyPageGenerator(applicationContext)
-
-            val cal = Calendar.getInstance()
-            val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-            val dateStr = dateFormat.format(cal.time)
-
-            cal.set(Calendar.HOUR_OF_DAY, 0)
-            cal.set(Calendar.MINUTE, 0)
-            cal.set(Calendar.SECOND, 0)
-            cal.set(Calendar.MILLISECOND, 0)
-            val startOfDay = cal.timeInMillis
+            val startOfDay = DailyMemoryPolicy.previousDayStart(System.currentTimeMillis())
             val page = generator.generateAndPersist(
                 dayStartMillis = startOfDay,
                 status = com.trama.shared.model.DailyPageStatus.FINAL
             )
-            val agenda = AgendaBriefingBuilder.build(applicationContext)
-
-            Log.i(TAG, "Daily page generated for $dateStr: ${page.briefSummary}")
-
-            // Show notification
-            showNotification(page.briefSummary.orEmpty(), agenda)
+            Log.i(TAG, "Private daily memory generated for ${page.date}")
 
             return Result.success()
         } catch (e: Exception) {
@@ -65,51 +37,4 @@ class DailySummaryWorker(
         }
     }
 
-    private fun showNotification(briefSummary: String, agenda: AgendaBriefing) {
-        val manager = applicationContext.getSystemService(NotificationManager::class.java)
-
-        // Create channel
-        manager.createNotificationChannel(
-            NotificationChannel(
-                CHANNEL_ID,
-                "Resumen diario",
-                NotificationManager.IMPORTANCE_DEFAULT
-            ).apply {
-                description = "Resumen y acciones sugeridas al final del dia"
-            }
-        )
-
-        val intent = Intent(applicationContext, MainActivity::class.java).apply {
-            putExtra("navigate_to", "calendar")
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            applicationContext, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
-        val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-            .setContentTitle(agenda.title)
-            .setContentText(agenda.shortText)
-            .setSubText("Toca para revisar agenda, tareas y sitios")
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentIntent(pendingIntent)
-            .setAutoCancel(true)
-            .setStyle(
-                NotificationCompat.BigTextStyle().bigText(
-                    buildString {
-                        append(agenda.longText)
-                        val summary = briefSummary.ifBlank { null }
-                        if (summary != null) {
-                            appendLine()
-                            appendLine()
-                            append("Memoria del día: ")
-                            append(summary)
-                        }
-                    }
-                )
-            )
-            .build()
-
-        manager.notify(NOTIFICATION_ID, notification)
-    }
 }

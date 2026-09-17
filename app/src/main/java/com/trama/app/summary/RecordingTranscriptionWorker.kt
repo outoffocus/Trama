@@ -1,18 +1,28 @@
 package com.trama.app.summary
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
+import android.content.pm.ServiceInfo
+import android.os.Build
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
+import androidx.work.ForegroundInfo
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.trama.app.NotificationConfig
+import com.trama.app.R
 import com.trama.app.audio.PcmRecordingStorage
 import com.trama.app.audio.PcmRecordingTranscriber
+import com.trama.app.audio.RecordingTranscriptionCheckpointStore
 import com.trama.app.audio.SherpaWhisperAsrEngine
 import com.trama.shared.data.DatabaseProvider
 import com.trama.shared.model.RecordingStatus
+import kotlinx.coroutines.CancellationException
 
 class RecordingTranscriptionWorker(
     context: Context,
@@ -22,14 +32,26 @@ class RecordingTranscriptionWorker(
     companion object {
         private const val TAG = "RecordingTranscription"
         private const val KEY_RECORDING_ID = "recording_id"
+        private const val NOTIFICATION_ID_BASE = 3_000
+
+        fun workName(recordingId: Long) = "recording-transcription-$recordingId"
 
         fun enqueue(context: Context, recordingId: Long) {
+            enqueue(context, recordingId, ExistingWorkPolicy.KEEP)
+        }
+
+        /** Explicit user retry also resets WorkManager's accumulated backoff. */
+        fun retry(context: Context, recordingId: Long) {
+            enqueue(context, recordingId, ExistingWorkPolicy.REPLACE)
+        }
+
+        private fun enqueue(context: Context, recordingId: Long, policy: ExistingWorkPolicy) {
             val request = OneTimeWorkRequestBuilder<RecordingTranscriptionWorker>()
                 .setInputData(Data.Builder().putLong(KEY_RECORDING_ID, recordingId).build())
                 .build()
             WorkManager.getInstance(context).enqueueUniqueWork(
-                "recording-transcription-$recordingId",
-                ExistingWorkPolicy.KEEP,
+                workName(recordingId),
+                policy,
                 request
             )
         }
@@ -59,14 +81,37 @@ class RecordingTranscriptionWorker(
             sampleRateHz
         )
 
+        runCatching { setForeground(createForegroundInfo(recordingId)) }
+            .onFailure { Log.w(TAG, "Could not promote transcription to foreground", it) }
+
         val asrEngine = SherpaWhisperAsrEngine(applicationContext)
         if (!asrEngine.isAvailable) {
             return retryOrFail(recordingId, IllegalStateException("Offline ASR unavailable"))
         }
         return try {
-            val result = PcmRecordingTranscriber(asrEngine).transcribe(audioFile, sampleRateHz)
+            val expectedChunks = PcmRecordingTranscriber.expectedChunkCount(audioFile, sampleRateHz)
+            val checkpoint = RecordingTranscriptionCheckpointStore.load(
+                audioFile,
+                sampleRateHz,
+                expectedChunks
+            )
+            if (checkpoint != null) {
+                Log.i(
+                    TAG,
+                    "Resuming recording $recordingId at chunk ${checkpoint.nextChunkIndex}/$expectedChunks"
+                )
+            }
+            val result = PcmRecordingTranscriber(asrEngine).transcribe(
+                file = audioFile,
+                sampleRateHz = sampleRateHz,
+                resumeFrom = checkpoint,
+                onCheckpoint = { progress ->
+                    RecordingTranscriptionCheckpointStore.save(audioFile, progress)
+                }
+            )
             if (result.text.isBlank() || result.rejectReason != null) {
                 repository.updateRecordingStatus(recordingId, RecordingStatus.FAILED)
+                RecordingTranscriptionCheckpointStore.clear(audioFile)
                 Log.w(TAG, "Recording $recordingId has no useful speech: ${result.rejectReason}")
                 Result.failure()
             } else {
@@ -78,12 +123,45 @@ class RecordingTranscriptionWorker(
                     processedLocally = true,
                     processedBy = asrEngine.name
                 )
+                RecordingTranscriptionCheckpointStore.clear(audioFile)
                 RecordingProcessorWorker.enqueue(applicationContext, recordingId)
                 Log.i(TAG, "Recording $recordingId transcribed from durable PCM")
                 Result.success()
             }
+        } catch (cancelled: CancellationException) {
+            Log.i(TAG, "Transcription paused by Android for recording $recordingId; progress preserved")
+            throw cancelled
         } catch (error: Exception) {
             retryOrFail(recordingId, error)
+        }
+    }
+
+    private fun createForegroundInfo(recordingId: Long): ForegroundInfo {
+        val manager = applicationContext.getSystemService(NotificationManager::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            manager.createNotificationChannel(
+                NotificationChannel(
+                    NotificationConfig.CHANNEL_TRANSCRIPTION,
+                    "Transcripción de reuniones",
+                    NotificationManager.IMPORTANCE_LOW
+                ).apply { description = "Procesamiento local de reuniones largas" }
+            )
+        }
+        val notification = NotificationCompat.Builder(
+            applicationContext,
+            NotificationConfig.CHANNEL_TRANSCRIPTION
+        )
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle("Transcribiendo reunión")
+            .setContentText("El procesamiento continúa en este dispositivo")
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .build()
+        val notificationId = NOTIFICATION_ID_BASE + (recordingId % 900).toInt()
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ForegroundInfo(notificationId, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            ForegroundInfo(notificationId, notification)
         }
     }
 

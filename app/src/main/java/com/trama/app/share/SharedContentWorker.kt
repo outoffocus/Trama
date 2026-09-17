@@ -14,6 +14,8 @@ import com.trama.app.summary.RecordingProcessorWorker
 import com.trama.shared.audio.CapturedAudioWindow
 import com.trama.shared.data.DatabaseProvider
 import com.trama.shared.model.DiaryEntry
+import com.trama.shared.model.EntryContentKind
+import com.trama.shared.model.EntryStatus
 import com.trama.shared.model.Recording
 import com.trama.shared.model.Source
 import kotlinx.coroutines.Dispatchers
@@ -21,6 +23,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.UUID
 import kotlin.math.roundToInt
 
 class SharedContentWorker(
@@ -55,7 +58,10 @@ class SharedContentWorker(
                 confidence = 1f,
                 source = Source.PHONE,
                 duration = 0,
-                isManual = true
+                isManual = true,
+                status = EntryStatus.SAVED,
+                contentKind = EntryContentKind.MEMORY,
+                sourceCaptureId = "shared:${UUID.randomUUID()}"
             )
         )
         ActionItemProcessor(applicationContext).process(entryId, text, repository)

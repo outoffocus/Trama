@@ -2,7 +2,6 @@ package com.trama.app
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import android.content.Intent
 import androidx.activity.ComponentActivity
@@ -31,15 +30,11 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
 
-    private val permissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { results ->
-        // Start service once RECORD_AUDIO is granted
-        if (results[Manifest.permission.RECORD_AUDIO] == true) {
+    private val audioPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
             startListenerService()
-        }
-        if (results[Manifest.permission.ACCESS_FINE_LOCATION] == true) {
-            maybeStartLocationService()
         }
     }
 
@@ -58,7 +53,7 @@ class MainActivity : ComponentActivity() {
                 startListenerService()
             }
         } else if (shouldStartMicro) {
-            requestPermissions()
+            requestAudioPermission()
         }
         maybeStartLocationService(mainViewModel)
 
@@ -96,7 +91,7 @@ class MainActivity : ComponentActivity() {
         if (hasAudioPermission()) {
             startListenerService()
         } else {
-            requestPermissions()
+            requestAudioPermission()
         }
     }
 
@@ -133,23 +128,7 @@ class MainActivity : ComponentActivity() {
         mainViewModel.syncSettingsToWatch()
     }
 
-    private fun requestPermissions() {
-        val permissions = mutableListOf(
-            Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.READ_CALENDAR,
-            Manifest.permission.WRITE_CALENDAR
-        )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
-        }
-
-        val needed = permissions.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
-
-        if (needed.isNotEmpty()) {
-            permissionLauncher.launch(needed.toTypedArray())
-        }
+    private fun requestAudioPermission() {
+        audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
 }

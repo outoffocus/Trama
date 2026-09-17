@@ -33,4 +33,7 @@ interface DailyPageDao {
     /** All pages sorted newest first (for assistant context building) */
     @Query("SELECT * FROM daily_pages ORDER BY dayStartMillis DESC")
     suspend fun getAllOnce(): List<DailyPage>
+
+    @Query("DELETE FROM daily_pages WHERE dayStartMillis = :dayStartMillis")
+    suspend fun deleteByDay(dayStartMillis: Long): Int
 }

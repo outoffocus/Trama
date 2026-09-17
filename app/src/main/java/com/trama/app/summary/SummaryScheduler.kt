@@ -2,31 +2,32 @@ package com.trama.app.summary
 
 import android.content.Context
 import android.util.Log
+import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import java.util.Calendar
 import java.util.concurrent.TimeUnit
 
-/**
- * Schedules the daily summary worker at the user-configured time.
- */
+/** Materializes yesterday's private memory without adding a user-facing surface. */
 object SummaryScheduler {
 
     private const val TAG = "SummaryScheduler"
     private const val WORK_NAME = "daily_summary"
+    private const val MEMORY_HOUR = 3
 
     /**
-     * Schedule the daily summary at the given hour (0-23).
-     * If the time has already passed today, it schedules for tomorrow.
+     * Runs after the day has closed. The existing work name is retained so upgrades
+     * replace the former summary-and-notification schedule instead of duplicating it.
      */
-    fun schedule(context: Context, hour: Int, minute: Int = 0) {
-        val delay = calculateDelay(hour, minute)
+    fun schedule(context: Context) {
+        val delay = calculateDelay(MEMORY_HOUR, 0)
 
         val workRequest = PeriodicWorkRequestBuilder<DailySummaryWorker>(
             1, TimeUnit.DAYS
         )
             .setInitialDelay(delay, TimeUnit.MILLISECONDS)
+            .setConstraints(Constraints.Builder().setRequiresBatteryNotLow(true).build())
             .build()
 
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(
@@ -37,15 +38,7 @@ object SummaryScheduler {
 
         val hours = delay / (1000 * 60 * 60)
         val mins = (delay / (1000 * 60)) % 60
-        Log.i(TAG, "Daily summary scheduled at $hour:${minute.toString().padStart(2, '0')} (in ${hours}h ${mins}m)")
-    }
-
-    /**
-     * Cancel the scheduled summary.
-     */
-    fun cancel(context: Context) {
-        WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
-        Log.i(TAG, "Daily summary cancelled")
+        Log.i(TAG, "Private daily memory scheduled at 03:00 (in ${hours}h ${mins}m)")
     }
 
     /**
@@ -59,7 +52,7 @@ object SummaryScheduler {
             androidx.work.ExistingWorkPolicy.REPLACE,
             workRequest
         )
-        Log.i(TAG, "Daily summary triggered immediately")
+        Log.i(TAG, "Private daily memory triggered immediately")
     }
 
     private fun calculateDelay(targetHour: Int, targetMinute: Int): Long {

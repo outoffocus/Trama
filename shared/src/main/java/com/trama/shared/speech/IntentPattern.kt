@@ -27,7 +27,7 @@ data class IntentPattern(
         .distinct()
 
     companion object {
-        const val CURRENT_PRESET_VERSION = 2
+        const val CURRENT_PRESET_VERSION = 3
 
         private val json = Json { ignoreUnknownKeys = true }
 
@@ -78,6 +78,17 @@ data class IntentPattern(
                 )
             }
 
+            // Version 2 already represented the user's edited list. Add only the new phrases so
+            // upgrading does not restore older defaults the user deliberately removed.
+            if (stored.presetVersion == 2) {
+                return stored.copy(
+                    label = stored.label.ifBlank { default.label },
+                    triggers = (stored.triggers + V3_ADDITIONS[default.id].orEmpty())
+                        .distinctBy(::normalizeTrigger),
+                    presetVersion = CURRENT_PRESET_VERSION
+                )
+            }
+
             val knownLegacy = legacyTriggersFor(default.id)
             val userAdditions = stored.triggers.filter { trigger ->
                 trigger.isNotBlank() && normalizeTrigger(trigger) !in knownLegacy
@@ -96,6 +107,9 @@ data class IntentPattern(
                 label = "Recordatorios",
                 triggers = listOf(
                     "recuérdame",
+                    "recuerda",
+                    "recordarme",
+                    "recordar",
                     "acordarme de",
                     "acordarnos de",
                     "me tengo que acordar de",
@@ -134,6 +148,10 @@ data class IntentPattern(
                 ),
                 presetVersion = CURRENT_PRESET_VERSION
             )
+        )
+
+        private val V3_ADDITIONS = mapOf(
+            "recordatorios" to listOf("recuerda", "recordarme", "recordar")
         )
 
         private val LEGACY_ACTION_VERBS = setOf(

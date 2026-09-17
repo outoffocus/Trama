@@ -1,18 +1,22 @@
 package com.trama.app.ui.screens
 
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.PlainTooltip
+import androidx.compose.material3.rememberTooltipState
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.contentDescription
+
 import android.Manifest
 import android.content.pm.PackageManager
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,7 +45,6 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
@@ -76,7 +79,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -95,6 +97,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle as collectAsState
 import androidx.compose.runtime.getValue
@@ -107,7 +110,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
@@ -116,9 +118,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.core.content.ContextCompat
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.trama.app.service.EntryProcessingState
 import com.trama.app.service.RecordingState
 import com.trama.app.service.ServiceController
+import com.trama.app.audio.OfflineDictationCapture
+import com.trama.app.audio.SherpaWhisperAsrEngine
 import com.trama.app.summary.ActionExecutor
 import com.trama.app.summary.ActionType
 import com.trama.app.summary.CalendarHelper
@@ -140,7 +146,6 @@ import com.trama.shared.model.EntryActionType
 import com.trama.shared.model.EntryStatus
 import com.trama.shared.model.Place
 import com.trama.shared.model.Recording
-import com.trama.shared.model.DailyPage
 import com.trama.shared.model.Source
 import com.trama.shared.model.TimelineEventType
 import com.trama.shared.sync.MicCoordinator
@@ -148,6 +153,7 @@ import com.trama.shared.util.DayRange
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -160,16 +166,24 @@ fun CalendarScreen(
     onEntryClick: (Long) -> Unit,
     onRecordingClick: (Long) -> Unit = {},
     onPlaceClick: (Long) -> Unit = {},
-    onChatClick: () -> Unit = {},
     onSearchClick: () -> Unit = {},
     onRecordingsListClick: () -> Unit = {},
     onSettingsClick: () -> Unit = {},
-    onAgendaClick: () -> Unit = {}
+    onAgendaClick: () -> Unit = {},
+    viewModel: CalendarViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
-    val repository = remember { DatabaseProvider.getRepository(context) }
+    val actions: CalendarActionsViewModel = hiltViewModel()
     val settings = remember { SettingsDataStore(context) }
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+    fun launchMutation(block: suspend () -> Unit) {
+        scope.launch {
+            try { block() }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (_: Exception) { snackbarHostState.showSnackbar("No se ha podido guardar el cambio") }
+        }
+    }
 
     LaunchedEffect(Unit) {
         GoogleCalendarSyncManager(context).syncSelectedCalendars()
@@ -232,25 +246,29 @@ fun CalendarScreen(
         com.trama.shared.util.DayRange.of(selectedDayStart).endInclusiveMs
     }
 
-    // Data
-    val monthEntriesState by repository.byDateRange(monthStart, monthEnd).collectAsState(initialValue = null)
-    val monthStoredEventsState by repository.getTimelineEventsByDateRange(monthStart, monthEnd).collectAsState(initialValue = null)
-    val placesState by repository.getPlaces().collectAsState(initialValue = null)
-    val selectedDayEventsState by repository.getTimelineEventsByDateRange(selectedDayStart, selectedDayEnd).collectAsState(initialValue = null)
-    val selectedDailyPageState by repository.getDailyPage(selectedDayStart).collectAsState(initialValue = null)
-    val pendingOnDayState by repository.getPendingForDay(selectedDayStart, selectedDayEnd).collectAsState(initialValue = null)
-    val pendingFromOtherDaysState by repository.getPendingFromOtherDays(selectedDayStart, selectedDayEnd).collectAsState(initialValue = null)
-    val duplicateEntriesState by repository.getDuplicates().collectAsState(initialValue = null)
-    val allPendingState by repository.getPending().collectAsState(initialValue = null)
-    val completedOnDayState by repository.getCompletedByCompletedAt(selectedDayStart, selectedDayEnd).collectAsState(initialValue = null)
-    val recordingsState by repository.getAllRecordings().collectAsState(initialValue = null)
+    LaunchedEffect(selectedDayStart, monthStart, monthEnd) {
+        viewModel.selectRange(selectedDayStart, monthStart, monthEnd)
+    }
+    val monthEntriesState by viewModel.monthEntries.collectAsStateWithLifecycle()
+    val monthStoredEventsState by viewModel.monthEvents.collectAsStateWithLifecycle()
+    val placesState by viewModel.places.collectAsStateWithLifecycle()
+    val selectedDayEventsState by viewModel.dayEvents.collectAsStateWithLifecycle()
+    val pendingOnDayState by viewModel.pendingOnDay.collectAsStateWithLifecycle()
+    val pendingFromOtherDaysState by viewModel.pendingOtherDays.collectAsStateWithLifecycle()
+    val duplicateEntriesState by viewModel.duplicates.collectAsStateWithLifecycle()
+    val allPendingState by viewModel.pending.collectAsStateWithLifecycle()
+    val completedOnDayState by viewModel.completedOnDay.collectAsStateWithLifecycle()
+    val recordingsState by viewModel.recordings.collectAsStateWithLifecycle()
     val processingEntryIds by EntryProcessingState.processingIds.collectAsState()
     val processingBackends by EntryProcessingState.processingBackends.collectAsState()
-    val serviceRunning by ServiceController.isRunning.collectAsState()
-    val isRecording by RecordingState.isRecording.collectAsState()
-    val isRecordingProcessing by RecordingState.isProcessing.collectAsState()
-    val recordingElapsed by RecordingState.elapsedSeconds.collectAsState()
-    val watchActive by ServiceController.isWatchActive.collectAsState()
+    val captureState by ServiceController.captureState.collectAsState()
+    val serviceRunning = captureState.listeningActive
+    val triggerRecognized = captureState.triggerRecognized
+    val isRecording = captureState.recording
+    val isRecordingProcessing = captureState.processing
+    val recordingElapsed = captureState.elapsedSeconds
+    val watchActive = captureState.watchActive
+    val transferInProgress = captureState.transferring
     val locationRunning by ServiceController.isLocationRunning.collectAsState()
     val showListeningStatusOnHome by settings.listeningStatusOnHome.collectAsState(initialValue = false)
     val asrStatus by settings.asrDebugStatus.collectAsState(initialValue = "sin datos")
@@ -274,18 +292,31 @@ fun CalendarScreen(
     val monthEntries = monthEntriesState ?: emptyList()
     val monthStoredEvents = monthStoredEventsState ?: emptyList()
     val selectedDayEvents = selectedDayEventsState ?: emptyList()
-    val selectedDailyPage = selectedDailyPageState
     val pendingOnDay = pendingOnDayState ?: emptyList()
     val pendingFromOtherDays = pendingFromOtherDaysState ?: emptyList()
-    val duplicateEntries = duplicateEntriesState ?: emptyList()
-    val duplicateIds = remember(duplicateEntries) { duplicateEntries.map { it.id }.toSet() }
+    val storedDuplicateEntries = duplicateEntriesState ?: emptyList()
+    var locallyDismissedDuplicateIds by remember { mutableStateOf(emptySet<Long>()) }
+    val duplicateEntries = storedDuplicateEntries.filter {
+        it.sourceRecordingId == null && it.id !in locallyDismissedDuplicateIds
+    }
+    // Keep locally hidden duplicates out of the timeline while Room persists the change.
+    val duplicateIds = remember(storedDuplicateEntries) { storedDuplicateEntries.map { it.id }.toSet() }
     val allPendingForOriginalLookup = allPendingState ?: emptyList()
     val visiblePendingOnDay = remember(pendingOnDay, pendingFromOtherDays, duplicateIds) {
         (pendingOnDay + pendingFromOtherDays)
             .distinctBy { it.id }
             .filter { it.id !in duplicateIds }
     }
-    val acceptedPendingOnDay = visiblePendingOnDay
+    var locallyDismissedSuggestionIds by remember { mutableStateOf(emptySet<Long>()) }
+    val suggestedEntries = timelineSuggestions(visiblePendingOnDay, locallyDismissedSuggestionIds)
+    val acceptedPendingOnDay = visiblePendingOnDay.filter { it.status == EntryStatus.PENDING }
+    var reviewExpanded by rememberSaveable { mutableStateOf(false) }
+    val upcomingEvents by viewModel.upcomingEvents.collectAsStateWithLifecycle()
+    val upcomingNow by viewModel.now.collectAsStateWithLifecycle()
+    val nextCommitments = com.trama.app.summary.UpcomingCommitments.selectAfterDay(
+        allPendingForOriginalLookup, upcomingEvents.orEmpty(), selectedDayEnd,
+        Calendar.getInstance().apply { timeInMillis = upcomingNow; add(Calendar.DAY_OF_YEAR, 60) }.timeInMillis
+    )
     val completedTasks = completedOnDayState ?: emptyList()
     val activeSelectedDayEvents = remember(selectedDayEvents) {
         selectedDayEvents.filter { it.type != TimelineEventType.CALENDAR || it.completedAt == null }
@@ -297,25 +328,46 @@ fun CalendarScreen(
         ?.filter { it.createdAt in selectedDayStart..selectedDayEnd }
         ?.sortedBy { it.createdAt }
         ?: emptyList()
-    val entriesCreatedOnDay = remember(monthEntries, selectedDayStart, selectedDayEnd) {
-        monthEntries
-            .filter { it.createdAt in selectedDayStart..selectedDayEnd }
-            .sortedBy { it.createdAt }
+    val entriesCreatedOnDay = remember(
+        monthEntries,
+        allPendingForOriginalLookup,
+        storedDuplicateEntries,
+        processingEntryIds,
+        selectedDayStart,
+        selectedDayEnd
+    ) {
+        projectEntriesForDay(
+            sourceEntries = monthEntries.filter {
+                it.status != EntryStatus.SUGGESTED &&
+                    it.status != EntryStatus.DISCARDED &&
+                    it.status != EntryStatus.COMPLETED
+            },
+            openActions = allPendingForOriginalLookup + storedDuplicateEntries,
+            dayStart = selectedDayStart,
+            dayEnd = selectedDayEnd,
+            processingSourceIds = processingEntryIds
+        )
     }
-    val pendingOtherDays = remember(acceptedPendingOnDay, selectedDayStart) {
-        acceptedPendingOnDay.filter { it.createdAt < selectedDayStart }
+    val pendingOtherDays = remember(acceptedPendingOnDay, selectedDayStart, selectedDayEnd) {
+        pendingFromOtherDaysForDisplay(
+            entries = acceptedPendingOnDay,
+            dayStart = selectedDayStart,
+            dayEnd = selectedDayEnd
+        )
     }
-    val todayEnd = remember(todayStart) { DayRange.of(todayStart).endInclusiveMs }
-    LaunchedEffect(allPendingForOriginalLookup, todayStart, todayEnd) {
-        val now = System.currentTimeMillis()
-        allPendingForOriginalLookup
-            .filter {
-                it.source == Source.WATCH &&
-                    it.status == EntryStatus.PENDING &&
-                    it.dueDate == null &&
-                    it.createdAt !in todayStart..todayEnd
-            }
-            .forEach { repository.updateCreatedAt(it.id, now) }
+    val todayPendingOccurrences = remember(
+        pendingOnDay,
+        entriesCreatedOnDay,
+        duplicateIds,
+        selectedDayStart,
+        selectedDayEnd
+    ) {
+        pendingOccurrencesForDay(
+            pendingOnDay = pendingOnDay.filter { it.id !in duplicateIds },
+            representedEntryIds = entriesCreatedOnDay.mapTo(mutableSetOf()) { it.id },
+            dayStart = selectedDayStart,
+            dayEnd = selectedDayEnd
+        )
     }
     val endOfThisWeek = remember(todayStart) {
         val cal = Calendar.getInstance().apply { timeInMillis = todayStart }
@@ -346,12 +398,14 @@ fun CalendarScreen(
     val upcomingTotal = upcomingThisWeek.size + upcomingNextWeek.size + upcomingLater.size
     val todayTimelineEvents = remember(
         entriesCreatedOnDay,
+        todayPendingOccurrences,
         dayRecordings,
         activeSelectedDayEvents,
         duplicateIds
     ) {
         buildTimelineEvents(
             createdEntries = entriesCreatedOnDay.filter { it.id !in duplicateIds },
+            pendingEntryOccurrences = todayPendingOccurrences,
             completedEntries = emptyList(),
             recordings = dayRecordings,
             storedEvents = activeSelectedDayEvents
@@ -431,15 +485,18 @@ fun CalendarScreen(
     ) { granted ->
         if (granted) ServiceController.startRecording(context)
     }
-    var showAddDialog by remember { mutableStateOf(false) }
-    var micActionsVisible by remember { mutableStateOf(false) }
+    val showAddDialog by viewModel.captureOpen.collectAsStateWithLifecycle()
+    val captureDraft by viewModel.draft.collectAsStateWithLifecycle()
+    val captureSaving by viewModel.saving.collectAsStateWithLifecycle()
+    val captureError by viewModel.error.collectAsStateWithLifecycle()
+    val savedCaptureId by viewModel.savedEntryId.collectAsStateWithLifecycle()
     var selectionMode by remember { mutableStateOf(false) }
     var selectedEntryIds by remember { mutableStateOf(setOf<Long>()) }
     var selectedRecordingIds by remember { mutableStateOf(setOf<Long>()) }
     var selectedEventIds by remember { mutableStateOf(setOf<Long>()) }
-    var otherDaysExpanded by remember { mutableStateOf(true) }
+    var otherDaysExpanded by remember { mutableStateOf(false) }
     var todayExpanded by remember { mutableStateOf(true) }
-    var completedExpanded by remember { mutableStateOf(true) }
+    var completedExpanded by remember { mutableStateOf(false) }
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
 
     fun exitSelectionMode() {
@@ -453,10 +510,6 @@ fun CalendarScreen(
         exitSelectionMode()
     }
 
-    BackHandler(enabled = !selectionMode && micActionsVisible) {
-        micActionsVisible = false
-    }
-
     val learnFromDeletions by settings.learnFromDeletions.collectAsState(initialValue = false)
     var pendingBulkDelete by remember { mutableStateOf(false) }
 
@@ -466,34 +519,8 @@ fun CalendarScreen(
         val eventIds = selectedEventIds.toList()
         if (entryIds.isEmpty() && recordingIds.isEmpty() && eventIds.isEmpty()) return
 
-        scope.launch {
-            if (entryIds.isNotEmpty()) {
-                entryIds.forEach { id ->
-                    repository.getByIdOnce(id)?.let { e ->
-                        val text = e.displayText.ifBlank { e.text }
-                        com.trama.app.diagnostics.CaptureLog.logUserDelete(
-                            entryId = e.id,
-                            text = text,
-                            createdAtMs = e.createdAt,
-                            status = e.status,
-                            actionType = e.actionType,
-                            isManual = e.isManual,
-                            wasCompleted = e.completedAt != null,
-                            hadDueDate = e.dueDate != null,
-                            source = "selection_bulk",
-                            reason = reason?.storageKey,
-                            learningEnabled = learnFromDeletions,
-                            extra = mapOf("batchSize" to entryIds.size)
-                        )
-                        if (learnFromDeletions && reason != null) {
-                            com.trama.app.summary.DeletionFeedbackStore.record(context, text, reason)
-                        }
-                    }
-                }
-                repository.deleteByIds(entryIds)
-            }
-            if (recordingIds.isNotEmpty()) repository.deleteRecordingsByIds(recordingIds)
-            if (eventIds.isNotEmpty()) repository.deleteTimelineEventsByIds(eventIds)
+        launchMutation {
+            actions.run { deleteSelection(entryIds, recordingIds, eventIds, learnFromDeletions, reason) }
             exitSelectionMode()
             pendingBulkDelete = false
         }
@@ -531,15 +558,11 @@ fun CalendarScreen(
         selectedEntryIds = setOf(id)
     }
 
-    val snackbarHostState = remember { SnackbarHostState() }
 
     fun markEntryCompleted(entry: DiaryEntry) {
-        scope.launch {
+        launchMutation {
             if (entry.status == EntryStatus.SUGGESTED) {
-                repository.confirmSuggested(
-                    entry.id,
-                    com.trama.shared.model.EntryVerificationSource.CALENDAR
-                )
+                actions.run { confirmSuggested(entry.id, com.trama.shared.model.EntryVerificationSource.CALENDAR) }
                 if (learnFromDeletions) {
                     val text = entry.displayText.ifBlank { entry.text }
                     com.trama.app.summary.DeletionFeedbackStore.recordAccepted(
@@ -552,16 +575,16 @@ fun CalendarScreen(
                     message = "Añadida a pendientes",
                     duration = SnackbarDuration.Short
                 )
-                return@launch
+                return@launchMutation
             }
-            repository.markCompleted(entry.id)
+            actions.run { markCompleted(entry.id) }
             val result = snackbarHostState.showSnackbar(
                 message = "Marcada como hecha",
                 actionLabel = "Deshacer",
                 duration = SnackbarDuration.Short
             )
             if (result == SnackbarResult.ActionPerformed) {
-                repository.markPending(entry.id)
+                actions.run { markPending(entry.id) }
             } else if (learnFromDeletions) {
                 val text = entry.displayText.ifBlank { entry.text }
                 com.trama.app.summary.DeletionFeedbackStore.recordAccepted(
@@ -574,54 +597,73 @@ fun CalendarScreen(
     }
 
     fun reopenEntry(entry: DiaryEntry) {
+        launchMutation {
+            actions.run { markPending(entry.id) }
+        }
+    }
+
+    fun dismissSuggested(entry: DiaryEntry) {
+        locallyDismissedSuggestionIds = locallyDismissedSuggestionIds + entry.id
         scope.launch {
-            repository.markPending(entry.id)
+            try {
+                actions.run { markDiscarded(entry.id) }
+                val result = snackbarHostState.showSnackbar(
+                    message = "Sugerencia descartada",
+                    actionLabel = "Deshacer",
+                    duration = SnackbarDuration.Short
+                )
+                if (result == SnackbarResult.ActionPerformed) {
+                    actions.run { restoreDiscardedSuggestion(entry.id) }
+                    locallyDismissedSuggestionIds = locallyDismissedSuggestionIds - entry.id
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                locallyDismissedSuggestionIds = locallyDismissedSuggestionIds - entry.id
+                snackbarHostState.showSnackbar("No se ha podido descartar la sugerencia")
+            }
         }
     }
 
     fun keepDuplicate(entry: DiaryEntry) {
-        scope.launch { repository.clearDuplicate(entry.id) }
+        launchMutation { actions.run { clearDuplicate(entry.id) } }
     }
 
     fun deleteDuplicate(entry: DiaryEntry) {
+        locallyDismissedDuplicateIds = locallyDismissedDuplicateIds + entry.id
         scope.launch {
-            com.trama.app.diagnostics.CaptureLog.logUserDelete(
-                entryId = entry.id,
-                text = entry.displayText.ifBlank { entry.text },
-                createdAtMs = entry.createdAt,
-                status = entry.status,
-                actionType = entry.actionType,
-                isManual = entry.isManual,
-                wasCompleted = entry.completedAt != null,
-                hadDueDate = entry.dueDate != null,
-                source = "duplicate_card",
-                extra = mapOf("duplicateOfId" to (entry.duplicateOfId ?: -1L))
-            )
-            repository.deleteById(entry.id)
+            try {
+                actions.run { deleteDuplicate(entry) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                locallyDismissedDuplicateIds = locallyDismissedDuplicateIds - entry.id
+                snackbarHostState.showSnackbar("No se ha podido descartar la sugerencia")
+            }
         }
     }
 
     fun postponeEntry(entry: DiaryEntry, dueDate: Long) {
-        scope.launch {
+        launchMutation {
             val previousDue = entry.dueDate
-            repository.updateDueDate(entry.id, dueDate)
+            actions.run { updateDueDate(entry.id, dueDate) }
             val result = snackbarHostState.showSnackbar(
-                message = "Pospuesta",
+                message = "Fecha de la tarea actualizada",
                 actionLabel = "Deshacer",
                 duration = SnackbarDuration.Short
             )
             if (result == SnackbarResult.ActionPerformed) {
-                repository.updateDueDate(entry.id, previousDue)
+                actions.run { updateDueDate(entry.id, previousDue) }
             }
         }
     }
 
     fun toggleCalendarEventCompleted(eventId: Long, completed: Boolean) {
-        scope.launch {
+        launchMutation {
             if (completed) {
-                repository.markTimelineEventCompleted(eventId)
+                actions.run { markTimelineEventCompleted(eventId) }
             } else {
-                repository.markTimelineEventPending(eventId)
+                actions.run { markTimelineEventPending(eventId) }
             }
         }
     }
@@ -672,7 +714,6 @@ fun CalendarScreen(
             isRecordingProcessing -> Unit
             isRecording -> RecordingState.stopRecording(context)
             watchActive -> {
-                micActionsVisible = false
                 scope.launch(Dispatchers.IO) { MicCoordinator.sendPause(context) }
                 ServiceController.notifyWatchInactive()
             }
@@ -693,36 +734,40 @@ fun CalendarScreen(
             recordPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
-        micActionsVisible = false
         ServiceController.startRecording(context)
     }
 
     fun transferListeningToWatch() {
-        micActionsVisible = false
-        ServiceController.transferToWatch(context)
-    }
-
-    if (showAddDialog) {
-        CategorizedManualEntryDialog(
-            onDismiss = { showAddDialog = false },
-            onSave = { text, categoryId, categoryLabel ->
+        if (transferInProgress) return
+        ServiceController.transferToWatch(context) { success ->
+            if (!success) {
                 scope.launch {
-                    repository.insert(
-                        DiaryEntry(
-                            text = text,
-                            keyword = categoryId,
-                            category = categoryLabel,
-                            confidence = 1.0f,
-                            source = Source.PHONE,
-                            duration = 0,
-                            isManual = true,
-                            cleanText = text,
-                            createdAt = if (isSelectedToday) System.currentTimeMillis() else selectedDayStart + 12 * 60 * 60 * 1000
-                        )
-                    )
-                    showAddDialog = false
+                    Toast.makeText(context, "No se ha podido conectar con el reloj", Toast.LENGTH_SHORT).show()
                 }
             }
+        }
+    }
+
+    fun reclaimListeningFromWatch() {
+        if (transferInProgress) return
+        ServiceController.reclaimFromWatch(context)
+    }
+
+    LaunchedEffect(savedCaptureId) {
+        val id = savedCaptureId ?: return@LaunchedEffect
+        viewModel.acknowledgeSaved()
+        if (snackbarHostState.showSnackbar("Guardado", "Ver") == SnackbarResult.ActionPerformed) {
+            onEntryClick(id)
+        }
+    }
+    if (showAddDialog) {
+        ManualCaptureDialog(
+            text = captureDraft,
+            saving = captureSaving,
+            error = captureError,
+            onTextChange = viewModel::editDraft,
+            onDismiss = viewModel::dismissCapture,
+            onSave = viewModel::saveCapture
         )
     }
 
@@ -794,7 +839,8 @@ fun CalendarScreen(
                 val headerStatus = when {
                     isRecording || isRecordingProcessing -> TramaStatus.Recording
                     watchActive -> TramaStatus.Watch
-                    showListeningStatusOnHome && serviceRunning && asrStatus.isListeningErrorStatus() ->
+                    triggerRecognized -> TramaStatus.TriggerRecognized
+                    serviceRunning && asrStatus.isListeningErrorStatus() ->
                         TramaStatus.Error
                     serviceRunning -> TramaStatus.Listening
                     else -> TramaStatus.Idle
@@ -802,22 +848,21 @@ fun CalendarScreen(
                 val headerStatusLabel = when {
                     isRecording -> formatRecordingElapsed(recordingElapsed)
                     isRecordingProcessing -> "Transcribiendo..."
-                    showListeningStatusOnHome -> listeningStatusLabel(
-                        isRecording = isRecording,
+                    else -> homeListeningLabel(
+                        showDetails = showListeningStatusOnHome,
                         watchActive = watchActive,
                         serviceRunning = serviceRunning,
+                        triggerRecognized = triggerRecognized,
                         asrStatus = asrStatus,
                         watchStatus = watchStatus
                     )
-                    else -> null
                 }
                 HomeHeader(
                     heroDayTitle = heroDayTitle,
                     status = headerStatus,
                     statusLabel = headerStatusLabel,
                     locationRunning = locationRunning,
-                    onAddClick = { showAddDialog = true },
-                    onChatClick = onChatClick,
+                    onAddClick = { viewModel.openCapture(selectedDayStart) },
                     onSearchClick = onSearchClick,
                     onRecordingsListClick = onRecordingsListClick,
                     onSettingsClick = onSettingsClick,
@@ -834,28 +879,35 @@ fun CalendarScreen(
                     completedByDay = completedByDay,
                     displayMonth = displayMonth,
                     selectedDayLabel = selectedDayLabel,
-                    monthLabel = monthFormat.format(Date(selectedDayStart)).replaceFirstChar { it.uppercase() },
+                    monthLabel = monthFormat.format(Date(selectedDayStart))
+                        .replaceFirstChar { it.uppercase() },
                     upcomingThisWeekCount = upcomingThisWeek.size,
                     onUpcomingPeekClick = onAgendaClick,
                     onNavigateDay = { offset -> navigateDay(offset) },
                     onOpenMonthPicker = { showMonthSheet = true },
                     onToday = { goToToday() },
-                    onDaySelected = { ms -> selectDay(ms) },
+                    onDaySelected = { ms -> selectDay(ms) }
                 )
             }
         },
         floatingActionButton = {
             if (!selectionMode) {
-                FloatingMicButton(
+                VerticalQuickActionFabs(
                     serviceRunning = serviceRunning,
                     isRecording = isRecording,
                     isRecordingProcessing = isRecordingProcessing,
+                    recordingElapsed = recordingElapsed,
                     watchActive = watchActive,
-                    actionsVisible = micActionsVisible,
-                    onActionsVisibleChange = { micActionsVisible = it },
-                    onClick = { handleMicClick() },
-                    onStartRecording = { startContinuousRecording() },
-                    onTransferToWatch = { transferListeningToWatch() }
+                    transferInProgress = transferInProgress,
+                    onListeningClick = { handleMicClick() },
+                    onRecordingClick = {
+                        if (isRecording) RecordingState.stopRecording(context)
+                        else startContinuousRecording()
+                    },
+                    onDeviceClick = {
+                        if (watchActive) reclaimListeningFromWatch()
+                        else transferListeningToWatch()
+                    }
                 )
             }
         },
@@ -877,60 +929,69 @@ fun CalendarScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .weight(1f),
-                    contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 64.dp),
+                    contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 10.dp, bottom = if (selectionMode) 24.dp else 210.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    if (duplicateEntries.isNotEmpty()) {
-                        item("duplicates_header") {
+                    if (duplicateEntries.isNotEmpty() || suggestedEntries.isNotEmpty()) {
+                        item("review_header") {
                             CollapsibleSectionHeader(
-                                title = "Posibles duplicados",
-                                count = duplicateEntries.size,
-                                expanded = true,
-                                onClick = {}
+                                title = "Por revisar", count = duplicateEntries.size + suggestedEntries.size,
+                                expanded = reviewExpanded, onClick = { reviewExpanded = !reviewExpanded }
                             )
                         }
-                        items(duplicateEntries, key = { "dup_${it.id}" }) { entry ->
-                            val originalEntry = allPendingForOriginalLookup.find { it.id == entry.duplicateOfId }
-                            DuplicateCard(
-                                entry = entry,
-                                originalText = originalEntry?.displayText,
-                                onKeep = { keepDuplicate(entry) },
-                                onDelete = { deleteDuplicate(entry) }
-                            )
-                        }
-                    }
-                    item("other_days_header") {
-                        CollapsibleSectionHeader(
-                            title = "Pendiente otros días",
-                            count = pendingOtherDays.size,
-                            expanded = otherDaysExpanded,
-                            onClick = { otherDaysExpanded = !otherDaysExpanded }
-                        )
-                    }
-                    if (otherDaysExpanded) {
-                        if (pendingOtherDays.isEmpty()) {
-                            item("other_days_empty") {
-                                CalendarEmptyHint("No hay pendientes arrastradas.")
+                        if (reviewExpanded) {
+                            item("review_explanation") {
+                                Text(
+                                    "Añade a pendientes lo que quieras conservar. Todavía no está confirmado.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 2.dp)
+                                )
+                            }
+                            items(duplicateEntries, key = { "dup_${it.id}" }) { entry ->
+                                DuplicateCard(entry = entry,
+                                    originalText = allPendingForOriginalLookup.find { it.id == entry.duplicateOfId }?.displayText,
+                                    onKeep = { keepDuplicate(entry) }, onDelete = { deleteDuplicate(entry) })
+                            }
+                            items(suggestedEntries, key = { "suggestion_${it.id}" }) { entry ->
+                                SuggestedReviewCard(
+                                    entry = entry,
+                                    onOpen = { onEntryClick(entry.id) },
+                                    onAccept = { markEntryCompleted(entry) },
+                                    onDismiss = { dismissSuggested(entry) }
+                                )
                             }
                         }
-                        pendingEntrySection(
-                            keyPrefix = "pending_other_days_",
-                            entries = pendingOtherDays,
-                            selectedEntryIds = selectedEntryIds,
-                            selectionMode = selectionMode,
-                            processingEntryIds = processingEntryIds,
-                            processingBackends = processingBackends,
-                            accentColor = timelineAccentConfig.pending,
-                            onEntryClick = onEntryClick,
-                            onToggleSelection = { id, selected -> toggleEntrySelection(id, selected) },
-                            onEnterSelection = { id -> enterEntrySelection(id) },
-                            onComplete = { entry -> markEntryCompleted(entry) },
-                            onPostpone = { entry, dueDate -> postponeEntry(entry, dueDate) }
-                        )
+                    }
+                    if (pendingOtherDays.isNotEmpty()) {
+                        item("other_days_header") {
+                            CollapsibleSectionHeader(
+                                title = "Pendiente de otros días",
+                                count = pendingOtherDays.size,
+                                expanded = otherDaysExpanded,
+                                onClick = { otherDaysExpanded = !otherDaysExpanded }
+                            )
+                        }
+                        if (otherDaysExpanded) {
+                            pendingEntrySection(
+                                keyPrefix = "pending_other_days_",
+                                entries = pendingOtherDays,
+                                selectedEntryIds = selectedEntryIds,
+                                selectionMode = selectionMode,
+                                processingEntryIds = processingEntryIds,
+                                processingBackends = processingBackends,
+                                accentColor = timelineAccentConfig.pending,
+                                onEntryClick = onEntryClick,
+                                onToggleSelection = { id, selected -> toggleEntrySelection(id, selected) },
+                                onEnterSelection = { id -> enterEntrySelection(id) },
+                                onComplete = { entry -> markEntryCompleted(entry) },
+                                onPostpone = { entry, dueDate -> postponeEntry(entry, dueDate) }
+                            )
+                        }
                     }
                     item("today_header") {
                         CollapsibleSectionHeader(
-                            title = "Hoy",
+                            title = if (isSelectedToday) "Hoy" else "Ese día",
                             count = todayTimelineEvents.size,
                             expanded = todayExpanded,
                             onClick = { todayExpanded = !todayExpanded }
@@ -939,7 +1000,17 @@ fun CalendarScreen(
                     if (todayExpanded) {
                         if (todayTimelineEvents.isEmpty()) {
                             item("today_empty") {
-                                CalendarEmptyHint("Sin actividad registrada hoy.")
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    CalendarEmptyHint(
+                                        if (isSelectedToday) "Tu día empieza aquí. Añade algo que quieras recordar."
+                                        else "No hay actividad registrada para este día."
+                                    )
+                                    TextButton(onClick = { viewModel.openCapture(selectedDayStart) }) {
+                                        Icon(Icons.Default.Add, contentDescription = null)
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("Añadir recuerdo")
+                                    }
+                                }
                             }
                         } else {
                             timelineListContent(
@@ -987,20 +1058,16 @@ fun CalendarScreen(
                             )
                         }
                     }
-                    item("completed_header") {
-                        CollapsibleSectionHeader(
-                            title = "Completado hoy",
-                            count = completedTasks.size + completedCalendarEvents.size,
-                            expanded = completedExpanded,
-                            onClick = { completedExpanded = !completedExpanded }
-                        )
-                    }
-                    if (completedExpanded) {
-                        if (completedTimelineEvents.isEmpty()) {
-                            item("completed_empty") {
-                                CalendarEmptyHint("Todavía no has cerrado tareas este día.")
-                            }
-                        } else {
+                    if (completedTimelineEvents.isNotEmpty()) {
+                        item("completed_header") {
+                            CollapsibleSectionHeader(
+                                title = if (isSelectedToday) "Completado hoy" else "Completado ese día",
+                                count = completedTasks.size + completedCalendarEvents.size,
+                                expanded = completedExpanded,
+                                onClick = { completedExpanded = !completedExpanded }
+                            )
+                        }
+                        if (completedExpanded) {
                             timelineListContent(
                                 events = completedTimelineEvents,
                                 processingEntryIds = processingEntryIds,
@@ -1046,36 +1113,59 @@ fun CalendarScreen(
                             )
                         }
                     }
-
-                    item("daily_summary") {
-                        DailyPageSummaryCard(
-                            page = if (isSelectedToday) null else selectedDailyPage,
-                            isToday = isSelectedToday
-                        )
+                    if (isSelectedToday && nextCommitments.isNotEmpty()) {
+                        item("next_commitments") {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                TextButton(onClick = onAgendaClick) { Text("Después de hoy") }
+                                nextCommitments.forEach { next ->
+                                    Card(onClick = {
+                                        next.entry?.let { onEntryClick(it.id) }
+                                        next.event?.let { CalendarHelper.openTimelineEvent(context, it) }
+                                    }, modifier = Modifier.fillMaxWidth()) {
+                                        Column(Modifier.padding(14.dp)) {
+                                            Text(next.title, style = MaterialTheme.typography.titleSmall, maxLines = 2)
+                                            Text(
+                                                SimpleDateFormat(
+                                                    if (com.trama.app.summary.CalendarImportIdentity.allDay(next.event?.dataJson)) "EEE d MMM · 'Todo el día'" else "EEE d MMM · HH:mm",
+                                                    Locale("es")
+                                                ).format(Date(next.at)),
+                                                style = MaterialTheme.typography.bodySmall
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
+
                 }
             }
         }
     }
 }
 
-private fun listeningStatusLabel(
-    isRecording: Boolean,
+internal fun homeListeningLabel(
+    showDetails: Boolean,
     watchActive: Boolean,
     serviceRunning: Boolean,
+    triggerRecognized: Boolean,
     asrStatus: String,
     watchStatus: String
-): String? {
-    if (isRecording) return null
+): String {
     if (watchActive) {
-        return watchStatus
+        return if (showDetails) watchStatus
             .takeIf { it.isMeaningfulListeningStatus() }
             ?.toDisplayListeningStatus()
+            ?: "Escucha en reloj"
+        else "Escucha en reloj"
     }
-    if (!serviceRunning) return null
-    return asrStatus
+    if (!serviceRunning) return "Escucha desactivada"
+    if (triggerRecognized) return "Palabra clave reconocida"
+    return if (showDetails) asrStatus
         .takeIf { it.isMeaningfulListeningStatus() }
         ?.toDisplayListeningStatus()
+        ?: "Escuchando"
+    else "Escuchando"
 }
 
 private fun String.isMeaningfulListeningStatus(): Boolean {
@@ -1122,6 +1212,7 @@ private fun CollapsibleSectionHeader(
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
+            .heightIn(min = 48.dp)
             .padding(top = 9.dp, bottom = 5.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1200,6 +1291,7 @@ private fun PendingEntryCard(
     onPostpone: (DiaryEntry, Long) -> Unit
 ) {
     val context = LocalContext.current
+    val actionScope = rememberCoroutineScope()
     val quickAction = remember(
         entry.id,
         entry.actionType,
@@ -1213,45 +1305,16 @@ private fun PendingEntryCard(
     var pendingCalendarAction by remember(entry.id) { mutableStateOf<SuggestedAction?>(null) }
     val calendarPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { result ->
-        val granted = result[Manifest.permission.READ_CALENDAR] == true &&
-            result[Manifest.permission.WRITE_CALENDAR] == true
-        if (granted) {
-            editingCalendarAction = pendingCalendarAction
-        }
+    ) { _ ->
+        editingCalendarAction = pendingCalendarAction
         pendingCalendarAction = null
     }
 
     editingCalendarAction?.let { action ->
-        val isReminder = action.type == ActionType.REMINDER
-        CalendarActionDialog(
+        com.trama.app.ui.components.EntryCalendarActionDialog(
+            entryId = entry.id,
             action = action,
-            dialogTitle = if (isReminder) "Crear recordatorio" else "Añadir al calendario",
-            confirmLabel = if (isReminder) "Crear" else "Añadir",
-            onDismiss = { editingCalendarAction = null },
-            onConfirm = { title, description, date, time, calendarId ->
-                val datetime = "${date}T${time}"
-                val updatedAction = action.copy(title = title, description = description, datetime = datetime)
-                val startMillis = try {
-                    SimpleDateFormat("yyyy-MM-dd'T'HH:mm", Locale.getDefault()).parse(datetime)?.time
-                } catch (_: Exception) {
-                    null
-                }
-
-                if (startMillis != null && calendarId != null) {
-                    CalendarHelper.insertEventInCalendar(
-                        context = context,
-                        calendarId = calendarId,
-                        title = title,
-                        description = description.ifBlank { null },
-                        startMillis = startMillis,
-                        reminderMinutes = if (isReminder) 15 else 0
-                    )
-                } else {
-                    CalendarHelper.insertEventFromAction(context, updatedAction, isReminder = isReminder)
-                }
-                editingCalendarAction = null
-            }
+            onDismiss = { editingCalendarAction = null }
         )
     }
 
@@ -1368,6 +1431,60 @@ private fun UnifiedDayBottomBar(
                 onDaySelected = onDaySelected
             )
         }
+    }
+}
+
+@Composable
+private fun VerticalQuickActionFabs(
+    serviceRunning: Boolean,
+    isRecording: Boolean,
+    isRecordingProcessing: Boolean,
+    recordingElapsed: Long,
+    watchActive: Boolean,
+    transferInProgress: Boolean,
+    onListeningClick: () -> Unit,
+    onRecordingClick: () -> Unit,
+    onDeviceClick: () -> Unit
+) {
+    val t = LocalTramaColors.current
+    val presentation = homeQuickActionPresentation(
+        serviceRunning = serviceRunning,
+        isRecording = isRecording,
+        isRecordingProcessing = isRecordingProcessing,
+        recordingElapsed = recordingElapsed,
+        watchActive = watchActive,
+        transferInProgress = transferInProgress
+    )
+    Column(
+        horizontalAlignment = Alignment.End,
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        ThumbFabAction(
+            label = if (watchActive) "Recuperar escucha en el teléfono" else "Pasar escucha al reloj",
+            icon = Icons.Default.Watch,
+            enabled = presentation.deviceEnabled,
+            selected = watchActive,
+            accent = t.watch,
+            onClick = onDeviceClick,
+            loading = transferInProgress
+        )
+        ThumbFabAction(
+            label = if (isRecording || isRecordingProcessing) presentation.recordingLabel else "Grabar reunión",
+            icon = if (isRecording) Icons.Default.Stop else Icons.Default.FiberManualRecord,
+            enabled = presentation.recordingEnabled,
+            selected = isRecording,
+            accent = t.red,
+            onClick = onRecordingClick,
+            loading = isRecordingProcessing
+        )
+        ThumbFabAction(
+            label = if (serviceRunning) "Pausar escucha continua" else "Activar escucha continua",
+            icon = if (serviceRunning) Icons.Default.Mic else Icons.Default.MicOff,
+            enabled = presentation.listeningEnabled,
+            selected = serviceRunning,
+            accent = t.amber,
+            onClick = onListeningClick
+        )
     }
 }
 
@@ -1571,105 +1688,60 @@ private fun MonthPickerSheet(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FloatingMicButton(
-    serviceRunning: Boolean,
-    isRecording: Boolean,
-    isRecordingProcessing: Boolean,
-    watchActive: Boolean,
-    actionsVisible: Boolean,
-    onActionsVisibleChange: (Boolean) -> Unit,
+private fun ThumbFabAction(
+    label: String,
+    icon: ImageVector,
+    enabled: Boolean,
+    selected: Boolean,
+    accent: Color,
     onClick: () -> Unit,
-    onStartRecording: () -> Unit,
-    onTransferToWatch: () -> Unit,
-    modifier: Modifier = Modifier
+    loading: Boolean = false
 ) {
     val t = LocalTramaColors.current
-    // Speed dial grows upward. Bottom-anchored arrangement keeps the main FAB
-    // pinned in place while mini actions appear above it.
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.Bottom)
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+        tooltip = { PlainTooltip { Text(label) } },
+        state = rememberTooltipState()
     ) {
-        AnimatedVisibility(
-            visible = actionsVisible && !isRecording && !isRecordingProcessing && !watchActive,
-            enter = androidx.compose.animation.fadeIn() +
-                androidx.compose.animation.expandVertically(expandFrom = Alignment.Bottom),
-            exit = androidx.compose.animation.fadeOut() +
-                androidx.compose.animation.shrinkVertically(shrinkTowards = Alignment.Bottom)
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // Top: transfer to watch
-                MiniMicAction(
-                    icon = Icons.Default.Watch,
-                    containerColor = t.watch,
-                    contentColor = Color.White,
-                    contentDescription = "Transferir escucha al reloj",
-                    onClick = onTransferToWatch
-                )
-                // Middle: continuous recording (closer to the mic)
-                MiniMicAction(
-                    icon = Icons.Default.FiberManualRecord,
-                    containerColor = t.red,
-                    contentColor = Color.White,
-                    contentDescription = "Iniciar grabación",
-                    onClick = onStartRecording
-                )
-            }
-        }
-        val interaction = remember { MutableInteractionSource() }
         Surface(
-            modifier = Modifier.combinedClickable(
-                interactionSource = interaction,
-                indication = null,
-                onClick = onClick,
-                onLongClick = {
-                    if (!isRecording && !isRecordingProcessing && !watchActive) {
-                        onActionsVisibleChange(!actionsVisible)
-                    }
+            modifier = Modifier.size(54.dp).semantics {
+                contentDescription = label
+                stateDescription = when {
+                    loading -> "En curso"
+                    !enabled -> "No disponible durante la operación actual"
+                    selected -> "Activo"
+                    else -> "Inactivo"
                 }
-            ),
-            shape = CircleShape,
-            color = when {
-                isRecording -> t.red
-                isRecordingProcessing -> MaterialTheme.colorScheme.secondary
-                watchActive -> t.watch
-                serviceRunning -> t.amber
-                else -> t.dimText
             },
-            shadowElevation = 12.dp,
-            border = BorderStroke(2.dp, MaterialTheme.colorScheme.background)
+            onClick = onClick,
+            enabled = enabled,
+            shape = CircleShape,
+            color = if (selected) accent else t.surface2,
+            shadowElevation = 10.dp,
+            border = BorderStroke(
+                width = if (selected) 0.dp else 1.dp,
+                color = if (selected) Color.Transparent else accent.copy(alpha = 0.4f)
+            )
         ) {
-            Box(
-                modifier = Modifier.size(58.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                if (isRecordingProcessing) {
+            Box(contentAlignment = Alignment.Center) {
+                if (loading) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        color = Color.White,
+                        modifier = Modifier.size(23.dp),
+                        color = accent,
                         strokeWidth = 2.dp
                     )
                 } else {
                     Icon(
-                        imageVector = when {
-                            isRecording -> Icons.Default.Stop
-                            watchActive -> Icons.Default.Watch
-                            serviceRunning -> Icons.Default.Mic
-                            else -> Icons.Default.MicOff
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = when {
+                            selected -> Color.White
+                            enabled -> accent
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
                         },
-                        contentDescription = when {
-                            isRecording -> "Parar grabación"
-                            watchActive -> "Recuperar control del reloj"
-                            serviceRunning -> "Desactivar escucha"
-                            else -> "Activar escucha"
-                        },
-                        tint = Color.White,
-                        modifier = Modifier.size(25.dp)
+                        modifier = Modifier.size(24.dp)
                     )
                 }
             }
@@ -1677,100 +1749,172 @@ private fun FloatingMicButton(
     }
 }
 
-@Composable
-private fun MiniMicAction(
-    icon: ImageVector,
-    containerColor: Color,
-    contentColor: Color,
-    contentDescription: String,
-    onClick: () -> Unit
-) {
-    Surface(
-        onClick = onClick,
-        shape = CircleShape,
-        color = containerColor,
-        shadowElevation = 8.dp,
-        border = BorderStroke(2.dp, MaterialTheme.colorScheme.background)
-    ) {
-        Box(
-            modifier = Modifier.size(46.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = contentDescription,
-                tint = contentColor,
-                modifier = Modifier.size(20.dp)
-            )
-        }
-    }
+internal data class HomeQuickActionPresentation(
+    val listeningLabel: String,
+    val listeningEnabled: Boolean,
+    val recordingLabel: String,
+    val recordingEnabled: Boolean,
+    val deviceLabel: String,
+    val deviceEnabled: Boolean
+)
+
+internal fun homeQuickActionPresentation(
+    serviceRunning: Boolean,
+    isRecording: Boolean,
+    isRecordingProcessing: Boolean,
+    recordingElapsed: Long,
+    watchActive: Boolean,
+    transferInProgress: Boolean
+): HomeQuickActionPresentation {
+    val blocked = isRecording || isRecordingProcessing || transferInProgress
+    val elapsedLabel = "%d:%02d".format(recordingElapsed / 60, recordingElapsed % 60)
+    return HomeQuickActionPresentation(
+        listeningLabel = when {
+            transferInProgress -> "Espera…"
+            serviceRunning -> "Pausar"
+            else -> "Escuchar"
+        },
+        listeningEnabled = !blocked && !watchActive,
+        recordingLabel = when {
+            isRecording -> "Detener $elapsedLabel"
+            isRecordingProcessing -> "Procesando…"
+            else -> "Reunión"
+        },
+        recordingEnabled = !isRecordingProcessing && !transferInProgress && !watchActive,
+        deviceLabel = when {
+            transferInProgress -> "Transfiriendo…"
+            watchActive -> "Recuperar"
+            else -> "Reloj"
+        },
+        deviceEnabled = !blocked || watchActive && !transferInProgress
+    )
 }
 
-private data class ManualEntryCategory(
-    val id: String,
-    val emoji: String,
-    val label: String
-)
-
-private val MANUAL_CATEGORIES = listOf(
-    ManualEntryCategory("pendiente", "📋", "Pendiente"),
-    ManualEntryCategory("idea", "💡", "Idea"),
-    ManualEntryCategory("compra", "🛒", "Compra"),
-    ManualEntryCategory("gasto", "💰", "Gasto"),
-    ManualEntryCategory("llamada", "📞", "Llamada"),
-    ManualEntryCategory("nota", "📝", "Nota")
-)
-
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun CategorizedManualEntryDialog(
+private fun ManualCaptureDialog(
+    text: String,
+    saving: Boolean,
+    error: String?,
+    onTextChange: (String) -> Unit,
     onDismiss: () -> Unit,
-    onSave: (text: String, categoryId: String, categoryLabel: String) -> Unit
+    onSave: () -> Unit
 ) {
-    var text by remember { mutableStateOf("") }
-    var selectedCategory by remember { mutableStateOf("nota") }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val whisper = remember { SherpaWhisperAsrEngine(context) }
+    var activeCapture by remember { mutableStateOf<OfflineDictationCapture?>(null) }
+    var isDictating by remember { mutableStateOf(false) }
+    var isTranscribing by remember { mutableStateOf(false) }
+    var dictationError by remember { mutableStateOf<String?>(null) }
+
+    fun startDictation() {
+        if (!whisper.isAvailable) {
+            dictationError = "El dictado no está disponible ahora mismo."
+            return
+        }
+        dictationError = null
+        val capture = OfflineDictationCapture(context)
+        activeCapture = capture
+        scope.launch {
+            try {
+                isDictating = true
+                val window = capture.capture()
+                isDictating = false
+                activeCapture = null
+                if (window == null || window.durationMs() < 300L) {
+                    dictationError = "No he captado audio suficiente."
+                    return@launch
+                }
+                isTranscribing = true
+                val transcript = withContext(Dispatchers.IO) {
+                    whisper.transcribe(window, languageTag = "es")?.text?.trim()
+                }
+                if (transcript.isNullOrBlank()) {
+                    dictationError = "No he podido transcribirlo."
+                } else {
+                    onTextChange(
+                        listOf(text.trim(), transcript)
+                            .filter { it.isNotBlank() }
+                            .joinToString(" ")
+                    )
+                }
+            } finally {
+                isDictating = false
+                isTranscribing = false
+                activeCapture = null
+            }
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) startDictation()
+        else dictationError = "Necesito permiso de micrófono para dictar."
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { activeCapture?.requestStop() }
+    }
+
+    val busy = saving || isDictating || isTranscribing
+    val visibleError = error ?: dictationError
     androidx.compose.material3.AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Nueva tarea") },
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text("Añadir") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     value = text,
-                    onValueChange = { text = it },
-                    label = { Text("Descripción") },
+                    onValueChange = onTextChange,
+                    enabled = !busy,
+                    isError = visibleError != null,
+                    supportingText = { visibleError?.let { Text(it) } },
+                    label = { Text("¿Qué quieres recordar?") },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 2,
                     maxLines = 4,
                     shape = RoundedCornerShape(12.dp)
                 )
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                TextButton(
+                    onClick = {
+                        if (isDictating) {
+                            activeCapture?.requestStop()
+                        } else if (
+                            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
+                            startDictation()
+                        } else {
+                            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        }
+                    },
+                    enabled = !saving && !isTranscribing
                 ) {
-                    MANUAL_CATEGORIES.forEach { cat ->
-                        FilterChip(
-                            selected = selectedCategory == cat.id,
-                            onClick = { selectedCategory = cat.id },
-                            label = { Text("${cat.emoji} ${cat.label}", style = MaterialTheme.typography.labelSmall) },
-                            shape = RoundedCornerShape(8.dp)
-                        )
-                    }
+                    Icon(
+                        if (isDictating) Icons.Default.Stop else Icons.Default.Mic,
+                        contentDescription = null
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        when {
+                            isTranscribing -> "Transcribiendo…"
+                            isDictating -> "Detener dictado"
+                            else -> "Dictar"
+                        }
+                    )
                 }
             }
         },
         confirmButton = {
             Button(
-                onClick = {
-                    val trimmed = text.trim()
-                    val cat = MANUAL_CATEGORIES.find { it.id == selectedCategory } ?: MANUAL_CATEGORIES.last()
-                    if (trimmed.isNotBlank()) onSave(trimmed, cat.id, cat.label)
-                },
-                enabled = text.isNotBlank(),
+                onClick = onSave,
+                enabled = text.isNotBlank() && !busy,
                 shape = RoundedCornerShape(10.dp)
-            ) { Text("Guardar") }
+            ) { Text(if (saving) "Guardando…" else "Guardar") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancelar") }
+            TextButton(onClick = onDismiss, enabled = !busy) { Text("Cerrar") }
         },
         shape = RoundedCornerShape(24.dp)
     )
@@ -1784,7 +1928,6 @@ private fun HomeHeader(
     statusLabel: String?,
     locationRunning: Boolean,
     onAddClick: () -> Unit,
-    onChatClick: () -> Unit,
     onSearchClick: () -> Unit,
     onRecordingsListClick: () -> Unit,
     onSettingsClick: () -> Unit,
@@ -1803,38 +1946,16 @@ private fun HomeHeader(
                     .padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = t.tealBg
-                    ) {
-                        Text(
-                            text = "T",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = t.teal,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
-                        )
-                    }
-                    Spacer(Modifier.width(10.dp))
-                    Column {
-                        Text(
-                            text = heroDayTitle,
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            text = "Trama · Calendario diario",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = t.mutedText,
-                        )
-                    }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = heroDayTitle,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text("Trama", style = MaterialTheme.typography.labelMedium, color = t.mutedText)
                 }
                 HeaderIconButton(
                     icon = Icons.Default.Search,
@@ -1843,9 +1964,9 @@ private fun HomeHeader(
                     tint = t.teal
                 )
                 HeaderIconButton(
-                    icon = Icons.AutoMirrored.Filled.Chat,
-                    contentDescription = "Asistente",
-                    onClick = onChatClick,
+                    icon = Icons.Default.Add,
+                    contentDescription = "Añadir",
+                    onClick = onAddClick,
                     tint = t.teal
                 )
                 Box {
@@ -1859,14 +1980,6 @@ private fun HomeHeader(
                         expanded = overflowExpanded,
                         onDismissRequest = { overflowExpanded = false }
                     ) {
-                        DropdownMenuItem(
-                            text = { Text("Añadir nota") },
-                            leadingIcon = { Icon(Icons.Default.Add, contentDescription = null) },
-                            onClick = {
-                                overflowExpanded = false
-                                onAddClick()
-                            }
-                        )
                         DropdownMenuItem(
                             text = { Text("Ver grabaciones") },
                             leadingIcon = { Icon(Icons.Default.Mic, contentDescription = null) },
@@ -1971,87 +2084,33 @@ private fun DuplicateCard(
 }
 
 @Composable
-private fun DailyPageSummaryCard(
-    page: DailyPage?,
-    isToday: Boolean = false
+private fun SuggestedReviewCard(
+    entry: DiaryEntry,
+    onOpen: () -> Unit,
+    onAccept: () -> Unit,
+    onDismiss: () -> Unit
 ) {
     val t = LocalTramaColors.current
-    val markdown = page?.markdown?.trim().orEmpty()
-
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = t.surface),
-        border = androidx.compose.foundation.BorderStroke(
-            0.5.dp,
-            t.amber.copy(alpha = 0.22f)
-        )
+        colors = CardDefaults.cardColors(containerColor = t.surface2),
+        border = BorderStroke(0.5.dp, t.softBorder)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            CalendarHistoryHeader(title = "Página diaria")
-            if (page == null) {
-                Text(
-                    text = if (isToday) {
-                        "La página diaria de hoy aparecerá cuando cierre el día."
-                    } else {
-                        "Todavía no hay página diaria generada para este día."
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            } else {
-                if (markdown.isNotBlank()) {
-                    MarkdownPreview(markdown = markdown)
-                } else {
-                    Text(
-                        text = "La página diaria existe, pero aún no tiene contenido .md guardado.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Text(
+                text = entry.displayText,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.clickable(onClick = onOpen)
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = onDismiss) { Text("Descartar") }
+                TextButton(onClick = onAccept) { Text("Añadir a pendientes") }
             }
         }
-    }
-}
-
-@Composable
-private fun MarkdownPreview(markdown: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        markdown
-            .lineSequence()
-            .map { it.trimEnd() }
-            .filter { it.isNotBlank() }
-            .forEach { line ->
-                val (text, style, weight) = when {
-                    line.startsWith("## ") -> Triple(
-                        line.removePrefix("## "),
-                        MaterialTheme.typography.titleSmall,
-                        FontWeight.SemiBold
-                    )
-                    line.startsWith("# ") -> Triple(
-                        line.removePrefix("# "),
-                        MaterialTheme.typography.titleMedium,
-                        FontWeight.Bold
-                    )
-                    else -> Triple(
-                        line,
-                        MaterialTheme.typography.bodySmall,
-                        FontWeight.Normal
-                    )
-                }
-                Text(
-                    text = text,
-                    style = style,
-                    fontWeight = weight,
-                    fontFamily = if (line.startsWith("- ")) FontFamily.Monospace else null,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
     }
 }
 
@@ -2363,7 +2422,7 @@ private fun CalendarPlaceCard(
                         val selected = star <= rating
                         Box(
                             modifier = Modifier
-                                .size(36.dp)
+                                .size(48.dp)
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(
                                     if (selected) t.warnBg
@@ -2379,7 +2438,7 @@ private fun CalendarPlaceCard(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Star,
-                                contentDescription = "$star",
+                                contentDescription = "$star ${if (star == 1) "estrella" else "estrellas"}",
                                 tint = if (selected) t.warn else t.dimText,
                                 modifier = Modifier.size(18.dp)
                             )

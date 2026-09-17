@@ -37,7 +37,10 @@ import com.trama.wear.R
 import com.trama.wear.ui.WatchMainActivity
 import com.trama.shared.data.DiaryRepository
 import com.trama.shared.model.DiaryEntry
+import com.trama.shared.model.EntryContentKind
+import com.trama.shared.model.EntryStatus
 import com.trama.shared.model.Source
+import java.util.UUID
 import com.trama.shared.model.WatchAudioSyncMetadata
 import com.trama.shared.speech.EntryValidatorHeuristics
 import com.trama.shared.speech.IntentDetector
@@ -242,7 +245,6 @@ class WatchKeywordListenerService : LifecycleService() {
 
         val patterns = prefs.getString("intent_patterns_json", null)
             ?.let { json -> IntentPattern.deserialize(json) }
-            ?.takeIf { loaded -> loaded.any { it.enabled && it.triggers.isNotEmpty() } }
             ?: IntentPattern.DEFAULTS
         intentDetector?.setPatterns(patterns)
         val profile = prefs.getString("capture_profile", null)
@@ -450,7 +452,7 @@ class WatchKeywordListenerService : LifecycleService() {
         allowShortGateTrigger: Boolean = false,
         preRollPcm: ShortArray = shortArrayOf()
     ): Boolean {
-        val result = intentDetector?.detect(text) ?: return false
+        val result = intentDetector?.detectConfigured(text) ?: return false
 
         // Heuristic validation
         val heuristic = EntryValidatorHeuristics.check(result.capturedText)
@@ -555,7 +557,11 @@ class WatchKeywordListenerService : LifecycleService() {
     private suspend fun saveEntry(intentId: String, label: String, text: String, confidence: Float) {
         val entry = DiaryEntry(
             text = text, keyword = intentId, category = label,
-            confidence = confidence, source = Source.WATCH, duration = 0
+            confidence = confidence, source = Source.WATCH, duration = 0,
+            status = EntryStatus.SAVED,
+            contentKind = EntryContentKind.MEMORY,
+            sourceCaptureId = "watch:${UUID.randomUUID()}",
+            triggerPhrase = intentId
         )
         repository?.insert(entry)
         Log.i(TAG, "Entry saved: '$text'")
@@ -721,43 +727,30 @@ class WatchKeywordListenerService : LifecycleService() {
         record: AudioRecord,
         sampleRateHz: Int
     ): Boolean {
-        val phoneticMatch = if (gateName.contains("bookbot-phoneme-es")) {
-            PhoneticIntentDetector.detect(text)
-        } else {
-            null
-        }
-
         val intentId: String
         val label: String
         val capturedText: String
         val allowTextFallback: Boolean
 
-        if (phoneticMatch != null) {
-            intentId = phoneticMatch.intentId
-            label = phoneticMatch.label
-            capturedText = "trigger fonético: ${phoneticMatch.reason}"
-            allowTextFallback = false
-            Log.i(TAG, "Phonetic intent '${phoneticMatch.reason}': '${phoneticMatch.debugText}'")
-        } else {
-            if (gateName.contains("bookbot-phoneme-es")) return false
+        // The phoneme-only model cannot enforce arbitrary phrases configured by the user.
+        if (gateName.contains("bookbot-phoneme-es")) return false
 
-            val result = intentDetector?.detect(text) ?: return false
-            val heuristic = EntryValidatorHeuristics.check(result.capturedText)
-            if (heuristic != null && !heuristic.isValid) {
-                if (heuristic.reason.startsWith("Fragmento muy corto")) {
-                    Log.i(TAG, "Short gate trigger accepted for active-mic capture: '${result.capturedText}'")
-                    allowTextFallback = false
-                } else {
-                    Log.i(TAG, "Heuristic rejected: ${heuristic.reason}")
-                    return true
-                }
+        val result = intentDetector?.detectConfigured(text) ?: return false
+        val heuristic = EntryValidatorHeuristics.check(result.capturedText)
+        if (heuristic != null && !heuristic.isValid) {
+            if (heuristic.reason.startsWith("Fragmento muy corto")) {
+                Log.i(TAG, "Short gate trigger accepted for active-mic capture: '${result.capturedText}'")
+                allowTextFallback = false
             } else {
-                allowTextFallback = true
+                Log.i(TAG, "Heuristic rejected: ${heuristic.reason}")
+                return true
             }
-            intentId = result.pattern?.id ?: result.customKeyword ?: "nota"
-            label = result.label
-            capturedText = result.capturedText
+        } else {
+            allowTextFallback = true
         }
+        intentId = result.pattern?.id ?: result.customKeyword ?: "nota"
+        label = result.label
+        capturedText = result.capturedText
 
         val now = System.currentTimeMillis()
         if (now - lastSavedTime < DEDUP_WINDOW_MS && isSimilar(text, lastSavedText)) return true

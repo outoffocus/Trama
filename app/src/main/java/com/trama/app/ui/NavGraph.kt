@@ -1,9 +1,21 @@
 package com.trama.app.ui
 
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.TaskAlt
+import androidx.compose.material.icons.filled.Today
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.trama.app.ui.screens.AgendaScreen
@@ -16,6 +28,7 @@ import com.trama.app.ui.screens.RecordingsListScreen
 import com.trama.app.ui.screens.SearchScreen
 import com.trama.app.ui.screens.SettingsSection
 import com.trama.app.ui.screens.SettingsScreen
+import com.trama.app.ui.components.CaptureQuickActions
 
 object Routes {
     const val HOME = "home"
@@ -33,7 +46,6 @@ object Routes {
     val HOME_REACHABLE_DESTINATIONS = setOf(
         SETTINGS,
         SEARCH,
-        CHAT,
         AGENDA,
         RECORDINGS_LIST
     )
@@ -53,16 +65,54 @@ fun NavGraph() {
 @Composable
 fun NavGraph(startDestination: String) {
     val navController = rememberNavController()
+    val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
+    val primaryRoutes = setOf(Routes.HOME, Routes.AGENDA, Routes.SEARCH)
 
-    NavHost(navController = navController, startDestination = startDestination) {
+    fun navigatePrimary(route: String) {
+        navController.navigate(route) {
+            popUpTo(Routes.HOME) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+
+    Scaffold(
+        floatingActionButton = {
+            if (currentRoute == Routes.AGENDA || currentRoute == Routes.SEARCH) {
+                CaptureQuickActions()
+            }
+        },
+        bottomBar = {
+            if (currentRoute in primaryRoutes) {
+                NavigationBar {
+                    listOf(
+                        Triple(Routes.HOME, "Hoy", Icons.Default.Today),
+                        Triple(Routes.AGENDA, "Acciones", Icons.Default.TaskAlt),
+                        Triple(Routes.SEARCH, "Recuerdos", Icons.Default.Search)
+                    ).forEach { (route, label, icon) ->
+                        NavigationBarItem(
+                            selected = currentRoute == route,
+                            onClick = { navigatePrimary(route) },
+                            icon = { Icon(icon, contentDescription = null) },
+                            label = { Text(label) }
+                        )
+                    }
+                }
+            }
+        }
+    ) { outerPadding ->
+    NavHost(
+        navController = navController,
+        startDestination = startDestination,
+        modifier = Modifier.padding(outerPadding)
+    ) {
         composable(Routes.HOME) {
             CalendarScreen(
                 onEntryClick = { entryId -> navController.navigate(Routes.detail(entryId)) },
                 onSettingsClick = { navController.navigate(Routes.SETTINGS) },
-                onChatClick = { navController.navigate(Routes.CHAT) },
-                onSearchClick = { navController.navigate(Routes.SEARCH) },
+                onSearchClick = { navigatePrimary(Routes.SEARCH) },
                 onRecordingsListClick = { navController.navigate(Routes.RECORDINGS_LIST) },
-                onAgendaClick = { navController.navigate(Routes.AGENDA) },
+                onAgendaClick = { navigatePrimary(Routes.AGENDA) },
                 onRecordingClick = { recordingId ->
                     navController.navigate(Routes.recordingDetail(recordingId))
                 },
@@ -71,7 +121,14 @@ fun NavGraph(startDestination: String) {
         }
 
         composable(Routes.CHAT) {
-            ChatScreen(onBack = { navController.popBackStack() })
+            ChatScreen(
+                initialQuery = navController.previousBackStackEntry
+                    ?.savedStateHandle?.get<String>("memoryQuery").orEmpty(),
+                onBack = { navController.popBackStack() },
+                onEntryClick = { navController.navigate(Routes.detail(it)) },
+                onPlaceClick = { navController.navigate(Routes.placeDetail(it)) },
+                onRecordingClick = { navController.navigate(Routes.recordingDetail(it)) }
+            )
         }
 
         composable(Routes.AGENDA) {
@@ -88,7 +145,10 @@ fun NavGraph(startDestination: String) {
             val entryId = backStackEntry.arguments?.getLong("entryId") ?: return@composable
             EntryDetailScreen(
                 entryId = entryId,
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                onRecordingClick = { recordingId ->
+                    navController.navigate(Routes.recordingDetail(recordingId))
+                }
             )
         }
 
@@ -115,6 +175,14 @@ fun NavGraph(startDestination: String) {
         composable(Routes.SEARCH) {
             SearchScreen(
                 onEntryClick = { entryId -> navController.navigate(Routes.detail(entryId)) },
+                onPlaceClick = { placeId -> navController.navigate(Routes.placeDetail(placeId)) },
+                onRecordingClick = { recordingId ->
+                    navController.navigate(Routes.recordingDetail(recordingId))
+                },
+                onAsk = { query ->
+                    navController.currentBackStackEntry?.savedStateHandle?.set("memoryQuery", query)
+                    navController.navigate(Routes.CHAT)
+                },
                 onBack = { navController.popBackStack() }
             )
         }
@@ -150,5 +218,6 @@ fun NavGraph(startDestination: String) {
                 onActionClick = { entryId -> navController.navigate(Routes.detail(entryId)) }
             )
         }
+    }
     }
 }

@@ -30,6 +30,8 @@ class SherpaWhisperAsrEngine(
         // sherpa-onnx Whisper currently supports only greedy_search, so hotword biasing
         // cannot be enabled safely in this backend.
         private const val SUPPORTS_HOTWORDS = false
+        /** sherpa recognizers are large; never run two instances concurrently. */
+        private val inferenceMutex = Mutex()
         private val CANDIDATE_BUNDLES = listOf(
             WhisperBundle(
                 encoderAssets = listOf(
@@ -107,7 +109,6 @@ class SherpaWhisperAsrEngine(
 
     private val appContext = context.applicationContext
     private val assetCache = AssetFileCache(appContext)
-    private val recognizerMutex = Mutex()
     private var recognizer: OfflineRecognizer? = null
     private var activeHotwordsHash: Int = 0
     private var selectedBundle: WhisperBundle? = null
@@ -139,7 +140,7 @@ class SherpaWhisperAsrEngine(
         if (pcm.isEmpty()) return null
 
         return withContext(Dispatchers.IO) {
-            recognizerMutex.withLock {
+            inferenceMutex.withLock {
                 val currentHotwords = if (SUPPORTS_HOTWORDS) hotwords else emptyList()
                 val newHash = currentHotwords.toSet().hashCode()
                 if (recognizer == null || newHash != activeHotwordsHash) {

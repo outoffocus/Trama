@@ -37,6 +37,9 @@ Analiza esta nota de voz capturada y devuelve SOLO un objeto JSON valido.
 - No resumas en exceso. Es mejor mantener contexto util que perder precision.
 - Usa la transcripcion original como fuente principal de verdad si difiere del texto normalizado.
 - Primero clasifica la utilidad real para el usuario. Solo extrae tarea si merece aparecer en su lista de pendientes.
+	- La transcripcion puede contener mucha conversacion antes y despues de la accion. cleanText y cada elemento de actions deben contener SOLO la accion pendiente. Nunca copies el bloque conversacional completo.
+	- Localiza primero la frase exacta que expresa el compromiso; usa el resto solo para resolver persona, objeto, lugar o fecha. Elimina saludos, explicaciones, debate y lo que se dijo despues de cerrar la accion.
+	- Prueba final obligatoria: cleanText debe poder mostrarse solo en una lista de tareas y entenderse como algo que se puede completar.
 	- Piensa SIEMPRE en una lista de acciones. Si la nota contiene varias acciones independientes, devuelvelas TODAS en actions, en orden de aparicion. No fusiones acciones de tipos distintos en una sola tarea.
 	- Antes de escribir cleanText, resuelve referencias dentro de la misma transcripcion: "le", "lo", "la", "eso", "el mensaje", "le toca a X", "la proxima semana" pueden depender de una frase anterior.
 	- Si una frase futura depende de una frase pasada, combina SOLO la informacion necesaria. Ej: "esta semana me tocó pagar la piscina, la próxima semana le toca a Luis" => accion futura "A Luis le toca pagar la piscina", dueDate=la próxima semana.
@@ -335,6 +338,7 @@ Reglas:
   - Fragmentos cortos (menos de 4 palabras significativas) NO son acciones — omitelos.
   - NO conviertas frases conversacionales en tareas. Ejemplos que deben producir []: "no quería verla ahí. Ahí no escucho", "voy a hablar como sale", "¿te asiste esto?", "¿no es barato?", "tengo que llamar" (sin a quién), "estaba pensando que igual..."
   - text: accion minima util, pero sin perder nombres, lugares, numeros ni fechas relevantes
+  - aunque la transcripcion sea larga, text debe contener SOLO la clausula accionable. Usa las frases anteriores o posteriores unicamente para resolver referencias; nunca las copies como parte visible de la tarea
   - originalText: conserva el fragmento original o casi original que origina la accion
   - normalizedText: corrige transcripcion pero preserva entidades
   - actionType: CALL=llamar, BUY=comprar, SEND=enviar, EVENT=cita/reunión, REVIEW=revisar, TALK_TO=hablar con, GENERIC=otro
@@ -395,6 +399,7 @@ Reglas:
 - No extraigas nada por rellenar. Una tarea necesita intencion pendiente clara + verbo accionable + objeto/persona/destino concreto.
 - NO conviertas frases conversacionales, pruebas de micro, dudas o ruido en tareas. Ejemplos que deben dar []: "no quería verla ahí. Ahí no escucho", "voy a hablar como sale", "¿te asiste esto?", "¿no es barato?"
 - text debe ser minimo util, claro y accionable, pero sin perder nombres, lugares, telefonos, numeros ni fechas relevantes
+- aunque el texto sea largo, devuelve SOLO la clausula accionable en text. El contexto anterior y posterior sirve para entenderla, no para mostrarlo dentro de la tarea
 - corrige errores obvios de transcripcion
 - no inventes tareas
 - no incluyas contexto innecesario
@@ -495,6 +500,10 @@ Opinión:
             """.trimIndent()
         )
     )
+
+    /** Internal derived-memory prompts are not part of the product's visible controls. */
+    val userEditableDefinitions: List<PromptDefinition>
+        get() = definitions.filterNot { it.id == DAILY_SUMMARY }
 
     fun get(context: Context, id: String): String {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

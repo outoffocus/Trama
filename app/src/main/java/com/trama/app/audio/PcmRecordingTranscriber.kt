@@ -22,26 +22,40 @@ class PcmRecordingTranscriber(
     companion object {
         const val CHUNK_MS = 25_000L
         private const val MIN_CHUNK_MS = 700L
+
+        fun expectedChunkCount(file: File, sampleRateHz: Int): Int {
+            val bytesPerChunk = (sampleRateHz *
+                PcmRecordingStorage.BYTES_PER_SAMPLE * CHUNK_MS / 1000L).coerceAtLeast(1L)
+            return ceil(file.length().toDouble() / bytesPerChunk).toInt().coerceAtLeast(1)
+        }
     }
 
     suspend fun transcribe(
         file: File,
         sampleRateHz: Int = PcmRecordingStorage.SAMPLE_RATE_HZ,
-        onProgress: (Int, Int) -> Unit = { _, _ -> }
+        resumeFrom: RecordingTranscriptionCheckpoint? = null,
+        onProgress: (Int, Int) -> Unit = { _, _ -> },
+        onCheckpoint: (RecordingTranscriptionCheckpoint) -> Unit = {}
     ): Result {
-        val bytesPerChunk = (sampleRateHz *
-            PcmRecordingStorage.BYTES_PER_SAMPLE * CHUNK_MS / 1000L).coerceAtLeast(1L)
-        val expectedChunks = ceil(file.length().toDouble() / bytesPerChunk).toInt().coerceAtLeast(1)
-        var totalDecodeMs = 0L
-        var acceptedChunks = 0
-        var rejectedChunks = 0
-        var visitedChunks = 0
-        val acceptedText = mutableListOf<String>()
-        val rejectReasons = mutableListOf<String>()
+        val expectedChunks = expectedChunkCount(file, sampleRateHz)
+        val validResume = resumeFrom?.takeIf {
+            it.sourceLength == file.length() &&
+                it.sampleRateHz == sampleRateHz &&
+                it.nextChunkIndex in 0..expectedChunks &&
+                it.filterVersion == RecordingTranscriptionCheckpoint.CURRENT_FILTER_VERSION
+        }
+        var totalDecodeMs = validResume?.totalDecodeMs ?: 0L
+        var acceptedChunks = validResume?.acceptedChunks ?: 0
+        var rejectedChunks = validResume?.rejectedChunks ?: 0
+        var visitedChunks = validResume?.nextChunkIndex ?: 0
+        val acceptedText = validResume?.acceptedText?.toMutableList() ?: mutableListOf()
+        val rejectReasons = validResume?.rejectReasons?.toMutableList() ?: mutableListOf()
+        val firstPendingChunk = validResume?.nextChunkIndex ?: 0
 
         PcmRecordingStorage.readWindows(file, CHUNK_MS, sampleRateHz).forEachIndexed { index, chunk ->
+            if (index < firstPendingChunk) return@forEachIndexed
             if (chunk.durationMs() < MIN_CHUNK_MS && index > 0) return@forEachIndexed
-            visitedChunks += 1
+            visitedChunks = index + 1
             onProgress(visitedChunks, expectedChunks)
             val pcm = chunk.livePcm
             val stats = audioStats(pcm)
@@ -51,7 +65,8 @@ class PcmRecordingTranscriber(
             totalDecodeMs += decodeMs
             val hallucinationReason = AsrHallucinationDetector.detect(
                 text,
-                singleWordIsHallucination = false
+                singleWordIsHallucination = false,
+                conversationalSpeechIsHallucination = false
             )
             val rejectReason = when {
                 text.isBlank() -> "blank"
@@ -80,6 +95,19 @@ class PcmRecordingTranscriber(
                     "rms" to "%.1f".format(stats.rms),
                     "peak" to stats.peak,
                     "nonZeroRatio" to "%.3f".format(stats.nonZeroRatio)
+                )
+            )
+            onCheckpoint(
+                RecordingTranscriptionCheckpoint(
+                    sourceLength = file.length(),
+                    sampleRateHz = sampleRateHz,
+                    nextChunkIndex = index + 1,
+                    acceptedText = acceptedText.toList(),
+                    totalDecodeMs = totalDecodeMs,
+                    acceptedChunks = acceptedChunks,
+                    rejectedChunks = rejectedChunks,
+                    rejectReasons = rejectReasons.toList(),
+                    filterVersion = RecordingTranscriptionCheckpoint.CURRENT_FILTER_VERSION
                 )
             )
         }

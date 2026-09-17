@@ -52,6 +52,7 @@ class SettingsDataStore(private val context: Context) {
         val SUMMARY_HOUR = intPreferencesKey("summary_hour")
         val BACKUP_ENABLED = booleanPreferencesKey("backup_enabled")
         val BACKUP_HOUR = intPreferencesKey("backup_hour")
+        val BACKUP_MINUTE = intPreferencesKey("backup_minute")
         val CONTEXT_PRE_ROLL = intPreferencesKey("context_pre_roll_seconds")
         val CONTEXT_POST_ROLL = intPreferencesKey("context_post_roll_seconds")
         val GATE_ASR_ENGINE = stringPreferencesKey("gate_asr_engine")
@@ -72,6 +73,7 @@ class SettingsDataStore(private val context: Context) {
         val WATCH_DEBUG_STATUS = stringPreferencesKey("watch_debug_status")
         val WATCH_DEBUG_TRIGGER = stringPreferencesKey("watch_debug_trigger")
         val LOCATION_ENABLED = booleanPreferencesKey("location_enabled")
+        val PLACE_ONLINE_LOOKUP_ENABLED = booleanPreferencesKey("place_online_lookup_enabled")
         val LOCATION_INTERVAL_MINUTES = intPreferencesKey("location_interval_minutes")
         val LOCATION_DWELL_MINUTES = intPreferencesKey("location_dwell_minutes")
         val LOCATION_ENTRY_RADIUS_METERS = intPreferencesKey("location_entry_radius_meters")
@@ -97,6 +99,7 @@ class SettingsDataStore(private val context: Context) {
         const val DEFAULT_DURATION = 60  // Manual recording limit in MINUTES (not for continuous listening)
         const val DEFAULT_SUMMARY_HOUR = 21
         const val DEFAULT_BACKUP_HOUR = 3  // 3:00 AM
+        const val DEFAULT_BACKUP_MINUTE = 0
         const val DEFAULT_CONTEXT_PRE_ROLL = 5  // Continuous listening pre-roll in SECONDS
         const val DEFAULT_CONTEXT_POST_ROLL = 10  // Maximum post-trigger context in SECONDS
         const val DEFAULT_AMBIENT_CONTEXT_START_HOUR = 7
@@ -168,6 +171,10 @@ class SettingsDataStore(private val context: Context) {
 
     val backupHour: Flow<Int> = context.dataStore.data.map { prefs ->
         prefs[BACKUP_HOUR] ?: DEFAULT_BACKUP_HOUR
+    }
+
+    val backupMinute: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[BACKUP_MINUTE] ?: DEFAULT_BACKUP_MINUTE
     }
 
     val contextPreRollSeconds: Flow<Int> = context.dataStore.data.map { prefs ->
@@ -244,6 +251,10 @@ class SettingsDataStore(private val context: Context) {
         prefs[LOCATION_ENABLED] ?: false
     }
 
+    val placeOnlineLookupEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PLACE_ONLINE_LOOKUP_ENABLED] ?: false
+    }
+
     val locationIntervalMinutes: Flow<Int> = context.dataStore.data.map { prefs ->
         prefs[LOCATION_INTERVAL_MINUTES] ?: DEFAULT_LOCATION_INTERVAL_MINUTES
     }
@@ -297,7 +308,7 @@ class SettingsDataStore(private val context: Context) {
     }
 
     val learnFromDeletions: Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[LEARN_FROM_DELETIONS] ?: true
+        prefs[LEARN_FROM_DELETIONS] ?: false
     }
 
     suspend fun setLearnFromDeletions(enabled: Boolean) {
@@ -379,6 +390,13 @@ class SettingsDataStore(private val context: Context) {
         context.dataStore.edit { it[BACKUP_HOUR] = hour }
     }
 
+    suspend fun setBackupTime(hour: Int, minute: Int) {
+        context.dataStore.edit {
+            it[BACKUP_HOUR] = hour.coerceIn(0, 23)
+            it[BACKUP_MINUTE] = minute.coerceIn(0, 59)
+        }
+    }
+
     suspend fun setContextPreRollSeconds(seconds: Int) {
         context.dataStore.edit { it[CONTEXT_PRE_ROLL] = seconds }
     }
@@ -420,6 +438,10 @@ class SettingsDataStore(private val context: Context) {
 
     suspend fun setLocationEnabled(enabled: Boolean) {
         context.dataStore.edit { it[LOCATION_ENABLED] = enabled }
+    }
+
+    suspend fun setPlaceOnlineLookupEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[PLACE_ONLINE_LOOKUP_ENABLED] = enabled }
     }
 
     suspend fun setLocationIntervalMinutes(minutes: Int) {

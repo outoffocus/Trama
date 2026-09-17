@@ -19,6 +19,8 @@ data class Place(
     val latitude: Double,
     val longitude: Double,
     val type: String? = null,
+    val locality: String? = null,
+    val address: String? = null,
     val visitCount: Int = 0,
     val lastVisitAt: Long? = null,
     val rating: Int? = null,

@@ -2,6 +2,8 @@ package com.trama.app.sync
 
 import android.util.Log
 import com.google.android.gms.wearable.DataMap
+import com.google.android.gms.wearable.PutDataMapRequest
+import com.trama.shared.sync.RecordingReceipt
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
@@ -29,6 +31,8 @@ import com.trama.app.summary.ActionItemProcessor
 import com.trama.app.summary.RecordingProcessor
 import com.trama.app.summary.RecordingTranscriptionWorker
 import com.trama.shared.model.DiaryEntry
+import com.trama.shared.model.EntryContentKind
+import com.trama.shared.model.EntryStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -173,6 +177,7 @@ class WatchDataReceiverService : WearableListenerService() {
                         createdAt = normalizeWatchCreatedAt(rawEntry.createdAt)
                     )
                     if (
+                        rawEntry.sourceCaptureId?.let { repository.getBySourceCaptureId(it) } == null &&
                         !repository.existsByCreatedAtAndText(rawEntry.createdAt, rawEntry.text) &&
                         !repository.existsByCreatedAtAndText(entry.createdAt, entry.text)
                     ) {
@@ -220,6 +225,15 @@ class WatchDataReceiverService : WearableListenerService() {
         }
     }
 
+    private suspend fun acknowledgeRecording(createdAt: Long, file: java.io.File) {
+        val request = PutDataMapRequest.create("${RecordingReceipt.PATH}/$createdAt").apply {
+            dataMap.putLong("createdAt", createdAt)
+            dataMap.putLong("byteCount", file.length())
+            dataMap.putString("sha256", RecordingReceipt.sha256(file))
+        }.asPutDataRequest().setUrgent()
+        Wearable.getDataClient(applicationContext).putDataItem(request).await()
+    }
+
     private fun handleAudioRecording(dataMap: DataMap, repository: DiaryRepository) {
         scope.launch {
             try {
@@ -235,12 +249,20 @@ class WatchDataReceiverService : WearableListenerService() {
                     createdAt = normalizeWatchCreatedAt(metadataWithSampleRate.createdAt)
                 )
 
-                if (
-                    repository.existsRecordingByCreatedAt(metadataWithSampleRate.createdAt) ||
-                    repository.existsRecordingByCreatedAt(metadata.createdAt)
-                ) {
-                    Log.i(TAG, "Watch audio already imported for ${metadata.createdAt}")
-                    return@launch
+                val expectedHash = dataMap.getString("audio_sha256")
+                val existing = repository.getRecordingByCreatedAt(metadataWithSampleRate.createdAt)
+                    ?: repository.getRecordingByCreatedAt(metadata.createdAt)
+                if (existing != null) {
+                    if (metadata.kind == "CONTEXTUAL_TRIGGER") return@launch
+                    val file = PcmRecordingStorage.resolveManagedFile(applicationContext, existing.audioFilePath)
+                    if (file != null && file.isFile && !file.name.endsWith(".part") &&
+                        file.length() > 0 && existing.processingStatus != RecordingStatus.CAPTURING &&
+                        (metadata.pcmByteCount == null || metadata.pcmByteCount?.toLong() == file.length()) &&
+                        (expectedHash == null || RecordingReceipt.sha256(file) == expectedHash)) {
+                        acknowledgeRecording(rawMetadata.createdAt, file)
+                        return@launch
+                    }
+                    // Retry an incomplete import using the same database identity.
                 }
 
                 val assetInput = Wearable.getDataClient(applicationContext)
@@ -254,7 +276,7 @@ class WatchDataReceiverService : WearableListenerService() {
                         applicationContext,
                         metadata.createdAt
                     )
-                    val recordingId = repository.insertRecording(
+                    val recordingId = existing?.id ?: repository.insertRecording(
                         Recording(
                             transcription = "",
                             durationSeconds = 0,
@@ -266,6 +288,10 @@ class WatchDataReceiverService : WearableListenerService() {
                             audioFilePath = pendingFile.absolutePath,
                             audioSampleRateHz = metadata.sampleRateHz
                         )
+                    )
+                    if (existing != null) repository.updateCapturedRecordingAudio(
+                        existing.id, pendingFile.absolutePath, 0,
+                        RecordingStatus.CAPTURING, metadata.sampleRateHz
                     )
                     assetInput.use { input ->
                         FileOutputStream(pendingFile).buffered().use { output ->
@@ -304,7 +330,10 @@ class WatchDataReceiverService : WearableListenerService() {
                         )
                     }
 
-                    val usableAudio = stats.rms >= MIN_AUDIO_RMS
+                    val payloadIntact = (metadata.pcmByteCount == null || byteDelta == 0L) &&
+                        (metadata.pcmSampleCount == null || sampleDelta == 0L) &&
+                        (expectedHash == null || RecordingReceipt.sha256(finalFile) == expectedHash)
+                    val usableAudio = stats.rms >= MIN_AUDIO_RMS && payloadIntact
                     repository.updateCapturedRecordingAudio(
                         id = recordingId,
                         audioFilePath = finalFile.absolutePath,
@@ -321,6 +350,10 @@ class WatchDataReceiverService : WearableListenerService() {
                     )
                     if (usableAudio) {
                         RecordingTranscriptionWorker.enqueue(applicationContext, recordingId)
+                    }
+                    if (payloadIntact) {
+                        runCatching { acknowledgeRecording(rawMetadata.createdAt, finalFile) }
+                            .onFailure { Log.w(TAG, "PCM saved; receipt will be retried", it) }
                     }
                     Log.i(TAG, "Persisted watch PCM as recording $recordingId before transcription")
                     return@launch
@@ -503,7 +536,11 @@ class WatchDataReceiverService : WearableListenerService() {
             correctedText = correctedText,
             wasReviewedByLLM = validation?.correctedText != null ||
                 validation?.reason?.contains("IA") == true,
-            llmConfidence = validation?.confidence
+            llmConfidence = validation?.confidence,
+            status = EntryStatus.SAVED,
+            contentKind = EntryContentKind.MEMORY,
+            sourceCaptureId = "watch-audio:${metadata.createdAt}",
+            triggerPhrase = metadata.triggerText
         )
 
         val entryId = repository.insert(entry)

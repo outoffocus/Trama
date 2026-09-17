@@ -25,6 +25,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.max
 
 /**
@@ -54,6 +55,7 @@ class ContextualAudioCaptureEngine(
         private const val MIN_TRIGGER_CHECK_MS = 2_000L
         private const val GATE_CHECK_INTERVAL_MS = 2_500L
         private const val MIN_CAPTURE_AFTER_TRIGGER_MS = 2_500L
+        private const val TRIGGER_FOLLOW_UP_TIMEOUT_MS = 6_000L
         private const val MAX_CONSECUTIVE_EMPTY_READS = 120
         private const val ADAPTIVE_TRIGGER_SILENCE_MS = 2_500L
         private const val ADAPTIVE_SHORT_PHRASE_SILENCE_MS = 3_000L
@@ -96,6 +98,11 @@ class ContextualAudioCaptureEngine(
         val error: Throwable? = null
     )
 
+    private data class PendingTriggerFollowUp(
+        val transcript: String,
+        val expiresAtMs: Long
+    )
+
     @Volatile
     private var config: ContextualCaptureConfig = sanitize(initialConfig)
 
@@ -104,12 +111,16 @@ class ContextualAudioCaptureEngine(
 
     var onWindowCaptured: ((ContextualCaptureEnvelope) -> Unit)? = null
     var onStatusChanged: ((String) -> Unit)? = null
+    /** True while awaiting or completing the command associated with a matched trigger. */
+    var onTriggerListeningChanged: ((Boolean) -> Unit)? = null
     var onGateMatch: ((Long, String) -> Unit)? = null
     var onGateEvaluated: ((Long, String, Boolean, String) -> Unit)? = null
     var onSegmentFinalized: ((Long, String, Long, Int, Boolean) -> Unit)? = null
     var onGateEvalSkipped: ((reason: String, speechMs: Long, thresholdMs: Long) -> Unit)? = null
-    var shouldCaptureUnmatchedFinalWindow: ((CapturedAudioWindow, String, String) -> Boolean)? = null
-    var shouldCaptureUnmatchedGateWindow: ((Long, String, String, Boolean) -> Boolean)? = null
+    /** True when a final gate result contains only the trigger and needs the next spoken phrase. */
+    var shouldAwaitTriggerFollowUp: ((String) -> Boolean)? = null
+    /** Explicit, non-action sampling path used only when ambient context is enabled. */
+    var shouldCaptureAmbientWindow: ((Long, String, String, Boolean) -> Boolean)? = null
 
     fun updateConfig(newConfig: ContextualCaptureConfig) {
         config = sanitize(newConfig)
@@ -148,6 +159,7 @@ class ContextualAudioCaptureEngine(
         // Engine-level: counts captures finalized without a trigger match.
         // Resets to 0 on the first match. Drives the ambient-speech backoff.
         val consecutiveCapsWithoutMatch = AtomicInteger(0)
+        val pendingTriggerFollowUp = AtomicReference<PendingTriggerFollowUp?>(null)
 
         fun launchGateEval(capture: ActiveCapture) {
             if (capture.gateJob?.isActive == true) return
@@ -219,6 +231,7 @@ class ContextualAudioCaptureEngine(
                         matched = true,
                         coveredThroughSample = result.coveredThroughSample
                     )
+                    onTriggerListeningChanged?.invoke(true)
                     onGateMatch?.invoke(capture.captureId, eval.bestTranscript)
                     onStatusChanged?.invoke("trigger_detected")
                 }
@@ -237,6 +250,23 @@ class ContextualAudioCaptureEngine(
             onStatusChanged?.invoke(if (gateAsr.isAvailable) "gating" else "capturing")
         }
 
+        fun applyPendingTriggerFollowUp() {
+            val pending = pendingTriggerFollowUp.get() ?: return
+            if (System.currentTimeMillis() >= pending.expiresAtMs) {
+                if (pendingTriggerFollowUp.compareAndSet(pending, null)) {
+                    onTriggerListeningChanged?.invoke(false)
+                    onStatusChanged?.invoke("listening")
+                }
+                return
+            }
+            val capture = activeCapture ?: return
+            if (!pendingTriggerFollowUp.compareAndSet(pending, null)) return
+            capture.triggerMatched = true
+            capture.firstTriggerAtSample = 0
+            capture.lastGateTranscript = pending.transcript
+            onStatusChanged?.invoke("capturing_command")
+        }
+
         fun enqueueFinalization(block: suspend () -> Unit) {
             scope.launch(Dispatchers.IO, start = CoroutineStart.UNDISPATCHED) {
                 finalizationSequencer.process(block)
@@ -246,6 +276,9 @@ class ContextualAudioCaptureEngine(
         fun finalizeCapture(reason: String) {
             val capture = activeCapture ?: return
             activeCapture = null
+            if (capture.triggerMatched) {
+                onTriggerListeningChanged?.invoke(false)
+            }
 
             val finalWindow = capture.assembler.finalizeWindow(capture.preRollWindow)
             val dropped = capture.assembler.droppedSampleCount
@@ -295,6 +328,7 @@ class ContextualAudioCaptureEngine(
                     capture.lastGateEvalCoveredSample > 0 &&
                         capture.capturedSamples - capture.lastGateEvalCoveredSample <= finalTailSamples
                 enqueueFinalization {
+                    var awaitingFollowUp = false
                     try {
                         val eval = evaluateGateWindows(
                             finalWindow,
@@ -313,20 +347,27 @@ class ContextualAudioCaptureEngine(
                             if (eval.matched) {
                                 onGateMatch?.invoke(capture.captureId, eval.bestTranscript)
                             }
-                            onStatusChanged?.invoke("trigger_detected")
-                            onWindowCaptured?.invoke(
-                                capture.toEnvelope(
-                                    finalWindow,
-                                    "trigger",
-                                    eval.bestTranscript.takeIf { eval.matched }
+                            if (eval.matched && shouldAwaitTriggerFollowUp?.invoke(eval.bestTranscript) == true) {
+                                awaitingFollowUp = true
+                                pendingTriggerFollowUp.set(
+                                    PendingTriggerFollowUp(
+                                        transcript = eval.bestTranscript,
+                                        expiresAtMs = System.currentTimeMillis() + TRIGGER_FOLLOW_UP_TIMEOUT_MS
+                                    )
                                 )
-                            )
-                        } else if (shouldCaptureUnmatchedFinalWindow?.invoke(
-                                finalWindow,
-                                eval.bestTranscript,
-                                eval.debugSummary
-                            ) == true ||
-                            shouldCaptureUnmatchedGateWindow?.invoke(
+                                onTriggerListeningChanged?.invoke(true)
+                                onStatusChanged?.invoke("awaiting_command")
+                            } else {
+                                onStatusChanged?.invoke("trigger_detected")
+                                onWindowCaptured?.invoke(
+                                    capture.toEnvelope(
+                                        finalWindow,
+                                        "trigger",
+                                        eval.bestTranscript.takeIf { eval.matched }
+                                    )
+                                )
+                            }
+                        } else if (shouldCaptureAmbientWindow?.invoke(
                                 finalWindow.durationMs(),
                                 eval.bestTranscript,
                                 eval.debugSummary,
@@ -334,13 +375,9 @@ class ContextualAudioCaptureEngine(
                             ) == true
                         ) {
                             consecutiveCapsWithoutMatch.incrementAndGet()
-                            onStatusChanged?.invoke("trigger_uncertain")
+                            onStatusChanged?.invoke("ambient_sampling")
                             onWindowCaptured?.invoke(
-                                capture.toEnvelope(
-                                    finalWindow,
-                                    "uncertain_fallback",
-                                    eval.bestTranscript
-                                )
+                                capture.toEnvelope(finalWindow, "ambient_sample")
                             )
                         } else {
                             consecutiveCapsWithoutMatch.incrementAndGet()
@@ -356,8 +393,10 @@ class ContextualAudioCaptureEngine(
                             "exception"
                         )
                     } finally {
-                        onStatusChanged?.invoke("rearmed")
-                        onStatusChanged?.invoke("listening")
+                        if (!awaitingFollowUp) {
+                            onStatusChanged?.invoke("rearmed")
+                            onStatusChanged?.invoke("listening")
+                        }
                     }
                 }
             } else {
@@ -418,6 +457,7 @@ class ContextualAudioCaptureEngine(
                 vad.processFrame(buffer, read)
                 val frameDurationMs = (read.toLong() * 1000L) / loopConfig.sampleRateHz
                 vad.accumulateIfSpeaking(frameDurationMs)
+                applyPendingTriggerFollowUp()
 
                 activeCapture?.let { capture ->
                     val chunk = if (read == buffer.size) buffer.copyOf() else buffer.copyOf(read)
@@ -484,7 +524,12 @@ class ContextualAudioCaptureEngine(
                         }
                     }
 
-                    val maxAfterTriggerSamples = capture.config.postRollSeconds * capture.config.sampleRateHz
+                    val configuredPostRollSamples =
+                        capture.config.postRollSeconds * capture.config.sampleRateHz
+                    val minimumPostTriggerSamples =
+                        ((MIN_CAPTURE_AFTER_TRIGGER_MS * capture.config.sampleRateHz) / 1000L).toInt()
+                    val maxAfterTriggerSamples =
+                        maxOf(configuredPostRollSamples, minimumPostTriggerSamples)
                     val reachedTriggerCap = capture.triggerMatched &&
                         capture.firstTriggerAtSample >= 0 &&
                         (capture.capturedSamples - capture.firstTriggerAtSample) >= maxAfterTriggerSamples
@@ -519,6 +564,8 @@ class ContextualAudioCaptureEngine(
             }
         } finally {
             running = false
+            pendingTriggerFollowUp.set(null)
+            onTriggerListeningChanged?.invoke(false)
             periodicGateResults.close()
             try {
                 audioRecord.stop()

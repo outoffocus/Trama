@@ -6,22 +6,28 @@ import android.content.res.Configuration
 import android.os.Build
 import android.util.Log
 import com.trama.app.diagnostics.CaptureLog
+import com.trama.app.backup.BackupScheduler
+import com.trama.app.service.EntryProcessingState
+import com.trama.app.service.ServiceController
 import com.trama.app.summary.GemmaClient
 import com.trama.app.summary.GoogleCalendarSyncManager
 import com.trama.app.summary.SummaryScheduler
 import com.trama.app.ui.SettingsDataStore
+import com.trama.app.widget.TramaWidgetProvider
+import com.trama.shared.data.DatabaseProvider
+import com.trama.shared.util.DayRange
 import dagger.hilt.android.HiltAndroidApp
-import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 
 @HiltAndroidApp
 class TramaApplication : Application() {
-
-    @Inject lateinit var settings: SettingsDataStore
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -33,8 +39,15 @@ class TramaApplication : Application() {
         if (!isMainProcess()) return
         removeLegacyCloudCredential()
         CaptureLog.init(applicationContext)
-        scheduleDailySummaryIfEnabled()
+        appScope.launch {
+            SettingsDataStore(applicationContext).asrDebugEnabled.collectLatest {
+                CaptureLog.setContentLoggingEnabled(it)
+            }
+        }
+        schedulePrivateDailyMemory()
+        restoreDailyBackupSchedule()
         syncSelectedCalendars()
+        observeWidgetData()
         registerMemoryCallback()
     }
 
@@ -60,19 +73,53 @@ class TramaApplication : Application() {
             .apply()
     }
 
-    private fun scheduleDailySummaryIfEnabled() {
+    private fun schedulePrivateDailyMemory() {
+        SummaryScheduler.schedule(applicationContext)
+    }
+
+    /**
+     * WorkManager persists work in normal conditions, but its database can be rebuilt
+     * after an app update or device restore. Reconcile the user's saved preference on
+     * every normal app start so an enabled daily backup cannot silently disappear.
+     */
+    private fun restoreDailyBackupSchedule() {
         appScope.launch {
-            val enabled = settings.summaryEnabled.first()
-            if (enabled) {
-                val hour = settings.summaryHour.first()
-                SummaryScheduler.schedule(applicationContext, hour)
-            }
+            val settings = SettingsDataStore(applicationContext)
+            BackupScheduler.reconcile(
+                context = applicationContext,
+                enabled = settings.backupEnabled.first(),
+                hour = settings.backupHour.first(),
+                minute = settings.backupMinute.first()
+            )
         }
     }
 
     private fun syncSelectedCalendars() {
         appScope.launch {
             GoogleCalendarSyncManager(applicationContext).syncSelectedCalendars()
+        }
+    }
+
+    private fun observeWidgetData() {
+        appScope.launch {
+            val repository = DatabaseProvider.getRepository(applicationContext)
+            val today = DayRange.of(System.currentTimeMillis())
+            combine(
+                repository.getPending(),
+                repository.getCompletedByCompletedAt(today.startMs, today.endInclusiveMs)
+            ) { pending, completed ->
+                pending.hashCode() to completed.hashCode()
+            }
+                .distinctUntilChanged()
+                .collectLatest { TramaWidgetProvider.requestRefresh(applicationContext) }
+        }
+        appScope.launch {
+            EntryProcessingState.processingIds
+                .collectLatest { TramaWidgetProvider.requestRefresh(applicationContext) }
+        }
+        appScope.launch {
+            ServiceController.captureState
+                .collectLatest { TramaWidgetProvider.requestRefresh(applicationContext) }
         }
     }
 

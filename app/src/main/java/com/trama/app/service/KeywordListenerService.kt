@@ -16,9 +16,12 @@ import androidx.lifecycle.lifecycleScope
 import com.trama.app.audio.ContextualAudioCaptureEngine
 import com.trama.app.audio.CaptureProcessingSequencer
 import com.trama.app.audio.SherpaWhisperAsrEngine
+import com.trama.app.audio.forFinalAsr
 import com.trama.app.audio.SileroVadFilter
+import com.trama.app.audio.TriggerFollowUpPolicy
 import com.trama.app.ambient.AmbientContextClassifier
 import com.trama.app.ambient.AmbientContextConfig
+import com.trama.app.ambient.AmbientContextPolicy
 import com.trama.app.ambient.AmbientContextRecorder
 import com.trama.app.diagnostics.CaptureLog
 import com.trama.shared.audio.VoskGateAsr
@@ -27,7 +30,6 @@ import com.trama.shared.audio.LightweightGateAsr
 import com.trama.shared.audio.NoOpAsrEngine
 import com.trama.shared.audio.NoOpLightweightGateAsr
 import com.trama.shared.audio.OnDeviceAsrEngine
-import com.trama.app.speech.EntryValidator
 import com.trama.app.speech.IntentDetector
 import com.trama.app.speech.IntentPattern
 import com.trama.app.speech.PersonalDictionary
@@ -55,6 +57,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 import java.util.Locale
+import java.util.Calendar
 
 /**
  * Continuous local speech listening service.
@@ -90,18 +93,18 @@ class KeywordListenerService : LifecycleService() {
         )
         private const val CONTEXTUAL_CRASH_BACKOFF_RESET_MS = 60_000L
         private const val SPEAKER_VERIFY_WINDOW_MS = 3_000L
-        private const val UNCERTAIN_GATE_FALLBACK_COOLDOWN_MS = 5L * 60L * 1000L
-        private const val UNCERTAIN_GATE_MIN_WINDOW_MS = 2_500L
-        private const val UNCERTAIN_GATE_MAX_WINDOW_MS = 15_000L
         private const val MAX_ASR_WINDOW_MS = 20_000L
-        private const val BLOCKED_FALLBACK_LOG_INTERVAL_MS = 60_000L
+        private const val AMBIENT_SAMPLE_COOLDOWN_MS = 5L * 60L * 1000L
+        private const val AMBIENT_SAMPLE_MIN_WINDOW_MS = 2_500L
+        private const val AMBIENT_SAMPLE_MAX_WINDOW_MS = 15_000L
         private const val MEDIA_PLAYBACK_POLL_MS = 2_000L
         private const val SHADOW_DEDUP_MS = 60_000L
+        private const val TRIGGER_FEEDBACK_MIN_MS = 2_500L
 
         private const val BATTERY_THRESHOLD = 15
         // Soft threshold: above the hard stop (15%) but still constrained.
         // Triggers periodic-eval backoff while keeping the service alive.
-        private const val BATTERY_SOFT_THRESHOLD = 30
+        private const val BATTERY_SOFT_THRESHOLD = 20
         private const val SERVICE_HEARTBEAT_MS = 15L * 60L * 1000L
         private val WEAK_OWNERSHIP_PREFIXES = listOf(
             "hay que",
@@ -121,7 +124,6 @@ class KeywordListenerService : LifecycleService() {
     @Volatile private var activeCaptureProfile: CaptureProfile = CaptureProfile.STRICT
     @Volatile private var lastShadowText: String = ""
     @Volatile private var lastShadowAt: Long = 0L
-    private lateinit var entryValidator: EntryValidator
     private lateinit var speakerVerificationManager: SherpaSpeakerVerificationManager
     private var phoneToWatchSyncer: PhoneToWatchSyncer? = null
     private lateinit var settingsSyncer: SettingsSyncer
@@ -131,6 +133,8 @@ class KeywordListenerService : LifecycleService() {
     private var sileroVad: SileroVadFilter? = null
     private var contextualCaptureEngine: ContextualAudioCaptureEngine? = null
     private var contextualCaptureJob: Job? = null
+    private var triggerFeedbackJob: Job? = null
+    @Volatile private var triggerCaptureActive = false
     private var mediaPlaybackMonitorJob: Job? = null
     private var serviceHeartbeatJob: Job? = null
     private var startupJob: Job? = null
@@ -158,7 +162,6 @@ class KeywordListenerService : LifecycleService() {
     @Volatile
     private var consecutiveOfflineAsrErrors = 0
 
-    @Volatile private var lastUncertainGateFallbackAt = 0L
     @Volatile
     private var batteryPct: Int = 100
     @Volatile
@@ -172,7 +175,7 @@ class KeywordListenerService : LifecycleService() {
     @Volatile
     private var mediaPlaybackActive = false
     @Volatile
-    private var lastBlockedUncertainGateFallbackLogAt = 0L
+    private var lastAmbientSampleAt = 0L
     @Volatile
     private var batteryLowNoticeShown = false
     private var thermalListener: PowerManager.OnThermalStatusChangedListener? = null
@@ -239,7 +242,6 @@ class KeywordListenerService : LifecycleService() {
         dictionary = PersonalDictionary(applicationContext)
         intentDetector = IntentDetector()
         shadowIntentDetector = IntentDetector()
-        entryValidator = EntryValidator(applicationContext)
         speakerVerificationManager = SherpaSpeakerVerificationManager(applicationContext)
         settingsSyncer = SettingsSyncer(applicationContext)
         asrEngine = createAsrEngine()
@@ -563,9 +565,9 @@ class KeywordListenerService : LifecycleService() {
 
     /** Logs what the next more permissive profile would capture without changing behavior. */
     private fun detectGateTrigger(text: String): Boolean {
-        if (intentDetector.detect(text) != null) return true
+        if (intentDetector.detectConfigured(text) != null) return true
         if (activeCaptureProfile == CaptureProfile.SENSITIVE) return false
-        val shadow = shadowIntentDetector.detect(text) ?: return false
+        val shadow = shadowIntentDetector.detectConfigured(text) ?: return false
         val now = System.currentTimeMillis()
         val normalized = text.trim().lowercase(Locale.getDefault())
         if (normalized != lastShadowText || now - lastShadowAt >= SHADOW_DEDUP_MS) {
@@ -709,6 +711,14 @@ class KeywordListenerService : LifecycleService() {
             triggerDetector = ::detectGateTrigger,
             isThrottled = { shouldThrottleCapture() }
         ).also { engine ->
+            engine.onTriggerListeningChanged = { active ->
+                triggerCaptureActive = active
+                if (active) {
+                    showTriggerRecognition()
+                } else if (triggerFeedbackJob?.isActive != true) {
+                    ServiceController.notifyTriggerRecognized(false)
+                }
+            }
             engine.onStatusChanged = { state ->
                 if (state == "stalled") {
                     logServiceEvent("audio_record_stalled", result = CaptureLog.Result.REJECT)
@@ -718,19 +728,30 @@ class KeywordListenerService : LifecycleService() {
                     "capturing" -> notifier.updateForegroundIfChanged("Capturando contexto...")
                     "gating" -> notifier.updateForegroundIfChanged("Escuchando (gate ligero)")
                     "trigger_detected" -> notifier.updateForegroundIfChanged("Trigger detectado, procesando contexto...")
+                    "awaiting_command" -> notifier.updateForegroundIfChanged("Palabra clave reconocida. Di la orden...")
+                    "capturing_command" -> notifier.updateForegroundIfChanged("Escuchando la orden...")
                     "trigger_uncertain" -> notifier.updateForegroundIfChanged("Verificando frase...")
                     "rearmed" -> notifier.updateForegroundIfChanged("Listo para siguiente frase")
                     else -> notifier.updateForegroundIfChanged("Escuchando (ASR dedicado)")
                 }
             }
             engine.onGateMatch = { _, transcript ->
-                val detection = intentDetector.detect(transcript)
+                // A trigger may only be found by the final gate pass, after the
+                // active segment has already closed. Keep explicit feedback on
+                // screen long enough for the user to perceive it in both paths.
+                showTriggerRecognition()
+                val detection = intentDetector.detectConfigured(transcript)
                 val reason = detection?.label?.let { label -> "gate -> $label" } ?: "gate -> trigger"
                 publishAsrDebug(status = "trigger detectado", gateText = transcript, triggerReason = reason)
             }
+            engine.shouldAwaitTriggerFollowUp = { transcript ->
+                val detection = intentDetector.detectConfigured(transcript)
+                TriggerFollowUpPolicy.needsFollowUp(transcript, detection?.matchedTrigger)
+            }
             engine.onGateEvaluated = { captureId, transcript, matched, debugSummary ->
                 val reason = if (matched) {
-                    intentDetector.detect(transcript)?.label?.let { label -> "gate -> $label" } ?: "gate -> trigger"
+                    intentDetector.detectConfigured(transcript)?.label?.let { label -> "gate -> $label" }
+                        ?: "gate -> trigger"
                 } else {
                     "gate descartado"
                 }
@@ -750,9 +771,8 @@ class KeywordListenerService : LifecycleService() {
                     triggerReason = reason
                 )
             }
-            engine.shouldCaptureUnmatchedFinalWindow = { _, _, _ -> false }
-            engine.shouldCaptureUnmatchedGateWindow = { windowMs, transcript, debugSummary, isFinal ->
-                shouldEscalateUncertainGate(windowMs, transcript, debugSummary, isFinal)
+            engine.shouldCaptureAmbientWindow = { windowMs, transcript, _, isFinal ->
+                shouldCaptureAmbientSample(windowMs, transcript, isFinal)
             }
             engine.onSegmentFinalized = { captureId, reason, windowMs, droppedSamples, triggerMatched ->
                 CaptureLog.event(
@@ -808,9 +828,8 @@ class KeywordListenerService : LifecycleService() {
                     }
                     val startedAt = System.currentTimeMillis()
                     publishAsrDebug(status = "procesando audio")
-                    // Hard cap on Whisper input: p95 windows of 45s drove 19s decodes.
-                    // Action items live near the end of the segment after the trigger,
-                    // so we keep the 20s tail (covers post-roll + final utterance).
+                    // Primary Whisper pass keeps the wider contextual segment. The gate
+                    // only decides whether this expensive transcription should run.
                     val asrWindow = if (window.durationMs() > MAX_ASR_WINDOW_MS) {
                         window.tailWindow(MAX_ASR_WINDOW_MS)
                     } else {
@@ -857,14 +876,43 @@ class KeywordListenerService : LifecycleService() {
                         null
                     }
 
-                    val text = transcript?.text?.trim().orEmpty()
-                    if (text.isNotBlank()) {
+                    val whisperText = transcript?.text?.trim().orEmpty()
+                    if (whisperText.isNotBlank()) {
+                        val primaryDetection = intentDetector.detectConfigured(whisperText)
+                        var retryDecodeMs = 0L
+                        var retryText = ""
+                        var retryDetection: DetectionResult? = null
+                        if (source == "trigger" && primaryDetection == null) {
+                            val focusedWindow = window.forFinalAsr(maxDurationMs = MAX_ASR_WINDOW_MS)
+                            if (focusedWindow.durationMs() < asrWindow.durationMs()) {
+                                val retryStartedAt = System.currentTimeMillis()
+                                retryText = runCatching {
+                                    asrEngine.transcribe(focusedWindow, languageTag = "es")?.text?.trim().orEmpty()
+                                }.onFailure { error ->
+                                    Log.w(TAG, "Focused Whisper retry failed", error)
+                                }.getOrDefault("")
+                                retryDecodeMs = System.currentTimeMillis() - retryStartedAt
+                                retryDetection = retryText.takeIf { it.isNotBlank() }
+                                    ?.let(intentDetector::detectConfigured)
+                            }
+                        }
+                        val text = chooseWhisperTranscript(
+                            primaryText = whisperText,
+                            primaryIntentConfidence = primaryDetection?.confidence,
+                            retryText = retryText,
+                            retryIntentConfidence = retryDetection?.confidence
+                        )
+                        val selectedWhisperPass = if (text == retryText && retryText.isNotBlank()) {
+                            "focused_retry"
+                        } else {
+                            "contextual_primary"
+                        }
                         consecutiveOfflineAsrErrors = 0
                         val elapsedMs = System.currentTimeMillis() - startedAt
                         val ambientSignal = if (
-                            source == "uncertain_fallback" &&
+                            source == "ambient_sample" &&
                                 ambientContextConfig.enabled &&
-                                intentDetector.detect(text) == null
+                                intentDetector.detectConfigured(text) == null
                         ) {
                             AmbientContextClassifier.classify(text)
                         } else {
@@ -874,13 +922,16 @@ class KeywordListenerService : LifecycleService() {
                             gate = CaptureLog.Gate.ASR_FINAL,
                             result = CaptureLog.Result.OK,
                             // Environmental text is intentionally never persisted.
-                            text = text.takeIf { ambientSignal == null },
+                            text = text.takeIf { source != "ambient_sample" },
                             meta = mapOf(
                                 "captureId" to envelope.captureId,
                                 "engine" to asrEngine.name,
-                                "windowMs" to window.durationMs(),
+                                "windowMs" to asrWindow.durationMs(),
+                                "originalWindowMs" to window.durationMs(),
                                 "decodeMs" to elapsedMs,
                                 "source" to source,
+                                "selectedWhisperPass" to selectedWhisperPass,
+                                "retryDecodeMs" to retryDecodeMs,
                                 "ambientCategory" to ambientSignal?.category?.name,
                                 "transcriptStored" to (ambientSignal == null)
                             ) + powerSnapshot()
@@ -932,6 +983,15 @@ class KeywordListenerService : LifecycleService() {
                                     )
                                 }
                             }
+                            return@capture
+                        }
+                        // Ambient sampling is isolated from action capture. A Whisper
+                        // hypothesis can never promote an unmatched window to a task.
+                        if (source == "ambient_sample") {
+                            publishAsrDebug(
+                                status = "contexto ambiental ignorado",
+                                triggerReason = "sin categoría fiable"
+                            )
                             return@capture
                         }
                         val asrNoiseReason = AsrHallucinationDetector.detect(
@@ -1004,12 +1064,12 @@ class KeywordListenerService : LifecycleService() {
                             status = "ultima captura",
                             lastText = text,
                             triggerReason = "whisper final",
-                            lastWindowMs = window.durationMs().toInt(),
+                            lastWindowMs = asrWindow.durationMs().toInt(),
                             lastDecodeMs = elapsedMs.toInt()
                         )
                         Log.i(
                             TAG,
-                            "ASR[${asrEngine.name}] heard (${window.durationMs()}ms window, " +
+                            "ASR[${asrEngine.name}] heard (${asrWindow.durationMs()}ms contextual window, " +
                                 "${elapsedMs}ms decode): '$text'"
                         )
                         // An optional voice profile supplies extra evidence; its
@@ -1141,10 +1201,25 @@ class KeywordListenerService : LifecycleService() {
     }
 
     private fun stopContextualCapture() {
+        triggerCaptureActive = false
+        triggerFeedbackJob?.cancel()
+        triggerFeedbackJob = null
+        ServiceController.notifyTriggerRecognized(false)
         contextualCaptureEngine?.stop()
         contextualCaptureJob?.cancel()
         contextualCaptureJob = null
         contextualCaptureEngine = null
+    }
+
+    private fun showTriggerRecognition() {
+        ServiceController.notifyTriggerRecognized(true)
+        triggerFeedbackJob?.cancel()
+        triggerFeedbackJob = lifecycleScope.launch {
+            delay(TRIGGER_FEEDBACK_MIN_MS)
+            if (!triggerCaptureActive) {
+                ServiceController.notifyTriggerRecognized(false)
+            }
+        }
     }
 
     private fun currentContextualConfig(): ContextualCaptureConfig {
@@ -1159,102 +1234,27 @@ class KeywordListenerService : LifecycleService() {
         )
     }
 
-    private fun shouldEscalateUncertainGate(
+    private fun shouldCaptureAmbientSample(
         windowMs: Long,
         gateTranscript: String,
-        debugSummary: String,
         isFinal: Boolean
     ): Boolean {
-        if (mediaPlaybackActive || isMediaPlaybackActiveNow()) {
-            CaptureLog.event(
-                gate = CaptureLog.Gate.ASR_GATE,
-                result = CaptureLog.Result.NO_MATCH,
-                text = "media_playback_gate_blocked",
-            meta = mapOf(
-                "windowMs" to windowMs,
-                "isFinal" to isFinal,
-                "summary" to debugSummary
-            ) + powerSnapshot()
-        )
-            return false
-        }
+        if (!isFinal || !ambientContextConfig.enabled) return false
+        if (mediaPlaybackActive || isMediaPlaybackActiveNow()) return false
+        if (windowMs !in AMBIENT_SAMPLE_MIN_WINDOW_MS..AMBIENT_SAMPLE_MAX_WINDOW_MS) return false
+        if (gateTranscript.split("\\s+".toRegex()).count(String::isNotBlank) > 2) return false
+        if (!charging && (batteryPct in 1 until 20 || throttleReason() != "none")) return false
+        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        if (!AmbientContextPolicy.isHourActive(
+                hour,
+                ambientContextConfig.activeStartHour,
+                ambientContextConfig.activeEndHour
+            )
+        ) return false
         val now = System.currentTimeMillis()
-        val powerSaveReason = throttleReason().takeIf { it != "none" }
-        val decision = UncertainGateFallbackPolicy.decide(
-            windowMs = windowMs,
-            gateTranscript = gateTranscript,
-            nowMs = now,
-            lastAllowedAtMs = lastUncertainGateFallbackAt,
-            batteryPct = batteryPct,
-            charging = charging,
-            powerSaveReason = powerSaveReason,
-            normalCooldownMs = UNCERTAIN_GATE_FALLBACK_COOLDOWN_MS,
-            minWindowMs = UNCERTAIN_GATE_MIN_WINDOW_MS,
-            maxWindowMs = UNCERTAIN_GATE_MAX_WINDOW_MS
-        )
-
-        if (decision.allowed) {
-            lastUncertainGateFallbackAt = now
-            CaptureLog.event(
-                gate = CaptureLog.Gate.ASR_GATE,
-                result = CaptureLog.Result.OK,
-                text = gateTranscript.ifBlank { null },
-                meta = mapOf(
-                    "reason" to "uncertain_gate_fallback",
-                    "isFinal" to isFinal,
-                    "windowMs" to windowMs,
-                    "batteryPct" to batteryPct,
-                    "charging" to charging,
-                    "cooldownMs" to decision.cooldownMs,
-                    "summary" to debugSummary
-                ) + powerSnapshot()
-            )
-            publishAsrDebug(
-                status = "verificando frase",
-                gateText = debugSummary.ifBlank { "gate incierto" },
-                triggerReason = "gate incierto -> whisper"
-            )
-        } else if (decision.blockedReason == "battery_low" ||
-            decision.blockedReason == "cooldown" ||
-            decision.blockedReason?.startsWith("thermal:") == true ||
-            decision.blockedReason == "battery_soft_low"
-        ) {
-            logBlockedUncertainGateFallback(
-                reason = decision.blockedReason,
-                windowMs = windowMs,
-                isFinal = isFinal,
-                cooldownMs = decision.cooldownMs,
-                debugSummary = debugSummary
-            )
-        }
-
-        return decision.allowed
-    }
-
-    private fun logBlockedUncertainGateFallback(
-        reason: String,
-        windowMs: Long,
-        isFinal: Boolean,
-        cooldownMs: Long,
-        debugSummary: String
-    ) {
-        val now = System.currentTimeMillis()
-        if (now - lastBlockedUncertainGateFallbackLogAt < BLOCKED_FALLBACK_LOG_INTERVAL_MS) return
-        lastBlockedUncertainGateFallbackLogAt = now
-        CaptureLog.event(
-            gate = CaptureLog.Gate.ASR_GATE,
-            result = CaptureLog.Result.NO_MATCH,
-            text = "uncertain_gate_fallback_blocked",
-            meta = mapOf(
-                "reason" to reason,
-                "isFinal" to isFinal,
-                "windowMs" to windowMs,
-                "batteryPct" to batteryPct,
-                "charging" to charging,
-                "cooldownMs" to cooldownMs,
-                "summary" to debugSummary
-            ) + powerSnapshot()
-        )
+        if (now - lastAmbientSampleAt < AMBIENT_SAMPLE_COOLDOWN_MS) return false
+        lastAmbientSampleAt = now
+        return true
     }
 
     private fun humanReadableAsrState(state: String): String {
@@ -1262,6 +1262,8 @@ class KeywordListenerService : LifecycleService() {
             "gating" -> "esperando trigger"
             "capturing" -> "capturando voz"
             "trigger_detected" -> "trigger detectado"
+            "awaiting_command" -> "palabra clave reconocida"
+            "capturing_command" -> "capturando orden"
             "trigger_uncertain" -> "verificando frase"
             "rearmed" -> "listo para siguiente frase"
             "stalled" -> "rearmando captura"
@@ -1275,8 +1277,8 @@ class KeywordListenerService : LifecycleService() {
      * Uses regex patterns for flexible matching of natural speech variations.
      * Now includes speaker verification and LLM validation.
      */
-    private fun processText(text: String, preferSuggested: Boolean, captureId: Long): Boolean {
-        val result = intentDetector.detect(text) ?: return false
+    private suspend fun processText(text: String, preferSuggested: Boolean, captureId: Long): Boolean {
+        val result = intentDetector.detectConfigured(text) ?: return false
         publishAsrDebug(
             gateText = text,
             triggerReason = "detector final -> ${result.label}"
@@ -1289,16 +1291,17 @@ class KeywordListenerService : LifecycleService() {
         )
     }
 
-    private fun processGateResult(
+    private suspend fun processGateResult(
         gateText: String?,
         finalText: String,
         preferSuggested: Boolean,
         captureId: Long
     ): Boolean {
-        val result = gateText?.let(intentDetector::detect) ?: return false
-        Log.i(TAG, "Using gate detection correlated with the final capture")
+        val result = gateText?.let(intentDetector::detectConfigured) ?: return false
+        Log.i(TAG, "Using gate only as trigger evidence for the correlated final capture")
         publishAsrDebug(
-            gateText = finalText,
+            lastText = finalText,
+            gateText = gateText,
             triggerReason = "gate latched -> ${result.label}"
         )
         return processDetectedResult(
@@ -1309,7 +1312,7 @@ class KeywordListenerService : LifecycleService() {
         )
     }
 
-    private fun processDetectedResult(
+    private suspend fun processDetectedResult(
         result: DetectionResult,
         text: String,
         preferSuggested: Boolean = false,
@@ -1374,33 +1377,24 @@ class KeywordListenerService : LifecycleService() {
             "Detector result [$intentId]: raw='${text.take(160)}' | captured='${result.capturedText.take(160)}'"
         )
 
-        // Correct text via LLM but don't reject — the pattern trigger already confirms intent.
-        // Validation (heuristics + LLM) was rejecting short but valid entries like "comprar ajos"
-        // because MIN_WORDS=3, even though the user clearly triggered a capture pattern.
-        lifecycleScope.launch(Dispatchers.IO) {
-            val validation = try {
-                entryValidator.validate(result.capturedText)
-            } catch (e: Exception) {
-                Log.w(TAG, "Validation failed, proceeding without correction", e)
-                null
-            }
-
-            val correctedText = dictionary.correct(
-                validation?.correctedText ?: result.capturedText
-            )
-
-            captureSaver.save(
-                intentId = intentId,
-                label = classifiedLabel,
-                text = correctedText,
-                originalText = result.capturedText,
-                llmConfidence = validation?.confidence ?: 0.9f,
-                wasReviewed = validation?.correctedText != null || validation?.reason?.contains("IA") == true,
-                confidence = result.confidence,
-                preferSuggested = routeToSuggested,
-                suggestedReasons = acceptance.reasons
-            )
-        }
+        // Persist first so the capture appears immediately. ActionItemProcessor performs the
+        // single local-model pass afterwards and updates the visible action in place.
+        val correctedText = dictionary.correct(result.capturedText)
+        captureSaver.save(
+            captureId = captureId,
+            triggerPhrase = result.matchedTrigger,
+            triggerConfigVersion = (result.pattern?.hashCode()
+                ?: result.customKeyword?.hashCode())?.toLong(),
+            intentId = intentId,
+            label = classifiedLabel,
+            text = correctedText,
+            originalText = result.capturedText,
+            llmConfidence = result.confidence,
+            wasReviewed = false,
+            confidence = result.confidence,
+            preferSuggested = routeToSuggested,
+            suggestedReasons = acceptance.reasons
+        )
 
         return true
     }
@@ -1597,4 +1591,23 @@ class KeywordListenerService : LifecycleService() {
     private fun metric(value: Number): String =
         String.format(Locale.US, "%.2f", value.toDouble())
 
+}
+
+internal fun chooseWhisperTranscript(
+    primaryText: String,
+    primaryIntentConfidence: Float?,
+    retryText: String,
+    retryIntentConfidence: Float?
+): String {
+    val primary = primaryText.trim()
+    val retry = retryText.trim()
+    if (retry.isBlank()) return primary
+    if (primaryIntentConfidence == null && retryIntentConfidence != null) return retry
+    if (
+        retryIntentConfidence != null &&
+        retryIntentConfidence >= (primaryIntentConfidence ?: 0f) + 0.08f
+    ) {
+        return retry
+    }
+    return primary
 }

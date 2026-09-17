@@ -1,5 +1,12 @@
 package com.trama.app.ui.screens
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -38,7 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.trama.app.summary.RecordingProcessorWorker
 import com.trama.app.summary.RecordingTranscriptionWorker
-import com.trama.app.audio.PcmRecordingStorage
+import com.trama.app.summary.RecordingDeletion
 import com.trama.app.ui.components.RecordingCard
 import com.trama.shared.data.DatabaseProvider
 import com.trama.shared.model.RecordingStatus
@@ -59,7 +66,49 @@ fun RecordingsListScreen(
     var selectionMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<Long>()) }
 
+    var deleteIds by remember { mutableStateOf(setOf<Long>()) }
+    var deleting by remember { mutableStateOf(false) }
+    val snackbar = remember { SnackbarHostState() }
+    BackHandler(enabled = selectionMode && !deleting && deleteIds.isEmpty()) {
+        selectionMode = false
+        selectedIds = emptySet()
+    }
+
+    if (deleteIds.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { if (!deleting) deleteIds = emptySet() },
+            title = { Text("¿Eliminar ${deleteIds.size} grabaciones?") },
+            text = { Text("Se eliminarán las grabaciones seleccionadas y su audio. Esta acción no se puede deshacer.") },
+            confirmButton = {
+                TextButton(enabled = !deleting, onClick = {
+                    val ids = deleteIds
+                    deleting = true
+                    scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) { RecordingDeletion.delete(context, repository, ids) }
+                            selectedIds = emptySet()
+                            selectionMode = false
+                            deleteIds = emptySet()
+                            snackbar.showSnackbar("Grabaciones eliminadas")
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            deleteIds = emptySet()
+                            snackbar.showSnackbar("No se pudieron eliminar. Vuelve a intentarlo.")
+                        } finally {
+                            deleting = false
+                        }
+                    }
+                }) { Text(if (deleting) "Eliminando…" else "Eliminar") }
+            },
+            dismissButton = {
+                TextButton(enabled = !deleting, onClick = { deleteIds = emptySet() }) { Text("Conservar") }
+            }
+        )
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             if (selectionMode) {
@@ -76,18 +125,7 @@ fun RecordingsListScreen(
                         }
                         IconButton(
                             onClick = {
-                                val idsToDelete = selectedIds
-                                scope.launch(Dispatchers.IO) {
-                                    recordings.filter { it.id in idsToDelete }.forEach { recording ->
-                                        PcmRecordingStorage.resolveManagedFile(
-                                            context,
-                                            recording.audioFilePath
-                                        )?.delete()
-                                    }
-                                    repository.deleteRecordingsByIds(idsToDelete.toList())
-                                }
-                                selectionMode = false
-                                selectedIds = emptySet()
+                                deleteIds = selectedIds
                             },
                             enabled = selectedIds.isNotEmpty()
                         ) {
@@ -117,26 +155,30 @@ fun RecordingsListScreen(
                     actions = {
                         val failedCount = recordings.count {
                             it.processingStatus == RecordingStatus.FAILED ||
-                                it.processingStatus == RecordingStatus.PENDING
+                                it.processingStatus == RecordingStatus.PENDING ||
+                                it.processingStatus == RecordingStatus.TRANSCRIPT_ONLY ||
+                                it.processedBy == "LOCAL_PARTIAL"
                         }
                         if (failedCount > 0) {
                             IconButton(onClick = {
                                 scope.launch(Dispatchers.IO) {
                                     recordings.filter {
                                         it.processingStatus == RecordingStatus.FAILED ||
-                                            it.processingStatus == RecordingStatus.PENDING
+                                            it.processingStatus == RecordingStatus.PENDING ||
+                                            it.processingStatus == RecordingStatus.TRANSCRIPT_ONLY ||
+                                            it.processedBy == "LOCAL_PARTIAL"
                                     }.forEach { recording ->
                                         if (recording.transcription.isBlank() &&
                                             recording.audioFilePath != null
                                         ) {
-                                            RecordingTranscriptionWorker.enqueue(context, recording.id)
+                                            RecordingTranscriptionWorker.retry(context, recording.id)
                                         } else {
-                                            RecordingProcessorWorker.enqueue(context, recording.id)
+                                            RecordingProcessorWorker.retry(context, recording.id)
                                         }
                                     }
                                 }
                             }) {
-                                Icon(Icons.Default.Refresh, contentDescription = "Reprocesar")
+                                Icon(Icons.Default.Refresh, contentDescription = "Reintentar $failedCount grabaciones pendientes de procesar")
                             }
                         }
                     },
@@ -158,7 +200,7 @@ fun RecordingsListScreen(
             if (recordings.isEmpty()) {
                 item {
                     Text(
-                        "No hay grabaciones",
+                        "Aún no has grabado una reunión.\n\nEn el día, pulsa el botón flotante de reunión para empezar. Aquí podrás consultar sus notas, acciones y transcripción.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),

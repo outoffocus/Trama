@@ -1,6 +1,7 @@
 package com.trama.app.ui.screens
 
 import android.Manifest
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -20,8 +21,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -31,18 +32,26 @@ import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.LightbulbCircle
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.TaskAlt
 import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -69,6 +78,7 @@ import com.trama.app.summary.EntryActionBridge
 import com.trama.app.summary.RecordingProcessorWorker
 import com.trama.app.summary.RecordingTranscriptionWorker
 import com.trama.app.audio.PcmRecordingStorage
+import com.trama.app.summary.RecordingDeletion
 import com.trama.app.summary.SuggestedAction
 import com.trama.app.ui.SettingsDataStore
 import com.trama.app.ui.components.CalendarActionDialog
@@ -76,14 +86,22 @@ import com.trama.shared.data.DatabaseProvider
 import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.EntryStatus
 import com.trama.shared.model.Recording
+import com.trama.shared.model.RecordingKeyPoints
 import com.trama.shared.model.RecordingStatus
 import com.trama.shared.model.Source
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
-import kotlinx.serialization.json.Json
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+private enum class MeetingDetailTab(val label: String) {
+    SUMMARY("Resumen"),
+    ACTIONS("Acciones"),
+    TRANSCRIPT("Transcripción")
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -100,6 +118,15 @@ fun RecordingDetailScreen(
     val recording by repository.getRecordingById(recordingId).collectAsState(initialValue = null)
     val actions by repository.getByRecordingId(recordingId).collectAsState(initialValue = emptyList())
     val learnFromDeletions by settings.learnFromDeletions.collectAsState(initialValue = false)
+    var editingNotes by remember { mutableStateOf(false) }
+    var savingNotes by remember { mutableStateOf(false) }
+    var notesError by remember { mutableStateOf<String?>(null) }
+    var locallyDismissedActionIds by remember { mutableStateOf(emptySet<Long>()) }
+    var selectedTab by remember { mutableStateOf(MeetingDetailTab.SUMMARY) }
+    var transcriptQuery by remember { mutableStateOf("") }
+    var confirmDelete by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf(false) }
+    val snackbar = remember { SnackbarHostState() }
 
     // Resolve duplicate original entry texts
     val duplicateOriginals = remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
@@ -114,8 +141,6 @@ fun RecordingDetailScreen(
     }
 
     val dateFormat = SimpleDateFormat("dd MMM yyyy · HH:mm", Locale("es"))
-    val json = remember { Json { ignoreUnknownKeys = true } }
-
     fun acceptSuggestedAction(action: DiaryEntry, source: String) {
         scope.launch(Dispatchers.IO) {
             repository.confirmSuggested(
@@ -132,14 +157,88 @@ fun RecordingDetailScreen(
         }
     }
 
+    recording?.takeIf { editingNotes }?.let { current ->
+        MeetingNotesDialog(
+            recording = current,
+            saving = savingNotes,
+            error = notesError,
+            onDismiss = {
+                if (!savingNotes) {
+                    editingNotes = false
+                    notesError = null
+                }
+            },
+            onSave = { title, summary, points ->
+                savingNotes = true
+                notesError = null
+                scope.launch {
+                    try {
+                        withContext(Dispatchers.IO) {
+                            repository.updateRecordingNotes(
+                                id = current.id,
+                                title = title.trim().ifBlank { null },
+                                summary = summary.trim().ifBlank { null },
+                                keyPoints = RecordingKeyPoints.encode(points)
+                            )
+                        }
+                        editingNotes = false
+                    } catch (_: Exception) {
+                        notesError = "No se han podido guardar las notas."
+                    } finally {
+                        savingNotes = false
+                    }
+                }
+            }
+        )
+    }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { if (!deleting) confirmDelete = false },
+            title = { Text("¿Eliminar esta grabación?") },
+            text = {
+                Text("Se eliminarán la reunión, sus sugerencias y el audio del dispositivo. Esta acción no se puede deshacer.")
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !deleting,
+                    onClick = {
+                        deleting = true
+                        scope.launch {
+                            try {
+                                withContext(Dispatchers.IO) {
+                                    RecordingDeletion.delete(context, repository, listOf(recordingId))
+                                }
+                                onBack()
+                            } catch (error: CancellationException) {
+                                throw error
+                            } catch (_: Exception) {
+                                confirmDelete = false
+                                snackbar.showSnackbar("No se pudo eliminar. Vuelve a intentarlo.")
+                            } finally {
+                                deleting = false
+                            }
+                        }
+                    }
+                ) { Text(if (deleting) "Eliminando…" else "Eliminar") }
+            },
+            dismissButton = {
+                TextButton(enabled = !deleting, onClick = { confirmDelete = false }) {
+                    Text("Conservar")
+                }
+            }
+        )
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = { Text("Grabación", style = MaterialTheme.typography.titleMedium) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Volver")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
                     }
                 },
                 colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
@@ -150,13 +249,15 @@ fun RecordingDetailScreen(
                     if (rec != null) {
                         // Retry processing if failed, processed locally, or stuck in pending
                         if (rec.processingStatus == RecordingStatus.FAILED ||
-                            rec.processingStatus == RecordingStatus.PENDING) {
+                            rec.processingStatus == RecordingStatus.PENDING ||
+                            rec.processingStatus == RecordingStatus.TRANSCRIPT_ONLY ||
+                            rec.processedBy == "LOCAL_PARTIAL") {
                             IconButton(onClick = {
                                 scope.launch(Dispatchers.IO) {
                                     if (rec.transcription.isBlank() && rec.audioFilePath != null) {
-                                        RecordingTranscriptionWorker.enqueue(context, recordingId)
+                                        RecordingTranscriptionWorker.retry(context, recordingId)
                                     } else {
-                                        RecordingProcessorWorker.enqueue(context, recordingId)
+                                        RecordingProcessorWorker.retry(context, recordingId)
                                     }
                                 }
                             }) {
@@ -170,14 +271,7 @@ fun RecordingDetailScreen(
                             }
                         }
                         // Delete
-                        IconButton(onClick = {
-                            scope.launch(Dispatchers.IO) {
-                                PcmRecordingStorage.resolveManagedFile(context, rec.audioFilePath)
-                                    ?.delete()
-                                repository.deleteRecording(recordingId)
-                            }
-                            onBack()
-                        }) {
+                        IconButton(onClick = { confirmDelete = true }) {
                             Icon(Icons.Default.Delete, contentDescription = "Eliminar",
                                 tint = MaterialTheme.colorScheme.error)
                         }
@@ -243,28 +337,51 @@ fun RecordingDetailScreen(
                 StatusBadge(rec)
             }
 
-            // ── Summary ──
-            if (rec.summary != null) {
-                item(key = "summary") {
-                    SectionCard(title = "Resumen") {
-                        Text(
-                            text = rec.summary!!,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface
+            item(key = "detail_tabs") {
+                TabRow(selectedTabIndex = selectedTab.ordinal) {
+                    MeetingDetailTab.entries.forEach { tab ->
+                        Tab(
+                            selected = selectedTab == tab,
+                            onClick = { selectedTab = tab },
+                            text = {
+                                Text(
+                                    when (tab) {
+                                        MeetingDetailTab.ACTIONS -> "${tab.label} (${actions.count { it.status != EntryStatus.DISCARDED }})"
+                                        else -> tab.label
+                                    },
+                                    maxLines = 1
+                                )
+                            }
                         )
                     }
                 }
             }
 
-            // ── Key Points ──
-            val keyPoints = rec.keyPoints?.let { kp ->
-                try {
-                    json.decodeFromString<List<String>>(kp)
-                } catch (_: Exception) { null }
-            }
-            if (!keyPoints.isNullOrEmpty()) {
-                item(key = "keypoints") {
-                    SectionCard(title = "Puntos clave") {
+            val keyPoints = RecordingKeyPoints.decode(rec.keyPoints)
+            if (selectedTab == MeetingDetailTab.SUMMARY &&
+                (rec.processingStatus == RecordingStatus.COMPLETED ||
+                rec.processingStatus == RecordingStatus.TRANSCRIPT_ONLY)) {
+                item(key = "meeting_notes") {
+                    SectionCard(
+                        title = "Notas de la reunión",
+                        action = {
+                            TextButton(onClick = {
+                                notesError = null
+                                editingNotes = true
+                            }) { Text("Editar") }
+                        }
+                    ) {
+                        Text(
+                            text = rec.summary?.takeIf { it.isNotBlank() }
+                                ?: "Añade un resumen o las decisiones importantes.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (rec.summary.isNullOrBlank()) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            }
+                        )
+                        if (keyPoints.isNotEmpty()) Spacer(modifier = Modifier.height(8.dp))
                         keyPoints.forEach { point ->
                             Row(modifier = Modifier.padding(vertical = 2.dp)) {
                                 Text("•", style = MaterialTheme.typography.bodyMedium,
@@ -277,9 +394,13 @@ fun RecordingDetailScreen(
             }
 
             // ── Action Items ──
-            if (actions.isNotEmpty()) {
-                val suggested = actions.filter { it.status == EntryStatus.SUGGESTED }
-                val accepted = actions.filter { it.status != EntryStatus.SUGGESTED }
+            if (selectedTab == MeetingDetailTab.ACTIONS && actions.isNotEmpty()) {
+                val suggested = actions.filter {
+                    it.status == EntryStatus.SUGGESTED && it.id !in locallyDismissedActionIds
+                }
+                val accepted = actions.filter {
+                    it.status == EntryStatus.PENDING || it.status == EntryStatus.COMPLETED
+                }
 
                 item(key = "actions_header") {
                     Row(
@@ -329,7 +450,23 @@ fun RecordingDetailScreen(
                             duplicateOfText = action.duplicateOfId?.let { duplicateOriginals.value[it] },
                             onClick = { onActionClick(action.id) },
                             onAccept = { acceptSuggestedAction(action, source = "recording_accept_suggested") },
-                            onDismiss = { scope.launch(Dispatchers.IO) { repository.markDiscarded(action.id) } }
+                            onDismiss = {
+                                locallyDismissedActionIds = locallyDismissedActionIds + action.id
+                                scope.launch {
+                                    try {
+                                        withContext(Dispatchers.IO) { repository.markDiscarded(action.id) }
+                                    } catch (e: kotlinx.coroutines.CancellationException) {
+                                        throw e
+                                    } catch (_: Exception) {
+                                        locallyDismissedActionIds = locallyDismissedActionIds - action.id
+                                        Toast.makeText(
+                                            context,
+                                            "No se ha podido descartar la sugerencia",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                }
+                            }
                         )
                     }
                 }
@@ -345,11 +482,59 @@ fun RecordingDetailScreen(
                 }
             }
 
+            if (selectedTab == MeetingDetailTab.ACTIONS && actions.isEmpty()) {
+                item(key = "actions_empty") {
+                    SectionCard(title = "Acciones extraídas") {
+                        Text(
+                            "No se ha detectado ninguna acción en esta reunión.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
             // ── Transcription ──
-            item(key = "transcription") {
-                SectionCard(title = "Transcripción completa") {
+            if (selectedTab == MeetingDetailTab.TRANSCRIPT) item(key = "transcription") {
+                SectionCard(
+                    title = "Transcripción completa",
+                    action = if (rec.audioFilePath != null &&
+                        rec.processingStatus != RecordingStatus.TRANSCRIBING &&
+                        rec.processingStatus != RecordingStatus.PROCESSING
+                    ) {
+                        {
+                            TextButton(onClick = {
+                                RecordingTranscriptionWorker.retry(context, recordingId)
+                            }) { Text("Volver a transcribir") }
+                        }
+                    } else null
+                ) {
+                    OutlinedTextField(
+                        value = transcriptQuery,
+                        onValueChange = { transcriptQuery = it },
+                        label = { Text("Buscar en la transcripción") },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                        trailingIcon = if (transcriptQuery.isNotBlank()) {
+                            {
+                                IconButton(onClick = { transcriptQuery = "" }) {
+                                    Icon(Icons.Default.Close, contentDescription = "Borrar búsqueda")
+                                }
+                            }
+                        } else null,
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    if (transcriptQuery.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "${countTextMatches(rec.transcription, transcriptQuery)} coincidencias",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = rec.transcription,
+                        text = rec.transcription.ifBlank { "Todavía no hay transcripción." },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -359,6 +544,73 @@ fun RecordingDetailScreen(
             item { Spacer(modifier = Modifier.height(32.dp)) }
         }
     }
+}
+
+internal fun countTextMatches(text: String, query: String): Int {
+    val needle = query.trim()
+    if (needle.isEmpty()) return 0
+    return Regex(Regex.escape(needle), RegexOption.IGNORE_CASE).findAll(text).count()
+}
+
+@Composable
+private fun MeetingNotesDialog(
+    recording: Recording,
+    saving: Boolean,
+    error: String?,
+    onDismiss: () -> Unit,
+    onSave: (title: String, summary: String, points: List<String>) -> Unit
+) {
+    var title by remember(recording.id, recording.title) { mutableStateOf(recording.title.orEmpty()) }
+    var summary by remember(recording.id, recording.summary) { mutableStateOf(recording.summary.orEmpty()) }
+    var pointsText by remember(recording.id, recording.keyPoints) {
+        mutableStateOf(RecordingKeyPoints.decode(recording.keyPoints).joinToString("\n"))
+    }
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = { if (!saving) onDismiss() },
+        title = { Text("Editar notas") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    enabled = !saving,
+                    label = { Text("Título") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = summary,
+                    onValueChange = { summary = it },
+                    enabled = !saving,
+                    label = { Text("Resumen") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3,
+                    maxLines = 7
+                )
+                OutlinedTextField(
+                    value = pointsText,
+                    onValueChange = { pointsText = it },
+                    enabled = !saving,
+                    isError = error != null,
+                    supportingText = { error?.let { Text(it) } },
+                    label = { Text("Puntos clave, uno por línea") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                    maxLines = 6
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = !saving,
+                onClick = { onSave(title, summary, pointsText.lineSequence().toList()) }
+            ) { Text(if (saving) "Guardando…" else "Guardar") }
+        },
+        dismissButton = {
+            TextButton(enabled = !saving, onClick = onDismiss) { Text("Cancelar") }
+        }
+    )
 }
 
 @Composable
@@ -397,20 +649,32 @@ private fun RecordingHeader(recording: Recording, dateFormat: SimpleDateFormat) 
 private fun StatusBadge(recording: Recording) {
     val status = recording.processingStatus
     val (icon, label, color) = when {
+        status == RecordingStatus.COMPLETED && recording.processedBy == "LOCAL_PARTIAL" ->
+            Triple(
+                Icons.Default.Schedule,
+                "Análisis parcial · puedes reintentarlo",
+                MaterialTheme.colorScheme.tertiary
+            )
         status == RecordingStatus.COMPLETED && recording.processedBy == "LOCAL" ->
             Triple(Icons.Default.CheckCircle, "Procesado con modelo local", MaterialTheme.colorScheme.tertiary)
-        status == RecordingStatus.COMPLETED && recording.processedBy == "TRANSCRIPT_ONLY" ->
+        status == RecordingStatus.TRANSCRIPT_ONLY ||
+            (status == RecordingStatus.COMPLETED && recording.processedBy == "TRANSCRIPT_ONLY") ->
             Triple(Icons.Default.CheckCircle, "Transcripción local sin analizar", MaterialTheme.colorScheme.tertiary)
         status == RecordingStatus.COMPLETED ->
             Triple(Icons.Default.CheckCircle, "Procesado localmente", MaterialTheme.colorScheme.primary)
         status == RecordingStatus.PROCESSING ->
-            Triple(Icons.Default.Schedule, "Procesando...", MaterialTheme.colorScheme.tertiary)
+            Triple(Icons.Default.Schedule, "Audio guardado · preparando notas", MaterialTheme.colorScheme.tertiary)
         status == RecordingStatus.CAPTURING ->
-            Triple(Icons.Default.Schedule, "Recuperando captura...", MaterialTheme.colorScheme.tertiary)
+            Triple(Icons.Default.Schedule, "Grabando audio...", MaterialTheme.colorScheme.tertiary)
         status == RecordingStatus.TRANSCRIBING ->
-            Triple(Icons.Default.Schedule, "Transcribiendo audio...", MaterialTheme.colorScheme.tertiary)
+            Triple(Icons.Default.Schedule, "Audio guardado · transcribiendo...", MaterialTheme.colorScheme.tertiary)
         status == RecordingStatus.FAILED ->
-            Triple(Icons.Default.Error, "Error al procesar", MaterialTheme.colorScheme.error)
+            Triple(
+                Icons.Default.Error,
+                if (recording.audioFilePath.isNullOrBlank()) "Error de grabación"
+                else "Error al procesar · audio conservado",
+                MaterialTheme.colorScheme.error
+            )
         else ->
             Triple(Icons.Default.Schedule, "Pendiente", MaterialTheme.colorScheme.onSurfaceVariant)
     }
@@ -433,7 +697,11 @@ private fun StatusBadge(recording: Recording) {
 }
 
 @Composable
-private fun SectionCard(title: String, content: @Composable () -> Unit) {
+private fun SectionCard(
+    title: String,
+    action: (@Composable () -> Unit)? = null,
+    content: @Composable () -> Unit
+) {
     val t = com.trama.app.ui.theme.LocalTramaColors.current
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -442,12 +710,16 @@ private fun SectionCard(title: String, content: @Composable () -> Unit) {
         border = androidx.compose.foundation.BorderStroke(1.dp, t.softBorder),
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
-            Text(
-                text = title.uppercase(),
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = t.mutedText,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = title.uppercase(),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = t.mutedText,
+                    modifier = Modifier.weight(1f)
+                )
+                action?.invoke()
+            }
             Spacer(modifier = Modifier.height(8.dp))
             content()
         }
@@ -464,6 +736,7 @@ private fun RecordingActionItem(
     onDismiss: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    val actionScope = rememberCoroutineScope()
     val quickAction = remember(
         entry.id,
         entry.actionType,
@@ -477,43 +750,16 @@ private fun RecordingActionItem(
     var pendingCalendarAction by remember(entry.id) { mutableStateOf<SuggestedAction?>(null) }
     val calendarPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { result ->
-        val granted = result[Manifest.permission.READ_CALENDAR] == true &&
-            result[Manifest.permission.WRITE_CALENDAR] == true
-        if (granted) {
-            editingCalendarAction = pendingCalendarAction
-        }
+    ) { _ ->
+        editingCalendarAction = pendingCalendarAction
         pendingCalendarAction = null
     }
 
     editingCalendarAction?.let { action ->
-        val isReminder = action.type == ActionType.REMINDER
-        CalendarActionDialog(
+        com.trama.app.ui.components.EntryCalendarActionDialog(
+            entryId = entry.id,
             action = action,
-            dialogTitle = if (isReminder) "Crear recordatorio" else "Añadir al calendario",
-            confirmLabel = if (isReminder) "Crear" else "Añadir",
-            onDismiss = { editingCalendarAction = null },
-            onConfirm = { title, description, date, time, calendarId ->
-                val datetime = "${date}T${time}"
-                val updatedAction = action.copy(title = title, description = description, datetime = datetime)
-                val startMillis = try {
-                    SimpleDateFormat("yyyy-MM-dd'T'HH:mm", Locale.getDefault()).parse(datetime)?.time
-                } catch (_: Exception) { null }
-
-                if (startMillis != null && calendarId != null) {
-                    CalendarHelper.insertEventInCalendar(
-                        context = context,
-                        calendarId = calendarId,
-                        title = title,
-                        description = description.ifBlank { null },
-                        startMillis = startMillis,
-                        reminderMinutes = if (isReminder) 15 else 0
-                    )
-                } else {
-                    CalendarHelper.insertEventFromAction(context, updatedAction, isReminder = isReminder)
-                }
-                editingCalendarAction = null
-            }
+            onDismiss = { editingCalendarAction = null }
         )
     }
 
@@ -645,7 +891,7 @@ private fun ActionItemCard(
             }
             if (isSuggested && onAccept != null && onDismiss != null) {
                 // Accept / Dismiss buttons
-                IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp)) {
                     Icon(
                         Icons.Default.Close,
                         contentDescription = "Descartar",
@@ -654,7 +900,7 @@ private fun ActionItemCard(
                     )
                 }
                 Spacer(modifier = Modifier.width(2.dp))
-                IconButton(onClick = onAccept, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = onAccept, modifier = Modifier.size(48.dp)) {
                     Icon(
                         Icons.Default.Add,
                         contentDescription = "Añadir a tareas",
@@ -665,7 +911,7 @@ private fun ActionItemCard(
             }
             if (onQuickActionClick != null) {
                 Spacer(modifier = Modifier.width(2.dp))
-                IconButton(onClick = onQuickActionClick, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = onQuickActionClick, modifier = Modifier.size(48.dp)) {
                     Icon(
                         quickActionIcon ?: Icons.Default.Add,
                         contentDescription = quickActionLabel ?: "Ejecutar acción",

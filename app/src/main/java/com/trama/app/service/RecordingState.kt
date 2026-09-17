@@ -32,6 +32,13 @@ object RecordingState {
     private val _savedRecordingId = MutableStateFlow<Long?>(null)
     val savedRecordingId: StateFlow<Long?> = _savedRecordingId.asStateFlow()
 
+    private val _activeRecordingId = MutableStateFlow<Long?>(null)
+    val activeRecordingId: StateFlow<Long?> = _activeRecordingId.asStateFlow()
+
+    internal fun setActiveRecordingId(id: Long?) {
+        _activeRecordingId.value = id
+    }
+
     // Last processing error (shown as snackbar then cleared)
     private val _lastError = MutableStateFlow<String?>(null)
     val lastError: StateFlow<String?> = _lastError.asStateFlow()
@@ -107,5 +114,6 @@ object RecordingState {
         _elapsedSeconds.value = 0
         _transcription.value = ""
         _currentPartial.value = ""
+        _activeRecordingId.value = null
     }
 }

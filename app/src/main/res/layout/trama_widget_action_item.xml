@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_item_root"
+    android:layout_width="match_parent"
+    android:layout_height="48dp"
+    android:gravity="center_vertical"
+    android:orientation="horizontal">
+
+    <TextView
+        android:id="@+id/widget_item_time"
+        style="@style/TramaWidgetTime" />
+
+    <FrameLayout style="@style/TramaWidgetRail">
+        <TextView style="@style/TramaWidgetLine" />
+        <TextView
+            android:id="@+id/widget_item_dot"
+            style="@style/TramaWidgetDot" />
+    </FrameLayout>
+
+    <LinearLayout style="@style/TramaWidgetItemBody">
+        <TextView
+            android:id="@+id/widget_item_title"
+            style="@style/TramaWidgetItemTitle" />
+        <TextView
+            android:id="@+id/widget_item_label"
+            style="@style/TramaWidgetItemLabel" />
+    </LinearLayout>
+</LinearLayout>

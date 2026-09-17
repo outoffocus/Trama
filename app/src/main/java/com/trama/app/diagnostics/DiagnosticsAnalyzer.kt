@@ -412,6 +412,8 @@ object DiagnosticsAnalyzer {
     private fun CaptureLog.Event.isAsrGateDecision(): Boolean =
         gate == "ASR_GATE" &&
             text != "segment_finalized" &&
+            text != "gate_eval_skipped" &&
+            meta["reason"] != "uncertain_gate_fallback" &&
             text != "uncertain_gate_fallback_blocked"
 
     private fun frequentPhrases(
@@ -563,14 +565,17 @@ object DiagnosticsAnalyzer {
         }
 
     private fun countUnexpectedServiceStops(events: List<CaptureLog.Event>): Int {
-        val stopRequests = events
-            .filter { it.gate == "SERVICE" && it.text == "service_stop_requested" }
+        val expectedStopRequests = events
+            .filter {
+                it.gate == "SERVICE" &&
+                    it.text in setOf("service_stop_requested", "listener_paused_for_recording")
+            }
             .map { it.ts }
         return events.count { event ->
             event.gate == "SERVICE" &&
                 event.result == "REJECT" &&
                 event.text == "onDestroy" &&
-                stopRequests.none { stopTs -> stopTs in (event.ts - 5_000L)..event.ts }
+                expectedStopRequests.none { stopTs -> stopTs in (event.ts - 5_000L)..event.ts }
         }
     }
 

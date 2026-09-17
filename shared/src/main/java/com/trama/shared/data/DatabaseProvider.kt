@@ -40,7 +40,10 @@ object DatabaseProvider {
                     DiaryDatabase.MIGRATION_12_13,
                     DiaryDatabase.MIGRATION_13_14,
                     DiaryDatabase.MIGRATION_14_15,
-                    DiaryDatabase.MIGRATION_15_16
+                    DiaryDatabase.MIGRATION_15_16,
+                    DiaryDatabase.MIGRATION_16_17,
+                    DiaryDatabase.MIGRATION_17_18,
+                    DiaryDatabase.MIGRATION_18_19
                 )
                 .build().also { database = it }
         }

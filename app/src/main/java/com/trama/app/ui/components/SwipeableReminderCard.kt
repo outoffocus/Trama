@@ -99,7 +99,7 @@ fun SwipeableReminderCard(
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Text(
-                    "Posponer recordatorio",
+                    "Cambiar fecha de la tarea",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )

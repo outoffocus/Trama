@@ -10,6 +10,8 @@ import com.trama.app.diagnostics.CaptureLog
 import com.trama.app.summary.ActionItemProcessor
 import com.trama.shared.data.DiaryRepository
 import com.trama.shared.model.DiaryEntry
+import com.trama.shared.model.EntryContentKind
+import com.trama.shared.model.EntryStatus
 import com.trama.shared.model.Source
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -39,6 +41,9 @@ class CaptureSaver(
         llmConfidence: Float,
         wasReviewed: Boolean,
         confidence: Float,
+        captureId: Long,
+        triggerPhrase: String? = null,
+        triggerConfigVersion: Long? = null,
         preferSuggested: Boolean = false,
         suggestedReasons: List<String> = emptyList()
     ) {
@@ -55,11 +60,16 @@ class CaptureSaver(
                 correctedText = text,
                 wasReviewedByLLM = wasReviewed,
                 llmConfidence = llmConfidence,
-                cleanText = null
+                cleanText = null,
+                status = EntryStatus.SAVED,
+                contentKind = EntryContentKind.MEMORY,
+                sourceCaptureId = "phone:$captureId",
+                triggerPhrase = triggerPhrase ?: intentId,
+                triggerConfigVersion = triggerConfigVersion
             )
             val entryId = dedup.withSaveLock {
                 repo.withTransaction {
-                    val latest = getLatestPendingOnce()
+                    val latest = getLatestMemoryOnce()
                     if (dedup.isDuplicateOfLatestPending(latest, capturedText, text)) {
                         return@withTransaction null
                     }
@@ -75,6 +85,7 @@ class CaptureSaver(
                     result = CaptureLog.Result.DUP,
                     text = text,
                     meta = mapOf(
+                        "captureId" to captureId,
                         "intent" to intentId,
                         "outcome" to CaptureLog.CaptureOutcome.DUPLICATE
                     )
@@ -91,6 +102,7 @@ class CaptureSaver(
                 result = CaptureLog.Result.OK,
                 text = text,
                 meta = mapOf(
+                    "captureId" to captureId,
                     "id" to entryId,
                     "intent" to intentId,
                     "label" to label,
@@ -112,14 +124,16 @@ class CaptureSaver(
             } finally {
                 EntryProcessingState.markFinished(entryId)
             }
-            if (preferSuggested && repo.isVisiblePendingEntry(entryId)) {
-                repo.markSuggested(entryId)
+            val derivedAction = repo.getDerivedAction(entryId, "phone:$captureId:action:${entry.revision}")
+            if (preferSuggested && derivedAction?.let { repo.isVisiblePendingEntry(it.id) } == true) {
+                repo.markSuggested(derivedAction.id)
                 CaptureLog.event(
                     gate = CaptureLog.Gate.LLM,
                     result = CaptureLog.Result.OK,
                     text = text,
                     meta = mapOf(
-                        "entryId" to entryId,
+                        "captureId" to captureId,
+                        "entryId" to derivedAction.id,
                         "decision" to "accepted_but_suggested",
                         "route" to "SUGGESTED",
                         "reason" to suggestedReasons.joinToString(",").ifBlank {
@@ -132,7 +146,7 @@ class CaptureSaver(
                 acceptedForTimeline = false
             }
             if (acceptedForTimeline) {
-                val acceptedEntry = repo.getByIdOnce(entryId) ?: entry
+                val acceptedEntry = derivedAction ?: repo.getByIdOnce(entryId) ?: entry
                 notifier.showNewEntry(acceptedEntry)
                 notifyTimelineActionAdded()
             }

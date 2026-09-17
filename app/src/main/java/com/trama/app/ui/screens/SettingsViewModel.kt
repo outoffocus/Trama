@@ -25,14 +25,13 @@ class SettingsViewModel @Inject constructor(
 
     val autoStart = settingsStore.autoStart
     val recordingDuration = settingsStore.recordingDuration
-    val summaryEnabled = settingsStore.summaryEnabled
-    val summaryHour = settingsStore.summaryHour
     val visibleCalendarIds = settingsStore.visibleCalendarIds
     val intentPatterns = settingsStore.intentPatterns
     val customKeywords = settingsStore.customKeywords
     val captureProfile = settingsStore.captureProfile
     val backupEnabled = settingsStore.backupEnabled
     val backupHour = settingsStore.backupHour
+    val backupMinute = settingsStore.backupMinute
     val contextPreRollSeconds = settingsStore.contextPreRollSeconds
     val contextPostRollSeconds = settingsStore.contextPostRollSeconds
     val asrDebugEnabled = settingsStore.asrDebugEnabled
@@ -48,6 +47,7 @@ class SettingsViewModel @Inject constructor(
     val watchDebugStatus = settingsStore.watchDebugStatus
     val watchDebugTrigger = settingsStore.watchDebugTrigger
     val locationEnabled = settingsStore.locationEnabled
+    val placeOnlineLookupEnabled = settingsStore.placeOnlineLookupEnabled
     val locationIntervalMinutes = settingsStore.locationIntervalMinutes
     val locationDwellMinutes = settingsStore.locationDwellMinutes
     val locationEntryRadiusMeters = settingsStore.locationEntryRadiusMeters
@@ -68,11 +68,10 @@ class SettingsViewModel @Inject constructor(
 
     suspend fun setAutoStart(enabled: Boolean) = settingsStore.setAutoStart(enabled)
     suspend fun setRecordingDuration(minutes: Int) = settingsStore.setRecordingDuration(minutes)
-    suspend fun setSummaryEnabled(enabled: Boolean) = settingsStore.setSummaryEnabled(enabled)
-    suspend fun setSummaryHour(hour: Int) = settingsStore.setSummaryHour(hour)
     suspend fun setVisibleCalendarIds(ids: Set<Long>) = settingsStore.setVisibleCalendarIds(ids)
     suspend fun setBackupEnabled(enabled: Boolean) = settingsStore.setBackupEnabled(enabled)
     suspend fun setBackupHour(hour: Int) = settingsStore.setBackupHour(hour)
+    suspend fun setBackupTime(hour: Int, minute: Int) = settingsStore.setBackupTime(hour, minute)
     suspend fun setContextPreRollSeconds(seconds: Int) = settingsStore.setContextPreRollSeconds(seconds)
     suspend fun setContextPostRollSeconds(seconds: Int) = settingsStore.setContextPostRollSeconds(seconds)
     suspend fun setCaptureProfile(profile: CaptureProfile) = settingsStore.setCaptureProfile(profile)
@@ -99,6 +98,8 @@ class SettingsViewModel @Inject constructor(
     suspend fun setTimelineColorPlace(index: Int) = settingsStore.setTimelineColorPlace(index)
     suspend fun setTimelineColorCalendar(index: Int) = settingsStore.setTimelineColorCalendar(index)
     suspend fun setLocationEnabled(enabled: Boolean) = settingsStore.setLocationEnabled(enabled)
+    suspend fun setPlaceOnlineLookupEnabled(enabled: Boolean) =
+        settingsStore.setPlaceOnlineLookupEnabled(enabled)
     suspend fun setLocationIntervalMinutes(minutes: Int) = settingsStore.setLocationIntervalMinutes(minutes)
     suspend fun setLocationDwellMinutes(minutes: Int) = settingsStore.setLocationDwellMinutes(minutes)
     suspend fun setLocationEntryRadiusMeters(meters: Int) = settingsStore.setLocationEntryRadiusMeters(meters)

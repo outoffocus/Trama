@@ -4,7 +4,7 @@ Trama es una app Android local-first para capturar recordatorios, tareas, grabac
 
 ## Estado actual del proyecto
 
-Situacion a fecha `2026-08-12`:
+Situacion a fecha `2026-09-17`:
 
 - proyecto Android multi-modulo con `app`, `shared` y `wear`
 - movil en Jetpack Compose + Room + WorkManager + Wear Data Layer
@@ -21,11 +21,11 @@ Situacion a fecha `2026-08-12`:
 - la escucha se pausa cuando Android informa audio activo en este dispositivo, para evitar capturas de YouTube/Spotify
 - el contexto ambiental local es opcional y crea bloques agregados de música, televisión/radio, conversación o reunión; nunca tareas ni transcripciones persistidas
 - Home puede mostrar estados tecnicos de escucha solo si el ajuste `Estado tecnico en inicio` esta activado
-- la UI principal vive en `Home`, `Calendar`, `Agenda`, `Chat`, `Recordings`, `PlaceDetail` y `Settings`
+- la navegación principal separa `Hoy`, `Acciones` y `Recuerdos`; reuniones, lugares, búsqueda y ajustes se abren desde esos recorridos
 - `DailyPage` y el markdown privado por fecha funcionan como memoria tecnica persistida
-- Room esta en la version 16, con confirmación humana persistida, esquemas versionados y prueba de la cadena de migraciones
+- Room esta en la version 19, con memoria y acciones separadas, revisiones, confirmación humana persistida, esquemas versionados y pruebas de migración
 - CI compila, ejecuta tests y lint, valida migraciones y comprueba la alineacion nativa de 16 KB
-- Home conserva el calendario como eje de navegación; búsqueda, Chat, Agenda, grabaciones y Ajustes tienen accesos explícitos sin añadir pestañas
+- Hoy conserva el calendario y el desplazamiento por días; Acciones distingue tareas de sugerencias y Recuerdos unifica notas, lugares y reuniones
 - Ajustes separa cuatro áreas básicas de IA, audio, ubicación y diagnóstico avanzados
 
 ## Que hace hoy la app
@@ -53,6 +53,12 @@ Situacion a fecha `2026-08-12`:
 - contadores de diagnostico para segmentos cerrados, fallbacks inciertos, bloqueos por bateria/cooldown y paradas del servicio
 - clasificacion de calidad en diagnostico para aceptadas, ambiguas, descartes y posibles falsos negativos
 - sincronizacion telefono <-> reloj de entradas, ajustes, patrones, audio y control de microfono
+- widget del timeline de hoy con todas las acciones, estado de escucha/reunión/transferencia y los mismos accesos rápidos que la app
+- FAB flotantes verticales para Escuchar, Reunión y Reloj en los destinos principales
+- copia diaria configurable mediante Storage Access Framework; excluye audio y comunica la hora como aproximada por las restricciones de Android
+- configuración visible del modelo Gemma local, incluida selección o instalación del archivo compatible
+- edición de notas y tareas con explicación por voz, revisión de la transcripción y reanálisis seguro sobre la misma entrada
+- destinos externos por tipo: Calendar para eventos, recordatorios y llamadas programadas; Gmail para correos; Keep o selector de notas para notas
 
 ## Arquitectura por modulos
 
@@ -136,11 +142,21 @@ Trama procesa el contenido personal exclusivamente en el dispositivo:
 - heuristicas locales para validacion, deduplicacion y fallback cuando Gemma no esta disponible
 - el prompt de acciones exige que `cleanText` sea la accion minima autosuficiente, resolviendo pronombres y elipsis dentro de la misma transcripcion
 - si `Aprender de mis decisiones` esta activo, `ActionItemProcessor` compara entradas nuevas con confirmaciones y descartes locales antes de decidir su superficie
-- el postprocesado recorta prefijos conversacionales cuando el LLM devuelve una frase entera con un trigger accionable dentro
+- el postprocesado compartido aísla la cláusula accionable cuando el LLM copia conversación anterior o posterior; se aplica a tareas, sugerencias, reuniones, capturas y resúmenes
+- una corrección manual o por voz puede volver a analizar una nota o tarea existente; si el modelo falla, conserva el registro anterior y mantiene el borrador editable
 - la deduplicacion normaliza variantes y errores frecuentes de triggers (`tenemos que`, `tenemso que`, `tenes/tenés que`) antes de comparar
 - `ActionQualityGateProductTest` genera miles de ejemplos sinteticos accionables/no accionables para vigilar precision antes de publicar
 
 Las sugerencias confirmadas conservan por separado la confianza automática y la verificación humana (`userConfirmedAt` y `verificationSource`).
+
+## Reuniones y diarización
+
+- las reuniones largas se transcriben y analizan por bloques acotados
+- un bloque fallido no elimina los resultados válidos de los demás; el detalle muestra `Análisis parcial` y permite reintentar
+- las acciones de reunión nacen como sugerencias y no entran en el timeline general hasta que el usuario las aprueba
+- el audio de una reunión se conserva para recuperación y reintento; el dictado breve de correcciones vive solo en memoria y no se guarda
+- existe verificación opcional de la voz del propietario mediante *speaker embeddings*
+- **la diarización real todavía no está implementada**: el proyecto no incluye un modelo de segmentación de hablantes ni guarda turnos con tiempos y etiquetas. Ver [`docs/IMPLEMENTATION_STATUS_2026-09-17.md`](docs/IMPLEMENTATION_STATUS_2026-09-17.md)
 
 ## Privacidad
 
@@ -193,7 +209,8 @@ comprobaciones en cada push a `main`, pull request o lanzamiento manual.
 
 ### P0
 
-- definir el contrato final de paridad entre movil y Wear OS
+- incorporar y validar un modelo local de segmentación para diarización, persistir turnos y permitir renombrar hablantes
+- completar las pruebas físicas de reunión de 60 minutos, escucha prolongada, batería, restauración y reloj
 - completar una politica de retencion y borrado verificable para audio y datos derivados
 
 ### P1
@@ -221,6 +238,7 @@ La mejor forma de avanzar sin romper el producto es estabilizar fronteras: DI, V
 - [`ARCHITECTURE.md`](ARCHITECTURE.md): arquitectura actual, flujos y deuda vigente.
 - [`IMPROVEMENT_PLAN.md`](IMPROVEMENT_PLAN.md): fases ejecutadas y calibracion fisica pendiente.
 - [`docs/ANDROID_16KB_COMPATIBILITY.md`](docs/ANDROID_16KB_COMPATIBILITY.md): diagnostico, decisiones y verificacion de bibliotecas nativas.
+- [`docs/IMPLEMENTATION_STATUS_2026-09-17.md`](docs/IMPLEMENTATION_STATUS_2026-09-17.md): estado funcional actual, validación automatizada y pendientes físicos/diarización.
 - [`docs/UX_NAVIGATION.md`](docs/UX_NAVIGATION.md): navegación preservada, accesos y jerarquía básico/avanzado.
 - [`docs/AMBIENT_CONTEXT.md`](docs/AMBIENT_CONTEXT.md): contrato, privacidad, límites y diagnóstico del contexto ambiental local.
 - [`docs/MVP_AND_UX_STUDY_2026-08-11.md`](docs/MVP_AND_UX_STUDY_2026-08-11.md): auditoría UX de partida e historial de decisiones.

@@ -70,8 +70,13 @@ object ActionQualityGate {
     }
 
     private fun hasConcreteComplement(tokens: List<String>): Boolean {
-        return tokens.any { token ->
-            token.isConcreteComplementToken() && !token.looksLikeSpanishInfinitive()
+        return tokens.withIndex().any { (index, token) ->
+            // Nouns such as "taller" or "bar" also end in infinitive suffixes.
+            val followsDeterminer = tokens.getOrNull(index - 1) in setOf(
+                "el", "la", "los", "las", "al", "del", "un", "una", "mi", "tu", "su"
+            )
+            token.isConcreteComplementToken() &&
+                (!token.looksLikeSpanishInfinitive() || followsDeterminer)
         }
     }
 

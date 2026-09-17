@@ -28,6 +28,7 @@ import com.trama.app.location.DwellDetector
 import com.trama.app.location.DwellDetectorConfig
 import com.trama.app.location.DwellDurationFormatter
 import com.trama.app.location.GeoSample
+import com.trama.app.location.OpenedDwell
 import com.trama.app.location.PlaceResolver
 import com.trama.app.ui.SettingsDataStore
 import com.trama.shared.data.DatabaseProvider
@@ -39,6 +40,8 @@ import com.trama.shared.model.TimelineEventType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 
 class LocationForegroundService : LifecycleService() {
@@ -58,6 +61,7 @@ class LocationForegroundService : LifecycleService() {
     private var currentDwellThresholdMs: Long = 15 * 60 * 1000L
     private var currentEntryRadiusMeters: Float = 80f
     private var currentExitRadiusMeters: Float = 200f
+    private val locationProcessingMutex = Mutex()
 
     private val listener = LocationListener { location ->
         handleLocation(location)
@@ -70,9 +74,6 @@ class LocationForegroundService : LifecycleService() {
         placeResolver = PlaceResolver(repository, settings)
         locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
         createNotificationChannel()
-        lifecycleScope.launch(Dispatchers.IO) {
-            detectorState = repository.getDwellDetectionState()
-        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -98,6 +99,9 @@ class LocationForegroundService : LifecycleService() {
             currentDwellThresholdMs = settings.locationDwellMinutes.first() * 60_000L
             currentEntryRadiusMeters = settings.locationEntryRadiusMeters.first().toFloat()
             currentExitRadiusMeters = settings.locationExitRadiusMeters.first().toFloat()
+            // Load before requesting the first immediate GPS/network callback so
+            // an active stay survives a service restart without being duplicated.
+            detectorState = repository.getDwellDetectionState()
             LocationDebugState.updateStatus("esperando muestras")
             requestUpdates()
         }
@@ -168,60 +172,142 @@ class LocationForegroundService : LifecycleService() {
         )
 
         lifecycleScope.launch(Dispatchers.IO) {
-            val detector = DwellDetector(
-                DwellDetectorConfig(
-                    entryRadiusMeters = currentEntryRadiusMeters,
-                    exitRadiusMeters = currentExitRadiusMeters,
-                    dwellThresholdMillis = currentDwellThresholdMs,
-                    maxAccuracyMeters = maxOf(160f, currentEntryRadiusMeters * 2f),
-                    candidateClusterRadiusMeters = maxOf(
-                        currentExitRadiusMeters,
-                        currentEntryRadiusMeters * 2.75f,
-                        220f
+            locationProcessingMutex.withLock {
+                val detector = DwellDetector(
+                    DwellDetectorConfig(
+                        entryRadiusMeters = currentEntryRadiusMeters,
+                        exitRadiusMeters = currentExitRadiusMeters,
+                        dwellThresholdMillis = currentDwellThresholdMs,
+                        maxAccuracyMeters = maxOf(160f, currentEntryRadiusMeters * 2f),
+                        candidateClusterRadiusMeters = maxOf(
+                            currentExitRadiusMeters,
+                            currentEntryRadiusMeters * 2.75f,
+                            220f
+                        )
                     )
                 )
-            )
-            val result = detector.process(detectorState, sample)
-            detectorState = result.nextState
-            repository.saveDwellDetectionState(result.nextState)
-            publishDebugState(result.nextState, sample.timestamp)
+                val result = detector.process(detectorState, sample)
+                detectorState = result.nextState
+                repository.saveDwellDetectionState(result.nextState)
+                publishDebugState(result.nextState, sample.timestamp)
 
-            result.closedDwells.forEach { dwell ->
-                LocationDebugState.updateStatus("dwell cerrado · resolviendo lugar")
-                val place = placeResolver.findOrCreatePlace(
-                    latitude = dwell.latitude,
-                    longitude = dwell.longitude,
-                    visitedAt = dwell.endTimestamp
-                )
-                val dataJson = JSONObject()
-                    .put("lat", dwell.latitude)
-                    .put("lon", dwell.longitude)
-                    .put("placeName", place.name)
-                    .put("placeType", place.type)
-                    .toString()
-
-                val eventId = repository.insertTimelineEvent(
-                    TimelineEvent(
-                        type = TimelineEventType.DWELL,
-                        timestamp = dwell.startTimestamp,
-                        endTimestamp = dwell.endTimestamp,
-                        title = place.name,
-                        subtitle = DwellDurationFormatter.formatHours(dwell.startTimestamp, dwell.endTimestamp),
-                        dataJson = dataJson,
-                        isHighlight = !place.isHome && !place.isWork && place.visitCount < 3,
-                        placeId = place.id,
-                        source = TimelineEventSource.AUTO
+                if (result.nextState.active) {
+                    ensureActiveDwellVisible(
+                        state = result.nextState,
+                        openedDwell = result.openedDwell,
+                        observedAt = sample.timestamp
                     )
-                )
-
-                lifecycleScope.launch(Dispatchers.IO) {
-                    placeResolver.enrichPlace(place.id, dwell.latitude, dwell.longitude)
-                    updateTimelineEventFromPlace(eventId, place.id)
-                    LocationDebugState.updateStatus("dwell guardado")
+                }
+                if (result.closedDwells.isNotEmpty()) {
+                    finalizeClosedDwells(result.closedDwells)
                 }
             }
         }
     }
+
+    /** Makes a confirmed stay visible immediately; leaving only finalizes its end time. */
+    private suspend fun ensureActiveDwellVisible(
+        state: DwellDetectionState,
+        openedDwell: OpenedDwell?,
+        observedAt: Long
+    ) {
+        val startedAt = openedDwell?.startTimestamp ?: state.dwellStartedAt ?: return
+        val existing = repository.getDwellTimelineEventByStart(startedAt)
+        if (existing != null) {
+            repository.updateTimelineEvent(
+                existing.copy(
+                    endTimestamp = observedAt,
+                    subtitle = DwellDurationFormatter.formatHours(startedAt, observedAt),
+                    dataJson = JSONObject(existing.dataJson ?: "{}")
+                        .put("active", true)
+                        .toString()
+                )
+            )
+            return
+        }
+
+        val latitude = openedDwell?.latitude ?: state.anchorLat ?: return
+        val longitude = openedDwell?.longitude ?: state.anchorLon ?: return
+        LocationDebugState.updateStatus("estancia confirmada · resolviendo lugar")
+        val place = placeResolver.findOrCreatePlace(
+            latitude = latitude,
+            longitude = longitude,
+            visitedAt = openedDwell?.observedAt ?: observedAt
+        )
+        val eventId = repository.insertTimelineEvent(
+            TimelineEvent(
+                type = TimelineEventType.DWELL,
+                timestamp = startedAt,
+                endTimestamp = observedAt,
+                title = place.name,
+                subtitle = DwellDurationFormatter.formatHours(startedAt, observedAt),
+                dataJson = dwellDataJson(latitude, longitude, place, active = true),
+                isHighlight = !place.isHome && !place.isWork && place.visitCount < 3,
+                placeId = place.id,
+                source = TimelineEventSource.AUTO
+            )
+        )
+        LocationDebugState.updateStatus("visita visible · estancia activa")
+        lifecycleScope.launch(Dispatchers.IO) {
+            placeResolver.enrichPlace(place.id, latitude, longitude)
+            updateTimelineEventFromPlace(eventId, place.id)
+        }
+    }
+
+    private suspend fun finalizeClosedDwells(dwells: List<com.trama.app.location.ClosedDwell>) {
+        val first = dwells.firstOrNull() ?: return
+        LocationDebugState.updateStatus("cerrando estancia")
+        val provisional = repository.getDwellTimelineEventByStart(first.startTimestamp)
+        val existingPlace = provisional?.placeId?.let { repository.getPlaceByIdOnce(it) }
+        val place = existingPlace ?: placeResolver.findOrCreatePlace(
+            latitude = first.latitude,
+            longitude = first.longitude,
+            visitedAt = dwells.last().endTimestamp
+        )
+        val eventIds = mutableListOf<Long>()
+
+        dwells.forEach { dwell ->
+            val existing = repository.getDwellTimelineEventByStart(dwell.startTimestamp)
+            val event = TimelineEvent(
+                id = existing?.id ?: 0,
+                type = TimelineEventType.DWELL,
+                timestamp = dwell.startTimestamp,
+                endTimestamp = dwell.endTimestamp,
+                title = place.name,
+                subtitle = DwellDurationFormatter.formatHours(dwell.startTimestamp, dwell.endTimestamp),
+                dataJson = dwellDataJson(dwell.latitude, dwell.longitude, place, active = false),
+                isHighlight = !place.isHome && !place.isWork && place.visitCount < 3,
+                placeId = place.id,
+                source = TimelineEventSource.AUTO,
+                createdAt = existing?.createdAt ?: System.currentTimeMillis()
+            )
+            if (existing == null) {
+                eventIds += repository.insertTimelineEvent(event)
+            } else {
+                repository.updateTimelineEvent(event)
+                eventIds += existing.id
+            }
+        }
+
+        LocationDebugState.updateStatus("estancia cerrada")
+        lifecycleScope.launch(Dispatchers.IO) {
+            placeResolver.enrichPlace(place.id, first.latitude, first.longitude)
+            eventIds.forEach { updateTimelineEventFromPlace(it, place.id) }
+        }
+    }
+
+    private fun dwellDataJson(
+        latitude: Double,
+        longitude: Double,
+        place: Place,
+        active: Boolean
+    ): String = JSONObject()
+        .put("lat", latitude)
+        .put("lon", longitude)
+        .put("placeName", place.name)
+        .put("placeType", place.type)
+        .put("active", active)
+        .toString()
 
     private fun publishDebugState(state: DwellDetectionState, now: Long) {
         val dwellStartedAt = state.dwellStartedAt

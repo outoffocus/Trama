@@ -63,8 +63,14 @@ fun CalendarActionDialog(
         defaultDate = parts[0]
         defaultTime = parts.getOrElse(1) { "09:00" }
     } else {
-        defaultDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Calendar.getInstance().time)
-        defaultTime = "09:00"
+        val nextHour = Calendar.getInstance().apply {
+            add(Calendar.HOUR_OF_DAY, 1)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        defaultDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(nextHour.time)
+        defaultTime = SimpleDateFormat("HH:mm", Locale.getDefault()).format(nextHour.time)
     }
 
     var title by remember(action.title) { mutableStateOf(action.title) }

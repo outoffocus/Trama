@@ -1,5 +1,7 @@
 package com.trama.app.location
 
+import com.trama.shared.model.TimelineEvent
+import com.trama.shared.model.TimelineEventType
 import java.util.Locale
 
 object DwellDurationFormatter {
@@ -19,6 +21,16 @@ object DwellDurationFormatter {
         }
     }
 
+    fun isActive(event: TimelineEvent): Boolean =
+        event.type == TimelineEventType.DWELL &&
+            ACTIVE_JSON_PATTERN.containsMatchIn(event.dataJson.orEmpty())
+
+    fun formatVisit(event: TimelineEvent): String {
+        val duration = formatHours(event.timestamp, event.endTimestamp)
+        return if (isActive(event)) "En curso · $duration" else duration
+    }
+
     private const val HOUR_MS = 60 * 60 * 1000L
     private val SPANISH_LOCALE = Locale("es", "ES")
+    private val ACTIVE_JSON_PATTERN = Regex("\"active\"\\s*:\\s*true", RegexOption.IGNORE_CASE)
 }

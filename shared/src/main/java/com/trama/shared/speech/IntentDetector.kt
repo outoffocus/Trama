@@ -27,6 +27,7 @@ class IntentDetector {
             "(?:^|\\s)(tengo|tenemos|necesito|necesitamos|me|nos|he)(?=\\s|$)"
         )
         private val SPECIFIC_COMMUNICATION = Regex("hablar con|mensaje|contestar|responder|avisar")
+        private val CONDITIONAL_SEMANTIC_TRIGGERS = setOf("recuerda", "recordarme", "recordar")
     }
 
     @Volatile
@@ -94,30 +95,80 @@ class IntentDetector {
      * happens over normalized tokens, so a keyword such as "cita" cannot match
      * inside "necesitar".
      */
-    fun detect(text: String): DetectionResult? {
+    fun detect(text: String): DetectionResult? = detectInternal(text, includeStructuralRules = true)
+
+    /**
+     * Detects only phrases that are visible in the user's configuration.
+     *
+     * The continuous-listening gate must use this method: grammatical rules such
+     * as "tengo que + verbo" are useful after capture for classification, but
+     * must never behave like hidden wake phrases.
+     */
+    fun detectConfigured(text: String): DetectionResult? =
+        detectInternal(text, includeStructuralRules = false)
+
+    private fun detectInternal(
+        text: String,
+        includeStructuralRules: Boolean
+    ): DetectionResult? {
         if (text.length < MIN_TEXT_LENGTH) return null
 
         val normalizedText = normalize(text)
         if (normalizedText.isBlank()) return null
         val candidates = buildList {
             CaptureIntentRules.find(normalizedText, captureProfile)?.let { rule ->
-                patterns.firstOrNull { it.id == rule.intentId && it.enabled }?.let { matchedPattern ->
-                    add(
-                        Candidate(
-                            pattern = matchedPattern,
-                            customKeyword = null,
-                            label = rule.label,
-                            trigger = rule.trigger,
-                            confidence = rule.confidence,
-                            reasons = rule.reasons,
-                            order = -1
+                if (includeStructuralRules) {
+                    patterns.firstOrNull { it.id == rule.intentId && it.enabled }?.let { matchedPattern ->
+                        add(
+                            Candidate(
+                                pattern = matchedPattern,
+                                customKeyword = null,
+                                label = rule.label,
+                                trigger = rule.trigger,
+                                confidence = rule.confidence,
+                                reasons = rule.reasons,
+                                order = -1
+                            )
                         )
-                    )
+                    }
+                } else {
+                    // These visible one-word phrases are intentionally conditional: they only
+                    // activate when followed by a concrete action verb and complement. This keeps
+                    // natural speech such as "recordar la infancia" from becoming a capture.
+                    patterns.firstOrNull { pattern ->
+                        pattern.id == rule.intentId &&
+                            pattern.enabled &&
+                            pattern.normalizedTriggers.any { trigger ->
+                                trigger in CONDITIONAL_SEMANTIC_TRIGGERS &&
+                                    findBounded(normalizedText, trigger) != null
+                            }
+                    }?.let { matchedPattern ->
+                        val visibleTrigger = matchedPattern.normalizedTriggers
+                            .filter { it in CONDITIONAL_SEMANTIC_TRIGGERS }
+                            .first { findBounded(normalizedText, it) != null }
+                        add(
+                            Candidate(
+                                pattern = matchedPattern,
+                                customKeyword = null,
+                                label = rule.label,
+                                trigger = visibleTrigger,
+                                confidence = rule.confidence,
+                                reasons = rule.reasons,
+                                order = -1
+                            )
+                        )
+                    }
                 }
             }
             patterns.forEachIndexed { patternIndex, pattern ->
                 if (!pattern.enabled) return@forEachIndexed
                 pattern.normalizedTriggers.forEachIndexed { triggerIndex, trigger ->
+                    // The semantic detector keeps broad reminder words conditional to avoid
+                    // false positives in ordinary speech. The continuous gate has a narrower
+                    // contract: every phrase exposed in Settings is an explicit wake phrase.
+                    if (includeStructuralRules && trigger in CONDITIONAL_SEMANTIC_TRIGGERS) {
+                        return@forEachIndexed
+                    }
                     findBounded(normalizedText, trigger)?.let { match ->
                         add(
                             scoreCandidate(
@@ -151,8 +202,9 @@ class IntentDetector {
             }
         }
 
+        val minimumConfidence = if (includeStructuralRules) MIN_CONFIDENCE else 0f
         val winner = candidates
-            .filter { it.confidence >= MIN_CONFIDENCE }
+            .filter { it.confidence >= minimumConfidence }
             .maxWithOrNull(
                 compareBy<Candidate> { it.confidence }
                     .thenBy { it.trigger.length }

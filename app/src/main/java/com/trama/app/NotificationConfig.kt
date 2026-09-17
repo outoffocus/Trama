@@ -31,6 +31,9 @@ object NotificationConfig {
     /** Foreground notification for passive location tracking. */
     const val CHANNEL_LOCATION = "trama_location"
 
+    /** Foreground progress for long offline meeting transcription. */
+    const val CHANNEL_TRANSCRIPTION = "trama_transcription"
+
     /** Prompt shown when Android requires user interaction to restore the microphone. */
     const val CHANNEL_LISTENER_RECOVERY = "trama_listener_recovery"
 

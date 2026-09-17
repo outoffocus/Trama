@@ -15,7 +15,11 @@ object AsrHallucinationDetector {
     private val bracketOnlyRe = Regex("""^\s*[\[(][^\]\)]{1,40}[\])]\s*$""")
     private val dashLineStartRe = Regex("""(?:^|[\s.!?])-\s*[¿¡\p{L}]""")
 
-    fun detect(text: String, singleWordIsHallucination: Boolean = true): String? {
+    fun detect(
+        text: String,
+        singleWordIsHallucination: Boolean = true,
+        conversationalSpeechIsHallucination: Boolean = true
+    ): String? {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return null
 
@@ -24,13 +28,15 @@ object AsrHallucinationDetector {
             return "bracket_token:$tag"
         }
 
-        val dashLineStarts = dashLineStartRe.findAll(trimmed).count()
-        if (dashLineStarts >= 2) {
-            return "multi_speaker_dialog"
-        }
+        if (conversationalSpeechIsHallucination) {
+            val dashLineStarts = dashLineStartRe.findAll(trimmed).count()
+            if (dashLineStarts >= 2) {
+                return "multi_speaker_dialog"
+            }
 
-        if (trimmed.startsWith("¿") && trimmed.endsWith("?")) {
-            return "pure_question"
+            if (trimmed.startsWith("¿") && trimmed.endsWith("?")) {
+                return "pure_question"
+            }
         }
 
         val tokens = trimmed.split(Regex("\\s+")).filter { it.isNotBlank() }

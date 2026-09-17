@@ -52,5 +52,6 @@ dependencies {
     // Testing
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.test.ext)
+    androidTestImplementation("androidx.test:runner:1.6.1")
     androidTestImplementation(libs.room.testing)
 }

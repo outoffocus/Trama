@@ -62,7 +62,20 @@ object BackupManager {
         val isManual: Boolean = false,
         val isSynced: Boolean = false,
         val duplicateOfId: Long? = null,
-        val sourceRecordingId: Long? = null
+        val sourceRecordingId: Long? = null,
+        val userConfirmedAt: Long? = null,
+        val verificationSource: String? = null,
+        val contentKind: String = com.trama.shared.model.EntryContentKind.ACTION,
+        val sourceCaptureId: String? = null,
+        val parentEntryId: Long? = null,
+        val revision: Long = 0,
+        val humanDecision: String? = null,
+        val humanDecisionAt: Long? = null,
+        val triggerPhrase: String? = null,
+        val triggerConfigVersion: Long? = null,
+        val externalState: String? = null,
+        val externalEventId: Long? = null,
+        val externalUpdatedAt: Long? = null
     )
 
     @Serializable
@@ -105,6 +118,8 @@ object BackupManager {
         val latitude: Double,
         val longitude: Double,
         val type: String? = null,
+        val locality: String? = null,
+        val address: String? = null,
         val visitCount: Int = 0,
         val lastVisitAt: Long? = null,
         val rating: Int? = null,
@@ -213,8 +228,8 @@ object BackupManager {
                 }
                 backup.entries.forEach { entry ->
                     val restoredId = entryIds[entry.id] ?: return@forEach
-                    val duplicateId = entry.duplicateOfId?.let(entryIds::get) ?: return@forEach
-                    markDuplicate(restoredId, duplicateId)
+                    entry.duplicateOfId?.let(entryIds::get)?.let { markDuplicate(restoredId, it) }
+                    entry.parentEntryId?.let(entryIds::get)?.let { updateParentEntry(restoredId, it) }
                 }
                 backup.timelineEvents.forEach { event ->
                     if (getTimelineEventByNaturalKey(event.type, event.timestamp, event.title) == null) {
@@ -239,7 +254,7 @@ object BackupManager {
         return "trama-backup-$date.json"
     }
 
-    private fun DiaryEntry.toBackupEntry() = BackupEntry(
+    internal fun DiaryEntry.toBackupEntry() = BackupEntry(
         id = id,
         text = text,
         keyword = keyword,
@@ -261,7 +276,20 @@ object BackupManager {
         isManual = isManual,
         isSynced = isSynced,
         duplicateOfId = duplicateOfId,
-        sourceRecordingId = sourceRecordingId
+        sourceRecordingId = sourceRecordingId,
+        userConfirmedAt = userConfirmedAt,
+        verificationSource = verificationSource,
+        contentKind = contentKind,
+        sourceCaptureId = sourceCaptureId,
+        parentEntryId = parentEntryId,
+        revision = revision,
+        humanDecision = humanDecision,
+        humanDecisionAt = humanDecisionAt,
+        triggerPhrase = triggerPhrase,
+        triggerConfigVersion = triggerConfigVersion,
+        externalState = externalState,
+        externalEventId = externalEventId,
+        externalUpdatedAt = externalUpdatedAt
     )
 
     private fun Recording.toBackupRecording() = BackupRecording(
@@ -295,7 +323,7 @@ object BackupManager {
         audioSampleRateHz = audioSampleRateHz
     )
 
-    private fun BackupEntry.toDiaryEntry(
+    internal fun BackupEntry.toDiaryEntry(
         sourceRecordingId: Long?,
         duplicateOfId: Long?
     ) = DiaryEntry(
@@ -319,7 +347,20 @@ object BackupManager {
         processingBackend = processingBackend,
         isManual = isManual,
         duplicateOfId = duplicateOfId,
-        sourceRecordingId = sourceRecordingId
+        sourceRecordingId = sourceRecordingId,
+        userConfirmedAt = userConfirmedAt,
+        verificationSource = verificationSource,
+        contentKind = contentKind,
+        sourceCaptureId = sourceCaptureId,
+        parentEntryId = null,
+        revision = revision,
+        humanDecision = humanDecision,
+        humanDecisionAt = humanDecisionAt,
+        triggerPhrase = triggerPhrase,
+        triggerConfigVersion = triggerConfigVersion,
+        externalState = externalState,
+        externalEventId = externalEventId,
+        externalUpdatedAt = externalUpdatedAt
     )
 
     private suspend fun DiaryRepository.restoreRecordings(
@@ -362,9 +403,24 @@ object BackupManager {
     )
 
     private fun Place.toBackupPlace() = BackupPlace(
-        id, name, latitude, longitude, type, visitCount, lastVisitAt, rating,
-        opinionText, opinionSummary, opinionUpdatedAt, isHome, isWork, userRenamed,
-        createdAt, updatedAt
+        id = id,
+        name = name,
+        latitude = latitude,
+        longitude = longitude,
+        type = type,
+        locality = locality,
+        address = address,
+        visitCount = visitCount,
+        lastVisitAt = lastVisitAt,
+        rating = rating,
+        opinionText = opinionText,
+        opinionSummary = opinionSummary,
+        opinionUpdatedAt = opinionUpdatedAt,
+        isHome = isHome,
+        isWork = isWork,
+        userRenamed = userRenamed,
+        createdAt = createdAt,
+        updatedAt = updatedAt
     )
 
     private fun BackupPlace.toPlace() = Place(
@@ -372,6 +428,8 @@ object BackupManager {
         latitude = latitude,
         longitude = longitude,
         type = type,
+        locality = locality,
+        address = address,
         visitCount = visitCount,
         lastVisitAt = lastVisitAt,
         rating = rating,

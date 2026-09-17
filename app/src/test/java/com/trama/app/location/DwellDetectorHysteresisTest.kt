@@ -136,12 +136,33 @@ class DwellDetectorHysteresisTest {
         )
 
         var state: DwellDetectionState? = null
+        var opened: OpenedDwell? = null
         samples.forEach { s ->
-            state = detector.process(state, s).nextState
+            val result = detector.process(state, s)
+            state = result.nextState
+            opened = result.openedDwell ?: opened
         }
 
         assertTrue("Large indoor cluster should become an active dwell", state?.active == true)
         assertEquals(0L, state?.dwellStartedAt)
+        assertEquals(0L, opened?.startTimestamp)
+        assertEquals(15 * minute, opened?.observedAt)
+        assertEquals(75.0, opened?.latitude ?: Double.NaN, 0.001)
+    }
+
+    @Test
+    fun activeDwellIsOpenedOnlyOnceAtThreshold() {
+        val detector = DwellDetector(
+            config = DwellDetectorConfig(dwellThresholdMillis = 10 * minute),
+            distance = planarDistance
+        )
+        var state: DwellDetectionState? = null
+        val openings = listOf(0L, 5 * minute, 10 * minute, 15 * minute, 20 * minute).mapNotNull { time ->
+            detector.process(state, sample(0.0, 0.0, time)).also { state = it.nextState }.openedDwell
+        }
+
+        assertEquals(1, openings.size)
+        assertEquals(10 * minute, openings.single().observedAt)
     }
 
     @Test

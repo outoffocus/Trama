@@ -22,6 +22,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.Card
@@ -98,6 +101,8 @@ fun AgendaScreen(
     val rangeFar = endOfNextWeek + 1
 
     val pending by repository.getPending().collectAsState(initialValue = emptyList())
+    val reviewTasks = remember(pending) { pending.filter { it.status == EntryStatus.SUGGESTED } }
+    val confirmedPending = remember(pending) { pending.filter { it.status == EntryStatus.PENDING } }
     val thisWeekEvents by repository
         .getTimelineEventsByDateRange(today.startMs, endOfThisWeek)
         .collectAsState(initialValue = emptyList())
@@ -105,34 +110,34 @@ fun AgendaScreen(
         .getTimelineEventsByDateRange(startOfNextWeek, endOfNextWeek)
         .collectAsState(initialValue = emptyList())
 
-    val thisWeekSection = remember(pending, thisWeekEvents, today, endOfThisWeek) {
+    val thisWeekSection = remember(confirmedPending, thisWeekEvents, today, endOfThisWeek) {
         buildSection(
             title = "Esta semana",
             rangeStart = today.startMs,
             rangeEnd = endOfThisWeek,
             events = thisWeekEvents,
-            pending = pending
+            pending = confirmedPending
         )
     }
-    val nextWeekSection = remember(pending, nextWeekEvents, startOfNextWeek, endOfNextWeek) {
+    val nextWeekSection = remember(confirmedPending, nextWeekEvents, startOfNextWeek, endOfNextWeek) {
         buildSection(
             title = "Próxima semana",
             rangeStart = startOfNextWeek,
             rangeEnd = endOfNextWeek,
             events = nextWeekEvents,
-            pending = pending
+            pending = confirmedPending
         )
     }
-    val laterTasks = remember(pending, rangeFar) {
-        pending
+    val laterTasks = remember(confirmedPending, rangeFar) {
+        confirmedPending
             .filter { (it.dueDate ?: Long.MIN_VALUE) >= rangeFar }
             .sortedBy { it.dueDate ?: 0L }
     }
-    val undatedTasks = remember(pending) {
-        pending.filter { it.dueDate == null }.sortedByDescending { it.createdAt }
+    val undatedTasks = remember(confirmedPending) {
+        confirmedPending.filter { it.dueDate == null }.sortedByDescending { it.createdAt }
     }
-    val overdueTasks = remember(pending, today) {
-        pending
+    val overdueTasks = remember(confirmedPending, today) {
+        confirmedPending
             .filter { (it.dueDate ?: Long.MAX_VALUE) < today.startMs }
             .sortedBy { it.dueDate ?: 0L }
     }
@@ -174,7 +179,7 @@ fun AgendaScreen(
             val previousDue = entry.dueDate
             repository.updateDueDate(entry.id, dueDate)
             val result = snackbarHostState.showSnackbar(
-                message = "Pospuesta",
+                message = "Fecha de la tarea actualizada",
                 actionLabel = "Deshacer",
                 duration = SnackbarDuration.Short
             )
@@ -188,7 +193,7 @@ fun AgendaScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("Agenda") },
+                title = { Text("Acciones") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
@@ -207,13 +212,38 @@ fun AgendaScreen(
             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            item("stats") {
-                AgendaStatsCard(
-                    calendarCount = totalCalendarThisWeek,
-                    taskCount = totalTasksThisWeek,
-                    overdueCount = overdueTasks.size,
-                    urgentCount = urgent
-                )
+            if (reviewTasks.isNotEmpty()) {
+                item("review_header") {
+                    SectionTitle("Por revisar", "${reviewTasks.size}", "Acepta, edita o descarta antes de convertirlas en tareas.")
+                }
+                items(reviewTasks, key = { "review_${it.id}" }) { task ->
+                    ReviewSuggestionCard(
+                        entry = task,
+                        onEdit = { onEntryClick(task.id) },
+                        onAccept = {
+                            scope.launch {
+                                repository.confirmSuggested(
+                                    task.id,
+                                    com.trama.shared.model.EntryVerificationSource.AGENDA
+                                )
+                                snackbarHostState.showSnackbar("Añadida a pendientes")
+                            }
+                        },
+                        onDiscard = {
+                            scope.launch {
+                                repository.markDiscarded(task.id)
+                                val result = snackbarHostState.showSnackbar(
+                                    message = "Sugerencia descartada",
+                                    actionLabel = "Deshacer",
+                                    duration = SnackbarDuration.Short
+                                )
+                                if (result == SnackbarResult.ActionPerformed) {
+                                    repository.restoreDiscardedSuggestion(task.id)
+                                }
+                            }
+                        }
+                    )
+                }
             }
 
             if (overdueTasks.isNotEmpty()) {
@@ -227,6 +257,15 @@ fun AgendaScreen(
                         overdue = true
                     )
                 }
+            }
+
+            item("stats") {
+                AgendaStatsCard(
+                    calendarCount = totalCalendarThisWeek,
+                    taskCount = totalTasksThisWeek,
+                    overdueCount = overdueTasks.size,
+                    urgentCount = urgent
+                )
             }
 
             agendaSection(
@@ -292,6 +331,42 @@ fun AgendaScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReviewSuggestionCard(
+    entry: DiaryEntry,
+    onEdit: () -> Unit,
+    onAccept: () -> Unit,
+    onDiscard: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(entry.displayText, style = MaterialTheme.typography.bodyMedium)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onDiscard) {
+                    Icon(Icons.Default.Close, contentDescription = "Descartar sugerencia")
+                }
+                IconButton(onClick = onEdit) {
+                    Icon(Icons.Default.Edit, contentDescription = "Editar antes de aceptar")
+                }
+                androidx.compose.material3.TextButton(onClick = onAccept) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Text("Aceptar")
                 }
             }
         }

@@ -230,7 +230,8 @@ class WatchRecordingService : LifecycleService() {
                 }.isSuccess
 
                 if (success) {
-                    audioFile.delete()
+                    if (recordingKind == "CONTEXTUAL_TRIGGER") audioFile.delete()
+                    // Meeting PCM stays until the phone acknowledges its exact bytes.
                     RecordingController.notifySaved(startTimeMs)
                     Log.i(TAG, "Recording audio transferred to phone (${elapsed}s, kind=$recordingKind)")
                 } else {

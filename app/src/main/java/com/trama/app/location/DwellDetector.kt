@@ -18,6 +18,13 @@ data class ClosedDwell(
     val longitude: Double
 )
 
+data class OpenedDwell(
+    val startTimestamp: Long,
+    val observedAt: Long,
+    val latitude: Double,
+    val longitude: Double
+)
+
 data class DwellDetectorConfig(
     val entryRadiusMeters: Float = 80f,
     val exitRadiusMeters: Float = 200f,
@@ -42,6 +49,7 @@ data class DwellDetectorConfig(
 
 data class DwellDetectorResult(
     val nextState: DwellDetectionState,
+    val openedDwell: OpenedDwell? = null,
     val closedDwells: List<ClosedDwell> = emptyList()
 )
 
@@ -139,6 +147,12 @@ class DwellDetector(
                             candidateStartedAt = null,
                             candidateLastSeenAt = null,
                             updatedAt = updatedAt
+                        ),
+                        openedDwell = OpenedDwell(
+                            startTimestamp = startedAt,
+                            observedAt = sample.timestamp,
+                            latitude = anchorLat ?: sample.latitude,
+                            longitude = anchorLon ?: sample.longitude
                         )
                     )
                 } else {

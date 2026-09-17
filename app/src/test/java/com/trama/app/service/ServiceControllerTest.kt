@@ -66,12 +66,65 @@ class ServiceControllerTest {
         ServiceController.notifyListening()
         assertEquals(ServiceController.ListenerState.LISTENING, ServiceController.listenerState.value)
 
+        ServiceController.notifyTriggerRecognized(true)
+        assertTrue(ServiceController.isTriggerRecognized.value)
+
         ServiceController.notifyPaused()
+        assertFalse(ServiceController.isTriggerRecognized.value)
         assertEquals(ServiceController.ListenerState.PAUSED, ServiceController.listenerState.value)
         assertTrue(ServiceController.isRunning.value)
 
         ServiceController.notifyFailed()
         assertEquals(ServiceController.ListenerState.FAILED, ServiceController.listenerState.value)
         assertTrue(ServiceController.isRunning.value)
+    }
+
+    @Test
+    fun `capture state gives trigger precedence while listener remains active`() {
+        val state = ServiceController.resolveCaptureUiState(
+            listenerState = ServiceController.ListenerState.LISTENING,
+            listeningEnabled = true,
+            triggerRecognized = true,
+            recording = false,
+            processing = false,
+            watchActive = false,
+            transferring = false,
+            elapsedSeconds = 0,
+            hasError = false
+        )
+
+        assertEquals(ServiceController.CaptureMode.TRIGGER_RECOGNIZED, state.mode)
+        assertTrue(state.listeningActive)
+        assertTrue(state.triggerRecognized)
+    }
+
+    @Test
+    fun `capture state keeps mutually exclusive operation priority`() {
+        val transferring = ServiceController.resolveCaptureUiState(
+            listenerState = ServiceController.ListenerState.LISTENING,
+            listeningEnabled = true,
+            triggerRecognized = true,
+            recording = true,
+            processing = true,
+            watchActive = true,
+            transferring = true,
+            elapsedSeconds = 42,
+            hasError = true
+        )
+        val recording = ServiceController.resolveCaptureUiState(
+            listenerState = ServiceController.ListenerState.STOPPED,
+            listeningEnabled = true,
+            triggerRecognized = false,
+            recording = true,
+            processing = true,
+            watchActive = true,
+            transferring = false,
+            elapsedSeconds = 42,
+            hasError = true
+        )
+
+        assertEquals(ServiceController.CaptureMode.TRANSFERRING, transferring.mode)
+        assertEquals(ServiceController.CaptureMode.RECORDING, recording.mode)
+        assertEquals(42, recording.elapsedSeconds)
     }
 }

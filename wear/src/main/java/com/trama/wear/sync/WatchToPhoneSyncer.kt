@@ -77,6 +77,7 @@ class WatchToPhoneSyncer(
         val request = PutDataMapRequest.create("$AUDIO_RECORDING_PATH_PREFIX/${metadata.createdAt}").apply {
             dataMap.putString("metadata", Json.encodeToString(metadata))
             dataMap.putAsset("audio_pcm16", Asset.createFromBytes(pcmBytes))
+            dataMap.putString("audio_sha256", com.trama.shared.sync.RecordingReceipt.sha256(pcmBytes))
             dataMap.putLong("timestamp", System.currentTimeMillis())
         }.asPutDataRequest().setUrgent()
 

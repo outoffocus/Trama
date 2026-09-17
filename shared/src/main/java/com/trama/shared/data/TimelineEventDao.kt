@@ -23,11 +23,27 @@ interface TimelineEventDao {
     @Query("SELECT * FROM timeline_events WHERE timestamp BETWEEN :startTime AND :endTime ORDER BY timestamp ASC")
     suspend fun byDateRangeOnce(startTime: Long, endTime: Long): List<TimelineEvent>
 
+    @Query(
+        """
+        SELECT * FROM timeline_events
+        WHERE type = 'CALENDAR'
+          AND timestamp <= :endTime
+          AND COALESCE(endTimestamp, timestamp) >= :startTime
+        ORDER BY timestamp ASC
+        """
+    )
+    fun calendarOverlapping(startTime: Long, endTime: Long): Flow<List<TimelineEvent>>
+
     @Query("SELECT * FROM timeline_events WHERE id = :id")
     suspend fun getByIdOnce(id: Long): TimelineEvent?
 
     @Query("SELECT * FROM timeline_events WHERE type = :type ORDER BY timestamp DESC LIMIT 1")
     suspend fun getLatestByType(type: String): TimelineEvent?
+
+    @Query("""SELECT * FROM timeline_events
+              WHERE type = 'DWELL' AND source = 'AUTO' AND timestamp = :startTimestamp
+              LIMIT 1""")
+    suspend fun getDwellByStart(startTimestamp: Long): TimelineEvent?
 
     @Query("SELECT * FROM timeline_events WHERE type = :type AND source = :source AND dataJson = :dataJson LIMIT 1")
     suspend fun getByTypeSourceAndDataJson(type: String, source: String, dataJson: String): TimelineEvent?

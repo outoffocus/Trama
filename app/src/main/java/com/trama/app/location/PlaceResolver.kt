@@ -38,17 +38,27 @@ class PlaceResolver(
     }
 
     suspend fun enrichPlace(placeId: Long, latitude: Double, longitude: Double) {
+        if (!settings.placeOnlineLookupEnabled.first()) return
         val current = repository.getPlaceByIdOnce(placeId) ?: return
-        if (current.userRenamed || current.name != "Lugar sin identificar") return
+        val needsIdentity = !current.userRenamed && current.name == "Lugar sin identificar"
+        val needsGeographicContext = current.locality.isNullOrBlank() || current.address.isNullOrBlank()
+        if (!needsIdentity && !needsGeographicContext) return
 
         val resolved = resolveRemotely(latitude, longitude) ?: return
-        val updated = current.copy(
-            name = resolved.name,
-            type = resolved.type,
+        // The lookup may take seconds. Re-read before committing so a name or
+        // opinion edited meanwhile always wins over the network response.
+        val latest = repository.getPlaceByIdOnce(placeId) ?: return
+        val updated = latest.copy(
+            name = if (!latest.userRenamed && latest.name == "Lugar sin identificar") resolved.name else latest.name,
+            type = latest.type ?: resolved.type,
+            locality = latest.locality ?: resolved.locality,
+            address = latest.address ?: resolved.address,
             updatedAt = System.currentTimeMillis()
         )
         repository.updatePlace(updated)
-        repository.updateTimelineEventTitlesForPlace(placeId, resolved.name)
+        if (updated.name != latest.name) {
+            repository.updateTimelineEventTitlesForPlace(placeId, updated.name)
+        }
     }
 
     private suspend fun findNearbyLocalPlace(latitude: Double, longitude: Double): Place? {
@@ -65,9 +75,14 @@ class PlaceResolver(
     }
 
     private suspend fun resolveRemotely(latitude: Double, longitude: Double): ResolvedPlace? {
-        return overpassLookup(latitude, longitude)
+        val venue = overpassLookup(latitude, longitude)
             ?: googlePlacesLookup(latitude, longitude)
-            ?: nominatimLookup(latitude, longitude)
+        val geographicContext = nominatimLookup(latitude, longitude)
+        if (venue == null) return geographicContext
+        return venue.copy(
+            locality = venue.locality ?: geographicContext?.locality,
+            address = venue.address ?: geographicContext?.address
+        )
     }
 
     private suspend fun overpassLookup(latitude: Double, longitude: Double): ResolvedPlace? = withContext(Dispatchers.IO) {
@@ -91,7 +106,12 @@ class PlaceResolver(
         val name = tags.optString("name").takeIf { it.isNotBlank() } ?: return@withContext null
         val type = listOf("amenity", "shop", "leisure", "tourism", "office")
             .firstNotNullOfOrNull { key -> tags.optString(key).takeIf { it.isNotBlank() } }
-        ResolvedPlace(name = name, type = type)
+        val locality = listOf("addr:city", "addr:town", "addr:village", "addr:municipality")
+            .firstNotNullOfOrNull { key -> tags.optString(key).takeIf { it.isNotBlank() } }
+        val street = tags.optString("addr:street").takeIf { it.isNotBlank() }
+        val houseNumber = tags.optString("addr:housenumber").takeIf { it.isNotBlank() }
+        val address = listOfNotNull(street, houseNumber).joinToString(" ").ifBlank { null }
+        ResolvedPlace(name = name, type = type, locality = locality, address = address)
     }
 
     private suspend fun googlePlacesLookup(latitude: Double, longitude: Double): ResolvedPlace? = withContext(Dispatchers.IO) {
@@ -111,7 +131,8 @@ class PlaceResolver(
         val name = first.optString("name").takeIf { it.isNotBlank() } ?: return@withContext null
         val types = first.optJSONArray("types")
         val type = types?.optString(0)?.takeIf { it.isNotBlank() }
-        ResolvedPlace(name = name, type = type)
+        val address = first.optString("vicinity").takeIf { it.isNotBlank() }
+        ResolvedPlace(name = name, type = type, address = address)
     }
 
     private suspend fun nominatimLookup(latitude: Double, longitude: Double): ResolvedPlace? = withContext(Dispatchers.IO) {
@@ -125,7 +146,18 @@ class PlaceResolver(
         val name = json.optString("name").takeIf { it.isNotBlank() }
             ?: json.optString("display_name").takeIf { it.isNotBlank() }
             ?: return@withContext null
-        ResolvedPlace(name = name.substringBefore(",").ifBlank { name }, type = null)
+        val details = json.optJSONObject("address")
+        val locality = details?.let { address ->
+            listOf("city", "town", "village", "municipality", "county")
+                .firstNotNullOfOrNull { key -> address.optString(key).takeIf { it.isNotBlank() } }
+        }
+        val address = json.optString("display_name").takeIf { it.isNotBlank() }
+        ResolvedPlace(
+            name = name.substringBefore(",").ifBlank { name },
+            type = json.optString("type").takeIf { it.isNotBlank() },
+            locality = locality,
+            address = address
+        )
     }
 
     private fun pickClosestElement(elements: JSONArray, latitude: Double, longitude: Double): JSONObject? {
@@ -187,6 +219,8 @@ class PlaceResolver(
 
     private data class ResolvedPlace(
         val name: String,
-        val type: String?
+        val type: String?,
+        val locality: String? = null,
+        val address: String? = null
     )
 }

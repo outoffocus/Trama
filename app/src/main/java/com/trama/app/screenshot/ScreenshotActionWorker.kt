@@ -16,6 +16,8 @@ import androidx.work.WorkerParameters
 import com.trama.app.MainActivity
 import com.trama.app.NotificationConfig
 import com.trama.app.R
+import com.trama.app.summary.ActionTextNormalizer
+import com.trama.app.summary.ActionQualityGate
 import com.trama.app.summary.GemmaClient
 import com.trama.app.summary.JsonRepair
 import com.trama.shared.data.DatabaseProvider
@@ -63,7 +65,7 @@ class ScreenshotActionWorker(
         var retrying = false
         return try {
             val extraction = extractActions(bitmap, uri)
-            val inserted = persistExtraction(extraction)
+            val inserted = persistExtraction(extraction, uri)
             showResultNotification(
                 title = if (inserted > 0) "Captura revisada" else "Captura sin acciones",
                 text = if (inserted > 0) "$inserted sugerencias listas para revisar."
@@ -119,7 +121,7 @@ class ScreenshotActionWorker(
         )
     }
 
-    private suspend fun persistExtraction(extraction: ScreenshotExtraction): Int {
+    private suspend fun persistExtraction(extraction: ScreenshotExtraction, uri: Uri): Int {
         val repository = DatabaseProvider.getRepository(applicationContext)
         val contextPrefix = extraction.context?.takeIf { it.isNotBlank() }
             ?.let { "Captura: $it" }
@@ -130,7 +132,15 @@ class ScreenshotActionWorker(
         extraction.actions
             .filter { it.text.isNotBlank() }
             .take(MAX_ACTIONS_PER_SCREENSHOT)
-            .forEach { action ->
+            .forEachIndexed { index, action ->
+                val focusedActionText = ActionTextNormalizer.focus(action.text)
+                val actionType = action.type.toActionType()
+                if (
+                    focusedActionText.isBlank() ||
+                    !ActionQualityGate.isActionable(focusedActionText, actionType)
+                ) return@forEachIndexed
+                val sourceCaptureId = "screenshot:${Integer.toUnsignedString(uri.toString().hashCode())}:action:$index"
+                if (repository.getBySourceCaptureId(sourceCaptureId) != null) return@forEachIndexed
                 repository.insert(
                     DiaryEntry(
                         text = listOf(contextPrefix, extractedText)
@@ -144,10 +154,11 @@ class ScreenshotActionWorker(
                         wasReviewedByLLM = true,
                         llmConfidence = extraction.confidence?.toFloat(),
                         status = EntryStatus.SUGGESTED,
-                        actionType = action.type.toActionType(),
-                        cleanText = action.text.trim(),
+                        actionType = actionType,
+                        cleanText = focusedActionText,
                         dueDate = action.dueDate.toDueDateMillis(),
-                        priority = action.priority.toEntryPriority()
+                        priority = action.priority.toEntryPriority(),
+                        sourceCaptureId = sourceCaptureId
                     )
                 )
                 inserted += 1
@@ -253,9 +264,12 @@ class ScreenshotActionWorker(
     }
 
     private fun String?.toActionType(): String = when (this?.uppercase()) {
+        "CALL" -> EntryActionType.CALL
+        "BUY" -> EntryActionType.BUY
+        "SEND" -> EntryActionType.SEND
         "EVENT" -> EntryActionType.EVENT
-        "CONTACT" -> EntryActionType.TALK_TO
-        "RECEIPT" -> EntryActionType.REVIEW
+        "CONTACT", "TALK_TO" -> EntryActionType.TALK_TO
+        "RECEIPT", "REVIEW" -> EntryActionType.REVIEW
         "REMINDER", "TASK", "NOTE" -> EntryActionType.GENERIC
         else -> EntryActionType.GENERIC
     }

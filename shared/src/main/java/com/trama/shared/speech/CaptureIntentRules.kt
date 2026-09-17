@@ -40,7 +40,9 @@ object CaptureIntentRules {
     private val THIRD_PERSON_COMMITMENT = Regex(
         "(?:^|\\s)tiene\\s+(?:la\\s+)?(cita|reunion|itv|medico|dentista)(?=\\s|$)"
     )
-    private val REMEMBER_ACTION = Regex("(?:^|\\s)recordar(?:\\s+(?:que|de))?\\s+([\\p{L}]+)(?=\\s|$)")
+    private val REMEMBER_ACTION = Regex(
+        "(?:^|\\s)(?:recordar|recordarme|recuerda)(?:\\s+(?:que|de))?\\s+([\\p{L}]+)(?=\\s|$)"
+    )
     private val FORGOT_ACTION = Regex("(?:^|\\s)me\\s+olvide\\s+([\\p{L}]+)(?=\\s|$)")
     private val COMMUNICATION = Regex("(?:^|\\s)(llamar|escribir|enviar|mandar|contestar|responder|avisar|felicitar|hablar)(?=\\s|$)")
     private val COMMITMENT = Regex(

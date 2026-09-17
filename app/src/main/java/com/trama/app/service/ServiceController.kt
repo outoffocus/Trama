@@ -11,14 +11,41 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicReference
 
 object ServiceController {
+
+    enum class CaptureMode {
+        IDLE,
+        STARTING,
+        LISTENING,
+        TRIGGER_RECOGNIZED,
+        PAUSED,
+        RECORDING,
+        PROCESSING,
+        WATCH,
+        TRANSFERRING,
+        ERROR
+    }
+
+    data class CaptureUiState(
+        val mode: CaptureMode = CaptureMode.IDLE,
+        val listeningActive: Boolean = false,
+        val recording: Boolean = false,
+        val processing: Boolean = false,
+        val watchActive: Boolean = false,
+        val transferring: Boolean = false,
+        val triggerRecognized: Boolean = false,
+        val elapsedSeconds: Long = 0L
+    )
 
     private const val PREFS = "service_prefs"
     private const val KEY_SHOULD_RUN = "should_run"
@@ -90,12 +117,66 @@ object ServiceController {
     private val _listenerState = MutableStateFlow(ListenerState.STOPPED)
     val listenerState: StateFlow<ListenerState> = _listenerState.asStateFlow()
 
+    private val _isTriggerRecognized = MutableStateFlow(false)
+    val isTriggerRecognized: StateFlow<Boolean> = _isTriggerRecognized.asStateFlow()
+
     private val _continuousListeningEnabled = MutableStateFlow(false)
     val continuousListeningEnabled: StateFlow<Boolean> =
         _continuousListeningEnabled.asStateFlow()
 
     private val _isWatchActive = MutableStateFlow(false)
     val isWatchActive: StateFlow<Boolean> = _isWatchActive.asStateFlow()
+
+    private val _isTransferring = MutableStateFlow(false)
+    val isTransferring: StateFlow<Boolean> = _isTransferring.asStateFlow()
+
+    private data class ListenerRuntime(
+        val state: ListenerState,
+        val trigger: Boolean,
+        val watch: Boolean,
+        val enabled: Boolean
+    )
+
+    private data class RecordingRuntime(
+        val recording: Boolean,
+        val processing: Boolean,
+        val elapsedSeconds: Long,
+        val error: String?
+    )
+
+    private val listenerRuntime = combine(
+        _listenerState,
+        _isTriggerRecognized,
+        _isWatchActive,
+        _continuousListeningEnabled
+    ) { state, trigger, watch, enabled -> ListenerRuntime(state, trigger, watch, enabled) }
+
+    private val recordingRuntime = combine(
+        RecordingState.isRecording,
+        RecordingState.isProcessing,
+        RecordingState.elapsedSeconds,
+        RecordingState.lastError
+    ) { recording, processing, elapsed, error ->
+        RecordingRuntime(recording, processing, elapsed, error)
+    }
+
+    val captureState: StateFlow<CaptureUiState> = combine(
+        listenerRuntime,
+        recordingRuntime,
+        _isTransferring
+    ) { listener, recording, transferring ->
+        resolveCaptureUiState(
+            listenerState = listener.state,
+            listeningEnabled = listener.enabled,
+            triggerRecognized = listener.trigger,
+            recording = recording.recording,
+            processing = recording.processing,
+            watchActive = listener.watch,
+            transferring = transferring,
+            elapsedSeconds = recording.elapsedSeconds,
+            hasError = recording.error != null
+        )
+    }.stateIn(scope, SharingStarted.Eagerly, CaptureUiState())
 
     private val _isLocationRunning = MutableStateFlow(false)
     val isLocationRunning: StateFlow<Boolean> = _isLocationRunning.asStateFlow()
@@ -231,13 +312,14 @@ object ServiceController {
      * after process recreation, _isRunning can be false while the user-facing
      * listening mode is still expected to resume when recording finishes.
      */
-    fun pauseListeningForRecording(context: Context, source: String = "recording_service_start") {
-        synchronized(transitionLock) {
-            pauseListeningForRecordingLocked(context, source)
-        }
+    fun pauseListeningForRecording(
+        context: Context,
+        source: String = "recording_service_start"
+    ): Boolean = synchronized(transitionLock) {
+        pauseListeningForRecordingLocked(context, source)
     }
 
-    private fun pauseListeningForRecordingLocked(context: Context, source: String) {
+    private fun pauseListeningForRecordingLocked(context: Context, source: String): Boolean {
         val shouldResumeListening = _isRunning.value || shouldBeRunning(context)
         if (!shouldResumeListening) {
             CaptureLog.event(
@@ -250,7 +332,16 @@ object ServiceController {
                     "shouldBeRunning" to false
                 )
             )
-            return
+            return false
+        }
+        if (!_isRunning.value && suspendReason(context) == SuspendReason.WATCH) {
+            CaptureLog.event(
+                gate = CaptureLog.Gate.SERVICE,
+                result = CaptureLog.Result.OK,
+                text = "phone_mic_used_while_watch_listens",
+                meta = mapOf("source" to source)
+            )
+            return false
         }
 
         setSuspendReason(context, SuspendReason.RECORDING)
@@ -265,6 +356,30 @@ object ServiceController {
                 "shouldResumeListening" to true
             )
         )
+        return true
+    }
+
+    /** Resume only a listener that this process suspended to release the phone microphone. */
+    fun resumeListeningAfterRecording(context: Context, source: String = "recording_finished") {
+        synchronized(transitionLock) {
+            if (!shouldBeRunning(context) || suspendReason(context) != SuspendReason.RECORDING) {
+                CaptureLog.event(
+                    gate = CaptureLog.Gate.SERVICE,
+                    result = CaptureLog.Result.OK,
+                    text = "listener_resume_skipped",
+                    meta = mapOf("source" to source, "suspendReason" to suspendReason(context).name)
+                )
+                return
+            }
+            setSuspendReason(context, SuspendReason.NONE)
+            ServiceWatchdogScheduler.schedule(context, reason = "resume:$source")
+            val intent = Intent(context, KeywordListenerService::class.java)
+            if (requestListenerStart(context, intent, reason = "resume:$source")) {
+                modeRef.set(ServiceMode.LISTENING)
+            } else {
+                modeRef.set(ServiceMode.IDLE)
+            }
+        }
     }
 
     /**
@@ -289,6 +404,8 @@ object ServiceController {
      */
     fun transferToWatch(context: Context, onResult: ((Boolean) -> Unit)? = null) {
         synchronized(transitionLock) {
+            if (_isTransferring.value) return
+            _isTransferring.value = true
             val wasListening = _isRunning.value
             val wasRecording = RecordingState.isRecording.value
 
@@ -311,17 +428,36 @@ object ServiceController {
 
                 if (!sent) {
                     restoreAfterFailedWatchTransfer(context, wasListening)
+                    _isTransferring.value = false
                     onResult?.invoke(false)
                     return@launch
                 }
 
                 delay(6_000)
                 if (_isWatchActive.value) {
+                    _isTransferring.value = false
                     onResult?.invoke(true)
                 } else {
                     restoreAfterFailedWatchTransfer(context, wasListening)
+                    _isTransferring.value = false
                     onResult?.invoke(false)
                 }
+            }
+        }
+    }
+
+    /** Return keyword listening to the phone after the watch had control. */
+    fun reclaimFromWatch(context: Context, onResult: ((Boolean) -> Unit)? = null) {
+        if (_isTransferring.value) return
+        _isTransferring.value = true
+        scope.launch {
+            try {
+                val watchReached = MicCoordinator.sendPause(context)
+                notifyWatchInactive()
+                start(context)
+                onResult?.invoke(watchReached)
+            } finally {
+                _isTransferring.value = false
             }
         }
     }
@@ -372,6 +508,19 @@ object ServiceController {
         return enabled
     }
 
+    /** Current cross-surface state, hydrating the persisted listening preference if needed. */
+    fun captureSnapshot(context: Context): CaptureUiState = resolveCaptureUiState(
+        listenerState = _listenerState.value,
+        listeningEnabled = shouldBeRunning(context),
+        triggerRecognized = _isTriggerRecognized.value,
+        recording = RecordingState.isRecording.value,
+        processing = RecordingState.isProcessing.value,
+        watchActive = _isWatchActive.value,
+        transferring = _isTransferring.value,
+        elapsedSeconds = RecordingState.elapsedSeconds.value,
+        hasError = RecordingState.lastError.value != null
+    )
+
     fun suspendReason(context: Context): SuspendReason {
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(KEY_SUSPEND_REASON, SuspendReason.NONE.name)
@@ -390,6 +539,10 @@ object ServiceController {
 
     fun notifyListening() = updateListenerState(ListenerState.LISTENING)
 
+    fun notifyTriggerRecognized(recognized: Boolean) {
+        _isTriggerRecognized.value = recognized && _listenerState.value == ListenerState.LISTENING
+    }
+
     fun notifyPaused() = updateListenerState(ListenerState.PAUSED)
 
     fun notifyFailed() = updateListenerState(ListenerState.FAILED)
@@ -404,6 +557,9 @@ object ServiceController {
     private fun updateListenerState(state: ListenerState) {
         _listenerState.value = state
         _isRunning.value = state != ListenerState.STOPPED
+        if (state != ListenerState.LISTENING) {
+            _isTriggerRecognized.value = false
+        }
     }
 
     private fun requestListenerStart(context: Context, intent: Intent, reason: String): Boolean {
@@ -446,5 +602,41 @@ object ServiceController {
 
     fun notifyLocationRunning(running: Boolean) {
         _isLocationRunning.value = running
+    }
+
+    internal fun resolveCaptureUiState(
+        listenerState: ListenerState,
+        listeningEnabled: Boolean,
+        triggerRecognized: Boolean,
+        recording: Boolean,
+        processing: Boolean,
+        watchActive: Boolean,
+        transferring: Boolean,
+        elapsedSeconds: Long,
+        hasError: Boolean
+    ): CaptureUiState {
+        val mode = when {
+            transferring -> CaptureMode.TRANSFERRING
+            recording -> CaptureMode.RECORDING
+            processing -> CaptureMode.PROCESSING
+            watchActive -> CaptureMode.WATCH
+            hasError || listenerState == ListenerState.FAILED -> CaptureMode.ERROR
+            triggerRecognized && listenerState == ListenerState.LISTENING ->
+                CaptureMode.TRIGGER_RECOGNIZED
+            listenerState == ListenerState.STARTING -> CaptureMode.STARTING
+            listenerState == ListenerState.LISTENING -> CaptureMode.LISTENING
+            listenerState == ListenerState.PAUSED -> CaptureMode.PAUSED
+            else -> CaptureMode.IDLE
+        }
+        return CaptureUiState(
+            mode = mode,
+            listeningActive = listeningEnabled || listenerState != ListenerState.STOPPED,
+            recording = recording,
+            processing = processing,
+            watchActive = watchActive,
+            transferring = transferring,
+            triggerRecognized = mode == CaptureMode.TRIGGER_RECOGNIZED,
+            elapsedSeconds = elapsedSeconds
+        )
     }
 }

@@ -1,6 +1,7 @@
 package com.trama.app.ui.screens
 
 import android.Manifest
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -56,6 +57,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -78,6 +80,9 @@ import com.trama.app.ui.components.EntryCard
 import com.trama.app.ui.components.RecordingCard
 import com.trama.app.ui.components.SwipeableReminderCard
 import com.trama.app.ui.theme.TimelineAccentConfig
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.EntryStatus
 import com.trama.shared.model.Recording
@@ -357,6 +362,7 @@ internal fun LazyListScope.timelineListContent(
         when (event) {
             is TimelineEventUi.EntryCreated -> {
                 val context = LocalContext.current
+                val actionScope = rememberCoroutineScope()
                 val quickAction = remember(
                     event.entry.id,
                     event.entry.actionType,
@@ -370,43 +376,16 @@ internal fun LazyListScope.timelineListContent(
                 var pendingCalendarAction by remember(event.entry.id) { mutableStateOf<com.trama.app.summary.SuggestedAction?>(null) }
                 val calendarPermissionLauncher = rememberLauncherForActivityResult(
                     ActivityResultContracts.RequestMultiplePermissions()
-                ) { result ->
-                    val granted = result[Manifest.permission.READ_CALENDAR] == true &&
-                        result[Manifest.permission.WRITE_CALENDAR] == true
-                    if (granted) {
-                        editingCalendarAction = pendingCalendarAction
-                    }
+                ) { _ ->
+                    editingCalendarAction = pendingCalendarAction
                     pendingCalendarAction = null
                 }
 
                 editingCalendarAction?.let { action ->
-                    val isReminder = action.type == ActionType.REMINDER
-                    CalendarActionDialog(
+                    com.trama.app.ui.components.EntryCalendarActionDialog(
+                        entryId = event.entry.id,
                         action = action,
-                        dialogTitle = if (isReminder) "Crear recordatorio" else "Añadir al calendario",
-                        confirmLabel = if (isReminder) "Crear" else "Añadir",
-                        onDismiss = { editingCalendarAction = null },
-                        onConfirm = { title, description, date, time, calendarId ->
-                            val datetime = "${date}T${time}"
-                            val updatedAction = action.copy(title = title, description = description, datetime = datetime)
-                            val startMillis = try {
-                                SimpleDateFormat("yyyy-MM-dd'T'HH:mm", Locale.getDefault()).parse(datetime)?.time
-                            } catch (_: Exception) { null }
-
-                            if (startMillis != null && calendarId != null) {
-                                CalendarHelper.insertEventInCalendar(
-                                    context = context,
-                                    calendarId = calendarId,
-                                    title = title,
-                                    description = description.ifBlank { null },
-                                    startMillis = startMillis,
-                                    reminderMinutes = if (isReminder) 15 else 0
-                                )
-                            } else {
-                                CalendarHelper.insertEventFromAction(context, updatedAction, isReminder = isReminder)
-                            }
-                            editingCalendarAction = null
-                        }
+                        onDismiss = { editingCalendarAction = null }
                     )
                 }
                 SwipeableReminderCard(
@@ -641,11 +620,12 @@ internal fun LazyListScope.timelineListContent(
                     TimelinePlaceRow(
                         modifier = itemModifier,
                         title = title,
-                        duration = DwellDurationFormatter.formatHours(
-                            event.event.timestamp,
-                            event.event.endTimestamp
-                        ),
-                        eyebrow = if (event.event.isHighlight) "Lugar nuevo" else "Lugar",
+                        duration = DwellDurationFormatter.formatVisit(event.event),
+                        eyebrow = when {
+                            event.event.source == TimelineEventSource.MANUAL -> "Anotado por ti"
+                            event.event.isHighlight -> "Detectado · lugar nuevo"
+                            else -> "Detectado"
+                        },
                         accent = accent,
                         isSelectionMode = isSelectionMode,
                         isSelected = isSelected,
@@ -718,7 +698,11 @@ private fun buildLocationTimelineSections(events: List<TimelineEventUi>): List<T
         .sortedBy { it.timestamp }
         .forEach { event ->
             val location = dwellEvents.lastOrNull { dwell ->
-                val end = dwell.endTimestamp ?: Long.MAX_VALUE
+                val end = if (DwellDurationFormatter.isActive(dwell)) {
+                    Long.MAX_VALUE
+                } else {
+                    dwell.endTimestamp ?: dwell.timestamp
+                }
                 event.timestamp >= dwell.timestamp && event.timestamp <= end
             }
             if (location != null) {
@@ -768,11 +752,16 @@ private fun LocationTimelineHeader(
     modifier: Modifier = Modifier
 ) {
     val location = section.locationEvent
-    val timeLabel = section.endTimestamp?.let { end ->
-        "${hourFormat.format(Date(section.startTimestamp))}-${hourFormat.format(Date(end))}"
-    } ?: hourFormat.format(Date(section.startTimestamp))
+    val active = location?.let(DwellDurationFormatter::isActive) == true
+    val timeLabel = if (active) {
+        "Desde ${hourFormat.format(Date(section.startTimestamp))}"
+    } else {
+        section.endTimestamp?.let { end ->
+            "${hourFormat.format(Date(section.startTimestamp))}-${hourFormat.format(Date(end))}"
+        } ?: hourFormat.format(Date(section.startTimestamp))
+    }
     val duration = location?.let {
-        DwellDurationFormatter.formatHours(it.timestamp, it.endTimestamp)
+        DwellDurationFormatter.formatVisit(it)
     }
 
     Surface(
@@ -800,7 +789,7 @@ private fun LocationTimelineHeader(
             Spacer(Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "$timeLabel ${section.title}",
+                    text = "$timeLabel · ${section.title}",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -927,7 +916,7 @@ private fun Long.hourBucket(): Long = this / 3_600_000L
 private fun Long.hourStartMillis(): Long = hourBucket() * 3_600_000L
 
 private fun DiaryEntry.isLiveAction(): Boolean =
-    status != EntryStatus.COMPLETED && status != EntryStatus.DISCARDED
+    status == EntryStatus.PENDING
 
 @Composable
 private fun TimelineCornerAccent(

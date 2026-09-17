@@ -131,6 +131,7 @@ class RecordingService : LifecycleService() {
                     return@launch
                 }
                 durableId = id
+                RecordingState.setActiveRecordingId(id)
                 val activeCapture = DurablePcmCapture(applicationContext)
                 capture = activeCapture
                 if (!isActive) activeCapture.requestStop()
@@ -222,7 +223,10 @@ class RecordingService : LifecycleService() {
 
         if (ServiceController.shouldBeRunning(this@RecordingService)) {
             Log.i(TAG, "Resuming KeywordListenerService after recording")
-            ServiceController.start(this@RecordingService)
+            ServiceController.resumeListeningAfterRecording(
+                this@RecordingService,
+                source = "meeting_recording"
+            )
         }
 
         capture = null

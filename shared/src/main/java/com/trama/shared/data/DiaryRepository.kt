@@ -7,6 +7,7 @@ import com.trama.shared.model.DwellDetectionState
 import com.trama.shared.model.Place
 import com.trama.shared.model.Recording
 import com.trama.shared.model.TimelineEvent
+import com.trama.shared.util.DayRange
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 
@@ -61,9 +62,20 @@ class DiaryRepository(
 
     suspend fun delete(entry: DiaryEntry) = dao.delete(entry)
 
-    suspend fun deleteById(id: Long) = dao.deleteById(id)
+    suspend fun deleteById(id: Long) = withTransaction {
+        val entry = dao.getByIdOnce(id)
+        dao.deleteFamiliesByIds(listOf(id))
+        entry?.let { dailyPageDao?.deleteByDay(DayRange.of(it.createdAt).startMs) }
+    }
 
-    suspend fun updateText(id: Long, text: String) = dao.updateText(id, text)
+    suspend fun updateText(id: Long, text: String) = withTransaction {
+        val entry = dao.getByIdOnce(id)
+        val changed = dao.updateText(id, text)
+        if (changed > 0) entry?.let {
+            dailyPageDao?.deleteByDay(DayRange.of(it.createdAt).startMs)
+        }
+        changed
+    }
 
     suspend fun updateCreatedAt(id: Long, createdAt: Long) = dao.updateCreatedAt(id, createdAt)
 
@@ -77,7 +89,10 @@ class DiaryRepository(
     suspend fun getByCreatedAtAndText(createdAt: Long, text: String): DiaryEntry? =
         dao.getByCreatedAtAndText(createdAt, text)
 
-    suspend fun deleteByIds(ids: List<Long>) = dao.deleteByIds(ids)
+    suspend fun getBySourceCaptureId(sourceCaptureId: String): DiaryEntry? =
+        dao.getBySourceCaptureId(sourceCaptureId)
+
+    suspend fun deleteByIds(ids: List<Long>) = dao.deleteFamiliesByIds(ids)
 
     suspend fun updateLLMReview(id: Long, correctedText: String?, confidence: Float) =
         dao.updateLLMReview(id, correctedText, confidence)
@@ -88,6 +103,10 @@ class DiaryRepository(
     suspend fun markCompleted(id: Long) = dao.markCompleted(id)
 
     suspend fun markDiscarded(id: Long) = dao.markDiscarded(id)
+
+    suspend fun restoreDiscardedSuggestion(id: Long) = dao.restoreDiscardedSuggestion(id)
+
+    suspend fun autoDiscard(id: Long, expectedRevision: Long) = dao.autoDiscard(id, expectedRevision)
 
     suspend fun markSuggested(id: Long) = dao.markSuggested(id)
 
@@ -102,11 +121,27 @@ class DiaryRepository(
         dueDate: Long?, priority: String, confidence: Float
     ) = dao.updateAIProcessing(id, cleanText, actionType, dueDate, priority, confidence)
 
+    suspend fun applyUserReanalysis(
+        id: Long, inputText: String, cleanText: String, actionType: String,
+        dueDate: Long?, priority: String, confidence: Float
+    ) = dao.applyUserReanalysis(id, inputText, cleanText, actionType, dueDate, priority, confidence)
+
+    suspend fun getDerivedAction(parentEntryId: Long, sourceCaptureId: String): DiaryEntry? =
+        dao.getDerivedAction(parentEntryId, sourceCaptureId)
+
+    suspend fun updateExternalState(id: Long, state: String, eventId: Long?) =
+        dao.updateExternalState(id, state, eventId)
+
+    suspend fun supersedeDerivedActions(parentEntryId: Long, keepSourceCaptureId: String): Int =
+        dao.supersedeDerivedActions(parentEntryId, keepSourceCaptureId)
+
     fun getLatest(): Flow<DiaryEntry?> = dao.getLatest().distinctUntilChanged()
 
     fun getLatestPending(): Flow<DiaryEntry?> = dao.getLatestPending().distinctUntilChanged()
 
     suspend fun getLatestPendingOnce(): DiaryEntry? = dao.getLatestPendingOnce()
+
+    suspend fun getLatestMemoryOnce(): DiaryEntry? = dao.getLatestMemoryOnce()
 
     fun countAll(): Flow<Int> = dao.countAll().distinctUntilChanged()
 
@@ -116,7 +151,12 @@ class DiaryRepository(
 
     suspend fun markDuplicate(id: Long, originalId: Long) = dao.markDuplicate(id, originalId)
 
+    suspend fun updateParentEntry(id: Long, parentEntryId: Long?) =
+        dao.updateParentEntry(id, parentEntryId)
+
     suspend fun clearDuplicate(id: Long) = dao.clearDuplicate(id)
+
+    suspend fun discardDuplicate(id: Long): Int = dao.discardDuplicate(id)
 
     fun getDuplicates(): Flow<List<DiaryEntry>> = dao.getDuplicates().distinctUntilChanged()
 
@@ -147,8 +187,16 @@ class DiaryRepository(
 
     // ── Recording ──
 
+    fun getRecordingsByDateRange(start: Long, end: Long): Flow<List<Recording>> =
+        recordingDao?.getByDateRange(start, end)?.distinctUntilChanged()
+            ?: kotlinx.coroutines.flow.flowOf(emptyList())
+
     fun getAllRecordings(): Flow<List<Recording>> =
         recordingDao?.getAll()?.distinctUntilChanged()
+            ?: kotlinx.coroutines.flow.flowOf(emptyList())
+
+    fun searchRecordings(query: String): Flow<List<Recording>> =
+        recordingDao?.search(query)?.distinctUntilChanged()
             ?: kotlinx.coroutines.flow.flowOf(emptyList())
 
     fun getRecordingById(id: Long): Flow<Recording?> =
@@ -200,6 +248,13 @@ class DiaryRepository(
         processedLocally: Boolean = false, processedBy: String? = null
     ) = recordingDao?.updateProcessingResult(id, title, summary, keyPoints, status, processedLocally, processedBy)
 
+    suspend fun updateRecordingNotes(
+        id: Long,
+        title: String?,
+        summary: String?,
+        keyPoints: String?
+    ) = recordingDao?.updateNotes(id, title, summary, keyPoints)
+
     fun recordingCount(): Flow<Int> =
         recordingDao?.count()?.distinctUntilChanged()
             ?: kotlinx.coroutines.flow.flowOf(0)
@@ -225,6 +280,10 @@ class DiaryRepository(
     suspend fun getAllTimelineEventsOnce(): List<TimelineEvent> =
         timelineEventDao?.getAllOnce() ?: emptyList()
 
+    fun getCalendarEventsOverlapping(startTime: Long, endTime: Long): Flow<List<TimelineEvent>> =
+        timelineEventDao?.calendarOverlapping(startTime, endTime)?.distinctUntilChanged()
+            ?: kotlinx.coroutines.flow.flowOf(emptyList())
+
     fun getTimelineEventsByDateRange(startTime: Long, endTime: Long): Flow<List<TimelineEvent>> =
         timelineEventDao?.byDateRange(startTime, endTime)?.distinctUntilChanged()
             ?: kotlinx.coroutines.flow.flowOf(emptyList())
@@ -243,6 +302,9 @@ class DiaryRepository(
 
     suspend fun getLatestTimelineEventByType(type: String): TimelineEvent? =
         timelineEventDao?.getLatestByType(type)
+
+    suspend fun getDwellTimelineEventByStart(startTimestamp: Long): TimelineEvent? =
+        timelineEventDao?.getDwellByStart(startTimestamp)
 
     suspend fun getTimelineEventByTypeSourceAndDataJson(
         type: String,
@@ -282,6 +344,10 @@ class DiaryRepository(
 
     fun getPlaces(): Flow<List<Place>> =
         placeDao?.getAll()?.distinctUntilChanged()
+            ?: kotlinx.coroutines.flow.flowOf(emptyList())
+
+    fun searchPlaces(query: String): Flow<List<Place>> =
+        placeDao?.search(query)?.distinctUntilChanged()
             ?: kotlinx.coroutines.flow.flowOf(emptyList())
 
     fun getPlaceById(id: Long): Flow<Place?> =

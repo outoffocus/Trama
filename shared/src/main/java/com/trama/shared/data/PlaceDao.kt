@@ -17,6 +17,20 @@ interface PlaceDao {
     @Query("SELECT * FROM places ORDER BY updatedAt DESC")
     suspend fun getAllOnce(): List<Place>
 
+    @Query(
+        """
+        SELECT * FROM places
+        WHERE name LIKE '%' || :query || '%' COLLATE NOCASE
+           OR COALESCE(type, '') LIKE '%' || :query || '%' COLLATE NOCASE
+           OR COALESCE(locality, '') LIKE '%' || :query || '%' COLLATE NOCASE
+           OR COALESCE(address, '') LIKE '%' || :query || '%' COLLATE NOCASE
+           OR COALESCE(opinionText, '') LIKE '%' || :query || '%' COLLATE NOCASE
+           OR COALESCE(opinionSummary, '') LIKE '%' || :query || '%' COLLATE NOCASE
+        ORDER BY COALESCE(lastVisitAt, createdAt) DESC
+        """
+    )
+    fun search(query: String): Flow<List<Place>>
+
     @Query("SELECT * FROM places WHERE id = :id")
     fun getById(id: Long): Flow<Place?>
 

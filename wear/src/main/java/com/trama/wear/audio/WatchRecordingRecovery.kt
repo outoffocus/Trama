@@ -31,7 +31,7 @@ object WatchRecordingRecovery {
             )
             runCatching { syncer.syncRecordingAudio(bytes, metadata) }
                 .onSuccess {
-                    file.delete()
+                    if (capture.kind == "CONTEXTUAL_TRIGGER") file.delete()
                     Log.i(TAG, "Recovered and synced ${file.name}")
                 }
                 .onFailure { Log.w(TAG, "Pending watch audio remains for retry", it) }

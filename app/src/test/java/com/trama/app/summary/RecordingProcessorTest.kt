@@ -73,7 +73,11 @@ class RecordingProcessorTest {
 
     @Test
     fun `buildPrompt contains transcription and structured keys`() {
-        val prompt = callPrivate<String>("buildPrompt", "hoy hable con el cliente")
+        val prompt = callPrivate<String>(
+            "buildPrompt",
+            "hoy hable con el cliente",
+            1_700_000_000_000L
+        )
         assertTrue(prompt.contains("hoy hable con el cliente"))
         assertTrue(prompt.contains("\"title\""))
         assertTrue(prompt.contains("\"summary\""))
@@ -90,6 +94,17 @@ class RecordingProcessorTest {
         assertTrue((readField(analysis, "summary") as String).isNotBlank())
         assertTrue((readField(analysis, "summary") as String).length <= 1_203)
         assertTrue((readField(analysis, "actionItems") as List<*>).isEmpty())
+    }
+
+    @Test
+    fun `long transcript is split without loss or oversized model requests`() {
+        val transcript = (1..2_000).joinToString(" ") { "palabra$it" }
+
+        val segments = callPrivate<List<String>>("splitTranscriptForAnalysis", transcript, 1_000)
+
+        assertTrue(segments.size > 1)
+        assertTrue(segments.all { it.length <= 1_000 })
+        assertEquals(transcript, segments.joinToString(" "))
     }
 
     private fun diaryEntry(id: Long, text: String) = DiaryEntry(

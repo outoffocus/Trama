@@ -29,7 +29,15 @@ data class CaptureMetrics(
                 it.gate == CaptureLog.Gate.SERVICE.name && it.text == "heartbeat"
             } * 0.25
             val hours = if (heartbeatHours > 0.0) heartbeatHours else elapsedHours
-            val gateEvaluations = events.count { it.gate == CaptureLog.Gate.ASR_GATE.name }
+            val gateEvaluations = events.count {
+                it.gate == CaptureLog.Gate.ASR_GATE.name &&
+                    it.text !in setOf(
+                        "segment_finalized",
+                        "gate_eval_skipped",
+                        "uncertain_gate_fallback_blocked"
+                    ) &&
+                    it.meta["reason"] != "uncertain_gate_fallback"
+            }
             val whisper = events.count {
                 it.gate == CaptureLog.Gate.ASR_FINAL.name && it.result == CaptureLog.Result.OK.name
             }
@@ -63,7 +71,8 @@ data class CaptureMetrics(
                     it.meta["reason"] == "unmatched_segment_cap"
             }
             val likelyNoise = events.count {
-                it.gate == CaptureLog.Gate.USER_DELETE.name && it.meta["likelyNoise"] == "true"
+                it.gate == CaptureLog.Gate.USER_DELETE.name &&
+                    (it.meta["likelyNoise"] == "true" || it.meta["reason"] == "noise")
             }
             val shadowCandidates = events.count {
                 it.gate == CaptureLog.Gate.INTENT.name && it.meta["shadow"] == "true"
