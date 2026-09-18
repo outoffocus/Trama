@@ -76,9 +76,8 @@ import com.trama.app.summary.EntryActionBridge
 import com.trama.app.service.EntryProcessingState
 import com.trama.app.location.DwellDurationFormatter
 import com.trama.app.ui.components.CalendarActionDialog
-import com.trama.app.ui.components.EntryCard
-import com.trama.app.ui.components.RecordingCard
 import com.trama.app.ui.components.SwipeableReminderCard
+import com.trama.app.ui.components.TramaCard
 import com.trama.app.ui.theme.TimelineAccentConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -345,7 +344,7 @@ internal fun LazyListScope.timelineListContent(
     selectedEventIds: Set<Long> = emptySet(),
     onEventSelectionChange: ((Long, Boolean) -> Unit)? = null,
     onEnterEventSelectionMode: ((Long) -> Unit)? = null,
-    showTimeMarkers: Boolean = true,
+    showTimeMarkers: Boolean = false,
 ) {
     items(
         count = events.size,
@@ -399,12 +398,20 @@ internal fun LazyListScope.timelineListContent(
                         onPostponeEntry?.invoke(event.entry, dueDate, label)
                     }
                 ) {
-                    EntryCard(
+                    TramaCard(
                         modifier = itemModifier,
-                        entry = event.entry,
-                        accentColor = accentConfig.pending,
-                        quickActionLabel = quickAction?.label,
-                        quickActionIcon = quickAction?.icon,
+                        eyebrow = when {
+                            event.entry.id in processingEntryIds &&
+                                processingBackends[event.entry.id] == EntryProcessingState.Backend.LOCAL ->
+                                "Analizando en el dispositivo"
+                            event.entry.id in processingEntryIds -> "Analizando"
+                            event.entry.status == EntryStatus.SUGGESTED -> "Sugerida"
+                            else -> com.trama.shared.model.EntryActionType.label(event.entry.actionType)
+                        },
+                        title = event.entry.displayText,
+                        accent = accentConfig.pending,
+                        meta = hourFormat.format(Date(event.timestamp)),
+                        selected = event.entry.id in selectedEntryIds,
                         onClick = {
                             if (isSelectionMode && onEntrySelectionChange != null) {
                                 onEntrySelectionChange(
@@ -415,35 +422,58 @@ internal fun LazyListScope.timelineListContent(
                                 onEntryClick(event.entry.id)
                             }
                         },
-                        onQuickActionClick = quickAction?.let { action ->
-                            {
-                                if (action.action.type == ActionType.CALENDAR_EVENT || action.action.type == ActionType.REMINDER) {
-                                    if (CalendarHelper.hasWriteCalendarPermission(context)) {
-                                        editingCalendarAction = action.action
-                                    } else {
-                                        pendingCalendarAction = action.action
-                                        calendarPermissionLauncher.launch(
-                                            arrayOf(
-                                                Manifest.permission.READ_CALENDAR,
-                                                Manifest.permission.WRITE_CALENDAR
-                                            )
-                                        )
-                                    }
-                                } else {
-                                    ActionExecutor.execute(context, action.action)
-                                }
-                            }
-                        },
                         onLongClick = if (onEnterEntrySelectionMode != null && !isSelectionMode) {
                             { onEnterEntrySelectionMode(event.entry.id) }
                         } else null,
-                        onToggleComplete = if (event.entry.isLiveAction() && onToggleComplete != null) {
-                            { onToggleComplete(event.entry) }
-                        } else null,
-                        isProcessing = event.entry.id in processingEntryIds,
-                        processingBackend = processingBackends[event.entry.id],
-                        isSelectionMode = isSelectionMode,
-                        isSelected = event.entry.id in selectedEntryIds
+                        leading = {
+                            if (isSelectionMode) {
+                                Checkbox(
+                                    checked = event.entry.id in selectedEntryIds,
+                                    onCheckedChange = null,
+                                    modifier = Modifier.size(30.dp)
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(30.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.background)
+                                        .border(2.dp, accentConfig.pending, CircleShape)
+                                )
+                            }
+                        },
+                        trailing = quickAction?.let { action ->
+                            {
+                                Surface(
+                                    onClick = {
+                                        if (action.action.type == ActionType.CALENDAR_EVENT || action.action.type == ActionType.REMINDER) {
+                                            if (CalendarHelper.hasWriteCalendarPermission(context)) {
+                                                editingCalendarAction = action.action
+                                            } else {
+                                                pendingCalendarAction = action.action
+                                                calendarPermissionLauncher.launch(
+                                                    arrayOf(
+                                                        Manifest.permission.READ_CALENDAR,
+                                                        Manifest.permission.WRITE_CALENDAR
+                                                    )
+                                                )
+                                            }
+                                        } else {
+                                            ActionExecutor.execute(context, action.action)
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = accentConfig.pending.copy(alpha = 0.12f)
+                                ) {
+                                    Text(
+                                        action.label,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = accentConfig.pending,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                        }
                     )
                 }
             }
@@ -456,7 +486,8 @@ internal fun LazyListScope.timelineListContent(
                         title = event.entry.displayText,
                         body = "Marcada como resuelta",
                         accent = accentConfig.completed,
-                        meta = null,
+                        meta = hourFormat.format(Date(event.timestamp)),
+                        dimmed = true,
                         isSelectionMode = isSelectionMode,
                         isSelected = isSelected,
                         onLongClick = if (onEnterEntrySelectionMode != null && !isSelectionMode) {
@@ -492,10 +523,13 @@ internal fun LazyListScope.timelineListContent(
             }
             is TimelineEventUi.RecordingCaptured -> {
                 val isSelected = event.recording.id in selectedRecordingIds
-                RecordingCard(
+                TimelineStatusCard(
                     modifier = itemModifier,
-                    recording = event.recording,
-                    accentColor = accentConfig.recording,
+                    eyebrow = "Reunión",
+                    title = event.recording.title?.ifBlank { null } ?: "Grabación",
+                    body = event.recording.summary.orEmpty(),
+                    accent = accentConfig.recording,
+                    meta = hourFormat.format(Date(event.timestamp)),
                     isSelectionMode = isSelectionMode,
                     isSelected = isSelected,
                     onLongClick = if (onEnterRecordingSelectionMode != null && !isSelectionMode) {
@@ -507,6 +541,14 @@ internal fun LazyListScope.timelineListContent(
                         } else {
                             onRecordingClick(event.recording.id)
                         }
+                    },
+                    iconShape = CircleShape,
+                    icon = {
+                        Icon(
+                            Icons.Default.Mic,
+                            contentDescription = null,
+                            tint = accentConfig.recording
+                        )
                     }
                 )
             }
@@ -518,7 +560,7 @@ internal fun LazyListScope.timelineListContent(
                     title = calendarEvent.title,
                     body = "",
                     accent = accentConfig.calendar,
-                    meta = null,
+                    meta = if (calendarEvent.allDay) "Todo el día" else hourFormat.format(Date(event.timestamp)),
                     // Sharp-cornered glyph reads as "scheduled slot" / document,
                     // not a free-form note.
                     iconShape = RoundedCornerShape(2.dp),
@@ -577,7 +619,7 @@ internal fun LazyListScope.timelineListContent(
                             title = title,
                             body = "",
                             accent = accentConfig.calendar,
-                            meta = null,
+                            meta = hourFormat.format(Date(event.timestamp)),
                             quickActionLabel = if (!isSelectionMode && onToggleCalendarComplete != null) {
                                 if (completed) "Reabrir" else "Hecho"
                             } else null,
@@ -645,7 +687,7 @@ internal fun LazyListScope.timelineListContent(
                         title = title,
                         body = event.event.subtitle ?: "Evento automático",
                         accent = accent,
-                        meta = null,
+                        meta = hourFormat.format(Date(event.timestamp)),
                         isSelectionMode = isSelectionMode,
                         isSelected = isSelected,
                         onLongClick = if (onEnterEventSelectionMode != null && !isSelectionMode) {
@@ -941,6 +983,7 @@ private fun TimelineStatusCard(
     body: String,
     accent: Color,
     meta: String? = null,
+    dimmed: Boolean = false,
     onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
     quickActionLabel: String? = null,
@@ -959,6 +1002,7 @@ private fun TimelineStatusCard(
         accent = accent,
         modifier = modifier,
         meta = meta,
+        dimmed = dimmed,
         selected = isSelected,
         onClick = onClick,
         onLongClick = onLongClick,

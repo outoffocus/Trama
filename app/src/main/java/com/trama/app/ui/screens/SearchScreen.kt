@@ -34,15 +34,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.trama.app.service.EntryProcessingState
 import com.trama.shared.data.DatabaseProvider
-import com.trama.app.ui.SettingsDataStore
-import com.trama.app.ui.components.EntryCard
-import com.trama.app.ui.theme.timelineAccentColor
+import com.trama.shared.model.EntryActionType
 import com.trama.shared.model.EntryStatus
+import com.trama.shared.model.Source
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 private enum class MemoryFilter(val label: String) {
     ALL("Todo"),
@@ -62,7 +63,7 @@ fun SearchScreen(
 ) {
     val context = LocalContext.current
     val repository = remember { DatabaseProvider.getRepository(context) }
-    val settings = remember { SettingsDataStore(context) }
+    val dateFormat = remember { SimpleDateFormat("d MMM yyyy", Locale("es")) }
     var query by remember { mutableStateOf("") }
     var selectedFilter by remember { mutableStateOf(MemoryFilter.ALL) }
     val queryTerms = remember(query) { SearchQuery.terms(query) }
@@ -83,13 +84,6 @@ fun SearchScreen(
         if (query.isNotBlank()) intersectingSearch(queryTerms, repository::searchRecordings) { it.id }
         else flowOf(emptyList())
     ).collectAsState(initialValue = null)
-    val processingEntryIds by EntryProcessingState.processingIds.collectAsState()
-    val processingBackends by EntryProcessingState.processingBackends.collectAsState()
-    val pendingColorIndex by settings.timelineColorPending.collectAsState(
-        initialValue = SettingsDataStore.DEFAULT_TIMELINE_COLOR_PENDING
-    )
-    val pendingAccent = remember(pendingColorIndex) { timelineAccentColor(pendingColorIndex) }
-
     val isSearching = query.isNotBlank() &&
         (entryResultsState == null || placeResultsState == null || recordingResultsState == null)
     val recentEntries = remember(allEntries) {
@@ -212,7 +206,8 @@ fun SearchScreen(
                                 Text(
                                     listOfNotNull(
                                         place.locality,
-                                        place.opinionSummary ?: place.type
+                                        place.opinionSummary ?: place.type,
+                                        dateFormat.format(Date(place.lastVisitAt ?: place.updatedAt))
                                     ).joinToString(" · ").ifBlank { "Lugar visitado" }
                                 )
                             },
@@ -227,7 +222,11 @@ fun SearchScreen(
                             headlineContent = { Text(recording.title ?: "Grabación") },
                             supportingContent = {
                                 Text(
-                                    recording.summary ?: recording.transcription,
+                                    listOf(
+                                        dateFormat.format(Date(recording.createdAt)),
+                                        sourceLabel(recording.source),
+                                        recording.summary ?: recording.transcription
+                                    ).filter { it.isNotBlank() }.joinToString(" · "),
                                     maxLines = 2
                                 )
                             },
@@ -238,18 +237,34 @@ fun SearchScreen(
                         item("entries_header") { ResultHeader("Notas y tareas") }
                     }
                     items(entries, key = { "entry_${it.id}" }) { entry ->
-                        EntryCard(
-                            entry = entry,
-                            accentColor = pendingAccent,
-                            isProcessing = entry.id in processingEntryIds,
-                            processingBackend = processingBackends[entry.id],
-                            onClick = { onEntryClick(entry.id) }
+                        ListItem(
+                            overlineContent = {
+                                Text(
+                                    if (entry.status == EntryStatus.SUGGESTED) "Sugerida"
+                                    else EntryActionType.label(entry.actionType)
+                                )
+                            },
+                            headlineContent = {
+                                Text(entry.displayText, maxLines = 2)
+                            },
+                            supportingContent = {
+                                Text(
+                                    "${dateFormat.format(Date(entry.createdAt))} · ${sourceLabel(entry.source)}"
+                                )
+                            },
+                            modifier = Modifier.clickable { onEntryClick(entry.id) }
                         )
                     }
                 }
             }
         }
     }
+}
+
+private fun sourceLabel(source: Source): String = when (source) {
+    Source.PHONE -> "Teléfono"
+    Source.WATCH -> "Reloj"
+    Source.SCREENSHOT -> "Captura de pantalla"
 }
 
 private fun <T, K> intersectingSearch(

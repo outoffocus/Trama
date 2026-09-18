@@ -116,6 +116,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.core.content.ContextCompat
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -311,12 +312,6 @@ fun CalendarScreen(
     val suggestedEntries = timelineSuggestions(visiblePendingOnDay, locallyDismissedSuggestionIds)
     val acceptedPendingOnDay = visiblePendingOnDay.filter { it.status == EntryStatus.PENDING }
     var reviewExpanded by rememberSaveable { mutableStateOf(false) }
-    val upcomingEvents by viewModel.upcomingEvents.collectAsStateWithLifecycle()
-    val upcomingNow by viewModel.now.collectAsStateWithLifecycle()
-    val nextCommitments = com.trama.app.summary.UpcomingCommitments.selectAfterDay(
-        allPendingForOriginalLookup, upcomingEvents.orEmpty(), selectedDayEnd,
-        Calendar.getInstance().apply { timeInMillis = upcomingNow; add(Calendar.DAY_OF_YEAR, 60) }.timeInMillis
-    )
     val completedTasks = completedOnDayState ?: emptyList()
     val activeSelectedDayEvents = remember(selectedDayEvents) {
         selectedDayEvents.filter { it.type != TimelineEventType.CALENDAR || it.completedAt == null }
@@ -379,23 +374,11 @@ fun CalendarScreen(
         cal.set(Calendar.SECOND, 59); cal.set(Calendar.MILLISECOND, 999)
         cal.timeInMillis
     }
-    val endOfNextWeek = remember(endOfThisWeek) { endOfThisWeek + 7L * 24 * 3600 * 1000 }
     val upcomingThisWeek = remember(allPendingForOriginalLookup, todayStart, endOfThisWeek, duplicateIds) {
         allPendingForOriginalLookup.filter {
             it.id !in duplicateIds && (it.dueDate ?: Long.MIN_VALUE) in todayStart..endOfThisWeek
         }.sortedBy { it.dueDate ?: 0L }
     }
-    val upcomingNextWeek = remember(allPendingForOriginalLookup, endOfThisWeek, endOfNextWeek, duplicateIds) {
-        allPendingForOriginalLookup.filter {
-            it.id !in duplicateIds && (it.dueDate ?: Long.MIN_VALUE) in (endOfThisWeek + 1)..endOfNextWeek
-        }.sortedBy { it.dueDate ?: 0L }
-    }
-    val upcomingLater = remember(allPendingForOriginalLookup, endOfNextWeek, duplicateIds) {
-        allPendingForOriginalLookup.filter {
-            it.id !in duplicateIds && (it.dueDate ?: Long.MIN_VALUE) > endOfNextWeek
-        }.sortedBy { it.dueDate ?: 0L }
-    }
-    val upcomingTotal = upcomingThisWeek.size + upcomingNextWeek.size + upcomingLater.size
     val todayTimelineEvents = remember(
         entriesCreatedOnDay,
         todayPendingOccurrences,
@@ -863,6 +846,12 @@ fun CalendarScreen(
                     status = headerStatus,
                     statusLabel = headerStatusLabel,
                     locationRunning = locationRunning,
+                    completedTaskCount = completedTasks.size,
+                    totalTaskCount = completedTasks.size + todayTimelineEvents
+                        .mapNotNull { (it as? TimelineEventUi.EntryCreated)?.entry }
+                        .filter { it.status == EntryStatus.PENDING }
+                        .distinctBy { it.id }
+                        .size,
                     onAddClick = { viewModel.openCapture(selectedDayStart) },
                     onSearchClick = onSearchClick,
                     onRecordingsListClick = onRecordingsListClick,
@@ -933,63 +922,6 @@ fun CalendarScreen(
                     contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 10.dp, bottom = if (selectionMode) 24.dp else 210.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    if (duplicateEntries.isNotEmpty() || suggestedEntries.isNotEmpty()) {
-                        item("review_header") {
-                            CollapsibleSectionHeader(
-                                title = "Por revisar", count = duplicateEntries.size + suggestedEntries.size,
-                                expanded = reviewExpanded, onClick = { reviewExpanded = !reviewExpanded }
-                            )
-                        }
-                        if (reviewExpanded) {
-                            item("review_explanation") {
-                                Text(
-                                    "Añade a pendientes lo que quieras conservar. Todavía no está confirmado.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 2.dp)
-                                )
-                            }
-                            items(duplicateEntries, key = { "dup_${it.id}" }) { entry ->
-                                DuplicateCard(entry = entry,
-                                    originalText = allPendingForOriginalLookup.find { it.id == entry.duplicateOfId }?.displayText,
-                                    onKeep = { keepDuplicate(entry) }, onDelete = { deleteDuplicate(entry) })
-                            }
-                            items(suggestedEntries, key = { "suggestion_${it.id}" }) { entry ->
-                                SuggestedReviewCard(
-                                    entry = entry,
-                                    onOpen = { onEntryClick(entry.id) },
-                                    onAccept = { markEntryCompleted(entry) },
-                                    onDismiss = { dismissSuggested(entry) }
-                                )
-                            }
-                        }
-                    }
-                    if (pendingOtherDays.isNotEmpty()) {
-                        item("other_days_header") {
-                            CollapsibleSectionHeader(
-                                title = "Pendiente de otros días",
-                                count = pendingOtherDays.size,
-                                expanded = otherDaysExpanded,
-                                onClick = { otherDaysExpanded = !otherDaysExpanded }
-                            )
-                        }
-                        if (otherDaysExpanded) {
-                            pendingEntrySection(
-                                keyPrefix = "pending_other_days_",
-                                entries = pendingOtherDays,
-                                selectedEntryIds = selectedEntryIds,
-                                selectionMode = selectionMode,
-                                processingEntryIds = processingEntryIds,
-                                processingBackends = processingBackends,
-                                accentColor = timelineAccentConfig.pending,
-                                onEntryClick = onEntryClick,
-                                onToggleSelection = { id, selected -> toggleEntrySelection(id, selected) },
-                                onEnterSelection = { id -> enterEntrySelection(id) },
-                                onComplete = { entry -> markEntryCompleted(entry) },
-                                onPostpone = { entry, dueDate -> postponeEntry(entry, dueDate) }
-                            )
-                        }
-                    }
                     item("today_header") {
                         CollapsibleSectionHeader(
                             title = if (isSelectedToday) "Hoy" else "Ese día",
@@ -1114,31 +1046,63 @@ fun CalendarScreen(
                             )
                         }
                     }
-                    if (isSelectedToday && nextCommitments.isNotEmpty()) {
-                        item("next_commitments") {
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                TextButton(onClick = onAgendaClick) { Text("Después de hoy") }
-                                nextCommitments.forEach { next ->
-                                    Card(onClick = {
-                                        next.entry?.let { onEntryClick(it.id) }
-                                        next.event?.let { CalendarHelper.openTimelineEvent(context, it) }
-                                    }, modifier = Modifier.fillMaxWidth()) {
-                                        Column(Modifier.padding(14.dp)) {
-                                            Text(next.title, style = MaterialTheme.typography.titleSmall, maxLines = 2)
-                                            Text(
-                                                SimpleDateFormat(
-                                                    if (com.trama.app.summary.CalendarImportIdentity.allDay(next.event?.dataJson)) "EEE d MMM · 'Todo el día'" else "EEE d MMM · HH:mm",
-                                                    Locale("es")
-                                                ).format(Date(next.at)),
-                                                style = MaterialTheme.typography.bodySmall
-                                            )
-                                        }
-                                    }
-                                }
+                    if (pendingOtherDays.isNotEmpty()) {
+                        item("other_days_header") {
+                            CollapsibleSectionHeader(
+                                title = "Pendiente de otros días",
+                                count = pendingOtherDays.size,
+                                expanded = otherDaysExpanded,
+                                onClick = { otherDaysExpanded = !otherDaysExpanded }
+                            )
+                        }
+                        if (otherDaysExpanded) {
+                            pendingEntrySection(
+                                keyPrefix = "pending_other_days_",
+                                entries = pendingOtherDays,
+                                selectedEntryIds = selectedEntryIds,
+                                selectionMode = selectionMode,
+                                processingEntryIds = processingEntryIds,
+                                processingBackends = processingBackends,
+                                accentColor = timelineAccentConfig.pending,
+                                onEntryClick = onEntryClick,
+                                onToggleSelection = { id, selected -> toggleEntrySelection(id, selected) },
+                                onEnterSelection = { id -> enterEntrySelection(id) },
+                                onComplete = { entry -> markEntryCompleted(entry) },
+                                onPostpone = { entry, dueDate -> postponeEntry(entry, dueDate) }
+                            )
+                        }
+                    }
+                    if (duplicateEntries.isNotEmpty() || suggestedEntries.isNotEmpty()) {
+                        item("review_header") {
+                            CollapsibleSectionHeader(
+                                title = "Por revisar", count = duplicateEntries.size + suggestedEntries.size,
+                                expanded = reviewExpanded, onClick = { reviewExpanded = !reviewExpanded }
+                            )
+                        }
+                        if (reviewExpanded) {
+                            item("review_explanation") {
+                                Text(
+                                    "Añade solo lo que quieras convertir en tarea. Todavía no está confirmado.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 2.dp)
+                                )
+                            }
+                            items(duplicateEntries, key = { "dup_${it.id}" }) { entry ->
+                                DuplicateCard(entry = entry,
+                                    originalText = allPendingForOriginalLookup.find { it.id == entry.duplicateOfId }?.displayText,
+                                    onKeep = { keepDuplicate(entry) }, onDelete = { deleteDuplicate(entry) })
+                            }
+                            items(suggestedEntries, key = { "suggestion_${it.id}" }) { entry ->
+                                SuggestedReviewCard(
+                                    entry = entry,
+                                    onOpen = { onEntryClick(entry.id) },
+                                    onAccept = { markEntryCompleted(entry) },
+                                    onDismiss = { dismissSuggested(entry) }
+                                )
                             }
                         }
                     }
-
                 }
             }
         }
@@ -1932,6 +1896,8 @@ private fun HomeHeader(
     status: TramaStatus,
     statusLabel: String?,
     locationRunning: Boolean,
+    completedTaskCount: Int,
+    totalTaskCount: Int,
     onAddClick: () -> Unit,
     onSearchClick: () -> Unit,
     onRecordingsListClick: () -> Unit,
@@ -2015,6 +1981,68 @@ private fun HomeHeader(
                 if (locationRunning) {
                     StatusPill(status = TramaStatus.Location)
                 }
+            }
+            if (totalTaskCount > 0) {
+                DayProgressIndicator(
+                    completed = completedTaskCount,
+                    total = totalTaskCount,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DayProgressIndicator(
+    completed: Int,
+    total: Int,
+    modifier: Modifier = Modifier
+) {
+    val t = LocalTramaColors.current
+    val safeTotal = total.coerceAtLeast(1)
+    val safeCompleted = completed.coerceIn(0, safeTotal)
+    val progress = safeCompleted.toFloat() / safeTotal.toFloat()
+    val percentage = (progress * 100).toInt()
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "Tareas · $safeCompleted/$safeTotal",
+                style = MaterialTheme.typography.labelMedium,
+                color = t.teal,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f)
+            )
+            Text(
+                "$percentage%",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(8.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(t.surface3)
+        ) {
+            if (progress > 0f) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(progress)
+                        .height(8.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(t.teal.copy(alpha = 0.86f), t.teal)
+                            )
+                        )
+                )
             }
         }
     }

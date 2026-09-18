@@ -53,10 +53,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.trama.app.ui.components.SwipeableReminderCard
+import com.trama.app.ui.components.TramaCard
 import com.trama.app.ui.theme.LocalTramaColors
 import com.trama.shared.data.DatabaseProvider
 import com.trama.shared.model.DiaryEntry
@@ -549,36 +548,29 @@ private fun DayHeader(label: String) {
 private fun EventRow(event: TimelineEvent) {
     val t = LocalTramaColors.current
     val timeLabel = remember(event) { formatTimeRange(event) }
-    Card(
-        shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(containerColor = t.surface),
-        border = BorderStroke(0.5.dp, t.amber.copy(alpha = 0.20f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 9.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Icon(Icons.Default.Event, contentDescription = null, tint = t.amber, modifier = Modifier.size(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = event.title,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = timeLabel,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+    TramaCard(
+        eyebrow = "Calendario",
+        title = event.title,
+        accent = t.amber,
+        meta = timeLabel,
+        leading = {
+            Surface(
+                modifier = Modifier.size(30.dp),
+                shape = androidx.compose.foundation.shape.CircleShape,
+                color = MaterialTheme.colorScheme.background,
+                border = BorderStroke(2.dp, t.amber)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Default.Event,
+                        contentDescription = null,
+                        tint = t.amber,
+                        modifier = Modifier.size(15.dp)
+                    )
+                }
             }
         }
-    }
+    )
 }
 
 @Composable
@@ -616,40 +608,32 @@ private fun TaskRow(entry: DiaryEntry, onClick: () -> Unit, overdue: Boolean = f
         urgent -> MaterialTheme.colorScheme.error
         else -> t.teal
     }
-    Card(
-        shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(containerColor = t.surface),
-        border = BorderStroke(0.5.dp, accent.copy(alpha = 0.20f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        modifier = Modifier.clickable(onClick = onClick)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 9.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = accent, modifier = Modifier.size(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = entry.displayText.ifBlank { entry.text },
-                    style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    textDecoration = if (entry.status == EntryStatus.COMPLETED) TextDecoration.LineThrough else TextDecoration.None
-                )
-                if (dueLabel != null) {
-                    Text(
-                        text = if (overdue) "Vencía $dueLabel" else dueLabel,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (overdue) accent else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+    TramaCard(
+        eyebrow = if (overdue) "Vencida" else "Tarea",
+        title = entry.displayText.ifBlank { entry.text },
+        accent = accent,
+        meta = dueLabel?.let { if (overdue) "Vencía $it" else it },
+        onClick = onClick,
+        leading = {
+            Surface(
+                modifier = Modifier.size(30.dp),
+                shape = androidx.compose.foundation.shape.CircleShape,
+                color = MaterialTheme.colorScheme.background,
+                border = BorderStroke(2.dp, accent)
+            ) {
+                if (entry.status == EntryStatus.COMPLETED) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = accent,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
         }
-    }
+    )
 }
 
 private fun buildSection(

@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -311,14 +312,13 @@ fun TransferToWatchChip(
     }
 }
 
-// ─── Unified card anatomy ──────────────────────────────────────────────────
+// ─── Unified timeline row ──────────────────────────────────────────────────
 //
-//   ┌─█ EYEBROW · · · · · · · · · · · · · · · ·  meta │
-//   │   Título en una línea                            │
-//   │   [trailing slot]                                │
-//   └──────────────────────────────────────────────────┘
+//   │  ●  EYEBROW              12:40
+//   │     Título               estado/acción
 //
-// Stripe = semantic accent. No icon. Eyebrow does the work an icon would.
+// The rail and circular glyph establish chronology without wrapping every
+// item in a card. Selection is the only state that adds a container.
 
 /** Single-line eyebrow + title row. */
 @OptIn(ExperimentalFoundationApi::class)
@@ -340,10 +340,9 @@ fun TramaCard(
     val interaction = remember { MutableInteractionSource() }
     val container = when {
         selected -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-        dimmed -> t.surface.copy(alpha = 0.55f)
-        else -> t.surface
+        else -> Color.Transparent
     }
-    Card(
+    Surface(
         modifier = modifier
             .fillMaxWidth()
             .then(
@@ -356,62 +355,72 @@ fun TramaCard(
                     )
                 } else Modifier
             ),
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = container),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = BorderStroke(0.5.dp, if (selected) accent.copy(alpha = 0.34f) else t.softBorder),
+        shape = RoundedCornerShape(10.dp),
+        color = container,
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(IntrinsicSize.Min),
+                .height(IntrinsicSize.Min)
+                .heightIn(min = 68.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Stripe — the only strong cromatic signal
             Box(
                 modifier = Modifier
-                    .width(3.dp)
-                    .fillMaxHeight()
-                    .background(accent.copy(alpha = if (dimmed) 0.25f else 0.85f))
-            )
-            if (leading != null) {
-                Spacer(Modifier.width(10.dp))
-                leading()
+                    .width(44.dp)
+                    .fillMaxHeight(),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(1.dp)
+                        .fillMaxHeight()
+                        .background(t.hairline)
+                )
+                if (leading != null) leading()
             }
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(start = 11.dp, end = 8.dp, top = 9.dp, bottom = 9.dp)
+                    .padding(start = 8.dp, end = 10.dp, top = 10.dp, bottom = 10.dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                if (eyebrow.isNotBlank()) {
                     Text(
                         text = eyebrow.uppercase(),
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
                         color = if (dimmed) t.dimText else accent,
-                        modifier = Modifier.weight(1f),
                     )
-                    if (!meta.isNullOrBlank()) {
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = meta,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = t.dimText,
-                        )
-                    }
+                    Spacer(Modifier.height(3.dp))
                 }
-                Spacer(Modifier.height(2.dp))
                 Text(
                     text = title,
-                        style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = if (dimmed) FontWeight.Normal else FontWeight.SemiBold,
                     color = if (dimmed) t.mutedText else MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                 )
             }
-            if (trailing != null) {
-                Box(modifier = Modifier.padding(end = 8.dp)) { trailing() }
+            if (!meta.isNullOrBlank() || trailing != null) {
+                Column(
+                    modifier = Modifier.padding(end = 12.dp, top = 10.dp, bottom = 10.dp),
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    if (!meta.isNullOrBlank()) {
+                        Text(
+                            text = meta,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = if (dimmed) t.dimText else MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                    if (trailing != null) {
+                        if (!meta.isNullOrBlank()) Spacer(Modifier.height(4.dp))
+                        trailing()
+                    }
+                }
             }
         }
     }
