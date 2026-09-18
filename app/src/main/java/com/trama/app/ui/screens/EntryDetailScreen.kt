@@ -195,6 +195,19 @@ fun EntryDetailScreen(
         }
     }
 
+    fun requestVoiceCorrection() {
+        if (
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            startVoiceCorrection()
+        } else {
+            correctionPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
     LaunchedEffect(isEditing) {
         if (!isEditing) resetVoiceCorrection()
     }
@@ -361,15 +374,8 @@ fun EntryDetailScreen(
                         onClick = {
                             if (recordingCorrection) {
                                 activeCorrectionCapture?.requestStop()
-                            } else if (
-                                ContextCompat.checkSelfPermission(
-                                    context,
-                                    Manifest.permission.RECORD_AUDIO
-                                ) == PackageManager.PERMISSION_GRANTED
-                            ) {
-                                startVoiceCorrection()
                             } else {
-                                correctionPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                requestVoiceCorrection()
                             }
                         },
                         enabled = !savingEdit && !transcribingCorrection,
@@ -442,10 +448,29 @@ fun EntryDetailScreen(
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "Toca el texto para editarlo",
+                        "Toca el texto para editarlo o vuelve a explicarlo con tu voz.",
                         style = MaterialTheme.typography.labelMedium,
                         color = LocalTramaColors.current.mutedText
                     )
+                }
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = {
+                        editor.start(entry.displayText)
+                        requestVoiceCorrection()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Mic, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Re-explicar con voz")
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { editor.start(entry.displayText) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Corregir el texto")
                 }
             }
 
