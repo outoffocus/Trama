@@ -82,7 +82,11 @@ fun CaptureQuickActions() {
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         CaptureFab(
-            label = if (state.watchActive) "Recuperar escucha en el teléfono" else "Pasar escucha al reloj",
+            label = if (state.watchActive) {
+                "Escucha en el reloj · cambiar al teléfono"
+            } else {
+                "Escucha en el teléfono · cambiar al reloj"
+            },
             icon = Icons.Default.Watch,
             enabled = deviceEnabled,
             selected = state.watchActive,

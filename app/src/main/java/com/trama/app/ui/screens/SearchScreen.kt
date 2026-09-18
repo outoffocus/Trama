@@ -39,13 +39,14 @@ import com.trama.shared.data.DatabaseProvider
 import com.trama.app.ui.SettingsDataStore
 import com.trama.app.ui.components.EntryCard
 import com.trama.app.ui.theme.timelineAccentColor
+import com.trama.shared.model.EntryStatus
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 
 private enum class MemoryFilter(val label: String) {
     ALL("Todo"),
-    NOTES("Notas"),
+    NOTES("Notas y tareas"),
     PLACES("Lugares"),
     MEETINGS("Reuniones")
 }
@@ -65,6 +66,10 @@ fun SearchScreen(
     var query by remember { mutableStateOf("") }
     var selectedFilter by remember { mutableStateOf(MemoryFilter.ALL) }
     val queryTerms = remember(query) { SearchQuery.terms(query) }
+
+    val allEntries by repository.getAll().collectAsState(initialValue = emptyList())
+    val allPlaces by repository.getPlaces().collectAsState(initialValue = emptyList())
+    val allRecordings by repository.getAllRecordings().collectAsState(initialValue = emptyList())
 
     val entryResultsState by (
         if (query.isNotBlank()) intersectingSearch(queryTerms, repository::search) { it.id }
@@ -87,13 +92,24 @@ fun SearchScreen(
 
     val isSearching = query.isNotBlank() &&
         (entryResultsState == null || placeResultsState == null || recordingResultsState == null)
-    val entries = (entryResultsState ?: emptyList()).takeIf {
+    val recentEntries = remember(allEntries) {
+        val sourceEntriesWithDerivedAction = allEntries.mapNotNull { it.parentEntryId }.toSet()
+        allEntries
+            .asSequence()
+            .filter { it.status != EntryStatus.DISCARDED }
+            .filter { it.duplicateOfId == null }
+            .filter { it.id !in sourceEntriesWithDerivedAction }
+            .take(12)
+            .toList()
+    }
+    val showingRecent = query.isBlank()
+    val entries = (if (showingRecent) recentEntries else entryResultsState.orEmpty()).takeIf {
         selectedFilter == MemoryFilter.ALL || selectedFilter == MemoryFilter.NOTES
     }.orEmpty()
-    val places = (placeResultsState ?: emptyList()).takeIf {
+    val places = (if (showingRecent) allPlaces.take(8) else placeResultsState.orEmpty()).takeIf {
         selectedFilter == MemoryFilter.ALL || selectedFilter == MemoryFilter.PLACES
     }.orEmpty()
-    val recordings = (recordingResultsState ?: emptyList()).takeIf {
+    val recordings = (if (showingRecent) allRecordings.take(8) else recordingResultsState.orEmpty()).takeIf {
         selectedFilter == MemoryFilter.ALL || selectedFilter == MemoryFilter.MEETINGS
     }.orEmpty()
 
@@ -108,10 +124,9 @@ fun SearchScreen(
                 },
                 actions = {
                     androidx.compose.material3.TextButton(
-                        onClick = { onAsk(query) },
-                        enabled = query.isNotBlank()
+                        onClick = { onAsk(query) }
                     ) {
-                        Text("Resumir resultados")
+                        Text(if (query.isBlank()) "Preguntar a Trama" else "Preguntar sobre esta búsqueda")
                     }
                 }
             )
@@ -170,22 +185,23 @@ fun SearchScreen(
                         )
                     }
                 }
-                query.isBlank() -> {
-                    SearchPlaceholder(
-                        title = "Empieza a escribir",
-                        subtitle = "Busca desde la primera letra y filtra notas, lugares o reuniones."
-                    )
-                }
                 entries.isEmpty() && places.isEmpty() && recordings.isEmpty() -> {
                     SearchPlaceholder(
-                        title = "No se encontraron resultados",
-                        subtitle = "Prueba con otra palabra o una frase más corta."
+                        title = if (showingRecent) "Todavía no hay recuerdos" else "No se encontraron resultados",
+                        subtitle = if (showingRecent) {
+                            "Cuando guardes notas, lugares o reuniones aparecerán aquí."
+                        } else {
+                            "Prueba con otra palabra o una frase más corta."
+                        }
                     )
                 }
                 else -> LazyColumn(
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    if (showingRecent) {
+                        item("recent_header") { ResultHeader("Recientes") }
+                    }
                     if (places.isNotEmpty()) {
                         item("places_header") { ResultHeader("Lugares") }
                     }
@@ -219,7 +235,7 @@ fun SearchScreen(
                         )
                     }
                     if (entries.isNotEmpty()) {
-                        item("entries_header") { ResultHeader("Capturas y acciones") }
+                        item("entries_header") { ResultHeader("Notas y tareas") }
                     }
                     items(entries, key = { "entry_${it.id}" }) { entry ->
                         EntryCard(

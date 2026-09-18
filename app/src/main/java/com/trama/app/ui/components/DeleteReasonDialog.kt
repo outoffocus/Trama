@@ -39,7 +39,9 @@ private val OPTIONS = listOf(
 fun DeleteReasonDialog(
     entryCount: Int,
     onDismiss: () -> Unit,
-    onConfirm: (Reason) -> Unit
+    onConfirm: (Reason) -> Unit,
+    onConfirmWithoutReason: (() -> Unit)? = null,
+    singularLabel: String = "elemento"
 ) {
     var selected by remember { mutableStateOf<Reason?>(null) }
 
@@ -47,7 +49,7 @@ fun DeleteReasonDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                if (entryCount > 1) "Eliminar $entryCount elementos" else "Eliminar entrada"
+                if (entryCount > 1) "Eliminar $entryCount elementos" else "Eliminar $singularLabel"
             )
         },
         text = {
@@ -95,8 +97,15 @@ fun DeleteReasonDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancelar")
+            Row {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancelar")
+                }
+                onConfirmWithoutReason?.let { deleteWithoutReason ->
+                    TextButton(onClick = deleteWithoutReason) {
+                        Text("Eliminar igualmente")
+                    }
+                }
             }
         },
         shape = RoundedCornerShape(20.dp)

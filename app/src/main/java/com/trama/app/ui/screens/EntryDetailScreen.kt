@@ -132,6 +132,7 @@ fun EntryDetailScreen(
     var transcribingCorrection by remember { mutableStateOf(false) }
     var voiceCorrectionReady by remember { mutableStateOf(false) }
     var voiceCorrectionError by remember { mutableStateOf<String?>(null) }
+    var requestedLocalReanalysis by remember { mutableStateOf(false) }
 
     fun resetVoiceCorrection() {
         activeCorrectionCapture?.requestStop()
@@ -209,7 +210,10 @@ fun EntryDetailScreen(
     }
 
     LaunchedEffect(isEditing) {
-        if (!isEditing) resetVoiceCorrection()
+        if (!isEditing) {
+            resetVoiceCorrection()
+            requestedLocalReanalysis = false
+        }
     }
     DisposableEffect(Unit) {
         onDispose { activeCorrectionCapture?.requestStop() }
@@ -295,18 +299,15 @@ fun EntryDetailScreen(
                     if (isEditing) {
                         IconButton(
                             onClick = {
-                                editor.save(entryId, requireLocalModel = voiceCorrectionReady)
+                                requestedLocalReanalysis = false
+                                editor.save(entryId, requireLocalModel = false)
                             },
                             enabled = editedText.isNotBlank() &&
                                 !savingEdit && !recordingCorrection && !transcribingCorrection
                         ) {
                             Icon(
                                 Icons.Default.Check,
-                                contentDescription = if (voiceCorrectionReady) {
-                                    "Guardar y volver a analizar"
-                                } else {
-                                    "Guardar cambios"
-                                }
+                                contentDescription = "Guardar cambios"
                             )
                         }
                     } else {
@@ -419,19 +420,45 @@ fun EntryDetailScreen(
                     }
                     Spacer(Modifier.height(12.dp))
                     Button(
-                        onClick = { editor.save(entryId, requireLocalModel = true) },
+                        onClick = {
+                            requestedLocalReanalysis = false
+                            editor.save(entryId, requireLocalModel = false)
+                        },
                         enabled = editedText.isNotBlank() &&
                             !savingEdit && !recordingCorrection && !transcribingCorrection,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        if (savingEdit) {
+                        if (savingEdit && !requestedLocalReanalysis) {
                             CircularProgressIndicator(
                                 modifier = Modifier.width(18.dp).height(18.dp),
                                 strokeWidth = 2.dp
                             )
                             Spacer(Modifier.width(8.dp))
                         }
-                        Text(if (savingEdit) "Analizando…" else "Guardar y volver a analizar")
+                        Text(if (savingEdit && !requestedLocalReanalysis) "Guardando…" else "Guardar cambios")
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = {
+                            requestedLocalReanalysis = true
+                            editor.save(entryId, requireLocalModel = true)
+                        },
+                        enabled = editedText.isNotBlank() &&
+                            !savingEdit && !recordingCorrection && !transcribingCorrection,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (savingEdit && requestedLocalReanalysis) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.width(18.dp).height(18.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text(
+                            if (savingEdit && requestedLocalReanalysis) "Creando de nuevo…"
+                            else if (entry.contentKind == EntryContentKind.ACTION) "Crear de nuevo la tarea"
+                            else "Analizar y extraer una tarea"
+                        )
                     }
                 }
             } else {
@@ -448,7 +475,7 @@ fun EntryDetailScreen(
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "Toca el texto para editarlo o vuelve a explicarlo con tu voz.",
+                        "Toca el texto para editarlo o corrígelo con tu voz.",
                         style = MaterialTheme.typography.labelMedium,
                         color = LocalTramaColors.current.mutedText
                     )
@@ -463,7 +490,7 @@ fun EntryDetailScreen(
                 ) {
                     Icon(Icons.Default.Mic, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("Re-explicar con voz")
+                    Text("Corregir por voz")
                 }
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(
@@ -574,17 +601,30 @@ fun EntryDetailScreen(
     if (showDeleteDialog && learnFromDeletions) {
         DeleteReasonDialog(
             entryCount = 1,
+            singularLabel = if (entry.contentKind == EntryContentKind.ACTION) "tarea" else "nota",
             onDismiss = { showDeleteDialog = false },
             onConfirm = { reason ->
                 showDeleteDialog = false
                 deleteEntry(reason)
+            },
+            onConfirmWithoutReason = {
+                showDeleteDialog = false
+                deleteEntry(null)
             }
         )
     } else if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
-            title = { Text("Eliminar entrada") },
-            text = { Text("Esta entrada desaparecerá de Trama.") },
+            title = {
+                Text(if (entry.contentKind == EntryContentKind.ACTION) "Eliminar tarea" else "Eliminar nota")
+            },
+            text = {
+                Text(if (entry.contentKind == EntryContentKind.ACTION) {
+                    "Esta tarea desaparecerá de Trama."
+                } else {
+                    "Esta nota desaparecerá de Trama."
+                })
+            },
             confirmButton = {
                 TextButton(onClick = {
                     showDeleteDialog = false
@@ -687,7 +727,7 @@ private fun EntryStateActions(
             Spacer(Modifier.height(12.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onDiscard, modifier = Modifier.weight(1f)) { Text("Descartar") }
-                Button(onClick = onAccept, modifier = Modifier.weight(1f)) { Text("Añadir a pendientes") }
+                Button(onClick = onAccept, modifier = Modifier.weight(1f)) { Text("Añadir a tareas") }
             }
         }
         EntryStatus.PENDING -> {

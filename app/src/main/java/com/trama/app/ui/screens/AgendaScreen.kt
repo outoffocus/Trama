@@ -45,8 +45,10 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle as collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -91,6 +93,7 @@ fun AgendaScreen(
     val repository = remember { DatabaseProvider.getRepository(context) }
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    var reviewExpanded by remember { mutableStateOf(false) }
 
     val today = remember { DayRange.today() }
     val endOfThisWeek = remember(today) { endOfWeekMs(today.startMs) }
@@ -157,7 +160,7 @@ fun AgendaScreen(
                     com.trama.shared.model.EntryVerificationSource.AGENDA
                 )
                 snackbarHostState.showSnackbar(
-                    message = "Sugerencia confirmada y añadida a pendientes",
+                    message = "Añadida a tareas",
                     duration = SnackbarDuration.Short
                 )
                 return@launch
@@ -212,40 +215,6 @@ fun AgendaScreen(
             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            if (reviewTasks.isNotEmpty()) {
-                item("review_header") {
-                    SectionTitle("Por revisar", "${reviewTasks.size}", "Acepta, edita o descarta antes de convertirlas en tareas.")
-                }
-                items(reviewTasks, key = { "review_${it.id}" }) { task ->
-                    ReviewSuggestionCard(
-                        entry = task,
-                        onEdit = { onEntryClick(task.id) },
-                        onAccept = {
-                            scope.launch {
-                                repository.confirmSuggested(
-                                    task.id,
-                                    com.trama.shared.model.EntryVerificationSource.AGENDA
-                                )
-                                snackbarHostState.showSnackbar("Añadida a pendientes")
-                            }
-                        },
-                        onDiscard = {
-                            scope.launch {
-                                repository.markDiscarded(task.id)
-                                val result = snackbarHostState.showSnackbar(
-                                    message = "Sugerencia descartada",
-                                    actionLabel = "Deshacer",
-                                    duration = SnackbarDuration.Short
-                                )
-                                if (result == SnackbarResult.ActionPerformed) {
-                                    repository.restoreDiscardedSuggestion(task.id)
-                                }
-                            }
-                        }
-                    )
-                }
-            }
-
             if (overdueTasks.isNotEmpty()) {
                 item("overdue_header") { SectionTitle("Vencidas", "${overdueTasks.size}") }
                 items(overdueTasks, key = { "ov_${it.id}" }) { task ->
@@ -257,15 +226,6 @@ fun AgendaScreen(
                         overdue = true
                     )
                 }
-            }
-
-            item("stats") {
-                AgendaStatsCard(
-                    calendarCount = totalCalendarThisWeek,
-                    taskCount = totalTasksThisWeek,
-                    overdueCount = overdueTasks.size,
-                    urgentCount = urgent
-                )
             }
 
             agendaSection(
@@ -311,6 +271,15 @@ fun AgendaScreen(
                 }
             }
 
+            item("stats") {
+                AgendaStatsCard(
+                    calendarCount = totalCalendarThisWeek,
+                    taskCount = totalTasksThisWeek,
+                    overdueCount = overdueTasks.size,
+                    urgentCount = urgent
+                )
+            }
+
             if (
                 thisWeekSection.days.isEmpty() &&
                 nextWeekSection.days.isEmpty() &&
@@ -326,9 +295,68 @@ fun AgendaScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "Agenda despejada · disfrútalo.",
+                            text = if (reviewTasks.isEmpty()) {
+                                "Agenda despejada · disfrútalo."
+                            } else {
+                                "No tienes tareas confirmadas."
+                            },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            if (reviewTasks.isNotEmpty()) {
+                item("review_toggle") {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { reviewExpanded = !reviewExpanded },
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f)
+                    ) {
+                        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                            Text(
+                                "${reviewTasks.size} ${if (reviewTasks.size == 1) "sugerencia" else "sugerencias"} por revisar",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                if (reviewExpanded) "Toca de nuevo para ocultarlas."
+                                else "Revísalas solo cuando quieras convertir alguna en tarea.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+                if (reviewExpanded) {
+                    items(reviewTasks, key = { "review_${it.id}" }) { task ->
+                        ReviewSuggestionCard(
+                            entry = task,
+                            onEdit = { onEntryClick(task.id) },
+                            onAccept = {
+                                scope.launch {
+                                    repository.confirmSuggested(
+                                        task.id,
+                                        com.trama.shared.model.EntryVerificationSource.AGENDA
+                                    )
+                                    snackbarHostState.showSnackbar("Añadida a tareas")
+                                }
+                            },
+                            onDiscard = {
+                                scope.launch {
+                                    repository.markDiscarded(task.id)
+                                    val result = snackbarHostState.showSnackbar(
+                                        message = "Sugerencia descartada",
+                                        actionLabel = "Deshacer",
+                                        duration = SnackbarDuration.Short
+                                    )
+                                    if (result == SnackbarResult.ActionPerformed) {
+                                        repository.restoreDiscardedSuggestion(task.id)
+                                    }
+                                }
+                            }
                         )
                     }
                 }
@@ -366,7 +394,7 @@ private fun ReviewSuggestionCard(
                 }
                 androidx.compose.material3.TextButton(onClick = onAccept) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Text("Aceptar")
+                    Text("Añadir a tareas")
                 }
             }
         }

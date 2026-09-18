@@ -129,9 +129,9 @@ import kotlin.math.roundToInt
 
 enum class SettingsSection(val route: String, val title: String, val subtitle: String) {
     ROOT("root", "Ajustes", "Control general de la app"),
-    CAPTURE_MEMORY("capture-memory", "Voz y capturas", "Frases de activación y contexto"),
-    AGENDA_CALENDARS("agenda-calendars", "Calendario y avisos", "Calendarios visibles y aviso semanal"),
-    PRIVACY_DATA("privacy-data", "Datos y privacidad", "Voz, copias y aprendizaje"),
+    CAPTURE_MEMORY("capture-memory", "Captura por voz", "Frases, reconocimiento de voz y aprendizaje"),
+    AGENDA_CALENDARS("agenda-calendars", "Agenda y calendarios", "Tareas, calendarios visibles y avisos"),
+    PRIVACY_DATA("privacy-data", "Datos y copias", "Análisis local y copias de seguridad"),
     APPEARANCE("appearance", "Apariencia", "Tema y legibilidad"),
     ADVANCED("advanced", "Diagnóstico", "Audio, ubicación y estado técnico");
 
@@ -153,7 +153,6 @@ fun SettingsScreen(
     val settings = viewModel
     val repository = viewModel.repository
     val scope = rememberCoroutineScope()
-    var developerTaps by remember { mutableIntStateOf(0) }
 
     // Settings state
     val autoStart by settings.autoStart.collectAsState(initialValue = false)
@@ -707,7 +706,7 @@ fun SettingsScreen(
                     icon = Icons.Default.Mic,
                     title = SettingsSection.CAPTURE_MEMORY.title,
                     subtitle = SettingsSection.CAPTURE_MEMORY.subtitle,
-                    summary = "Escucha ${if (continuousListeningEnabled) "activa" else "desactivada"} · ${intentPatterns.count { it.enabled }} categorías activas · ambiente ${if (listeningFeatureAvailability.ambientContext) "activo" else "desactivado"}",
+                    summary = "Escucha ${if (continuousListeningEnabled) "activa" else "desactivada"} · ${intentPatterns.count { it.enabled }} frases activas · ambiente ${if (listeningFeatureAvailability.ambientContext) "activo" else "desactivado"}",
                     onClick = { onOpenSection(SettingsSection.CAPTURE_MEMORY) },
                     accent = tramaColors.amber,
                 )
@@ -734,26 +733,18 @@ fun SettingsScreen(
                     icon = Icons.Default.Palette,
                     title = SettingsSection.APPEARANCE.title,
                     subtitle = SettingsSection.APPEARANCE.subtitle,
-                    summary = "Tema y presentación de tareas anteriores",
+                    summary = "Tema y legibilidad",
                     onClick = { onOpenSection(SettingsSection.APPEARANCE) },
                     accent = tramaColors.warn,
                 )
-                Spacer(modifier = Modifier.height(20.dp))
-
-                Text(
-                    text = "Trama",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .align(Alignment.CenterHorizontally)
-                        .clickable {
-                            developerTaps += 1
-                            if (developerTaps >= 7) {
-                                developerTaps = 0
-                                onOpenSection(SettingsSection.ADVANCED)
-                            }
-                        }
-                        .padding(12.dp)
+                Spacer(modifier = Modifier.height(10.dp))
+                SettingsNavigationCard(
+                    icon = Icons.Default.Tune,
+                    title = SettingsSection.ADVANCED.title,
+                    subtitle = SettingsSection.ADVANCED.subtitle,
+                    summary = "Estado técnico y exportación de diagnóstico",
+                    onClick = { onOpenSection(SettingsSection.ADVANCED) },
+                    accent = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
 
                 Spacer(modifier = Modifier.height(32.dp))
@@ -1074,7 +1065,9 @@ fun SettingsScreen(
             }
 
             SectionDivider()
+            }
 
+            if (section == SettingsSection.AGENDA_CALENDARS) {
             SectionHeader("Legibilidad")
 
             Row(
@@ -2000,6 +1993,10 @@ fun SettingsScreen(
 
             SectionDivider()
 
+            }
+
+            if (section == SettingsSection.CAPTURE_MEMORY) {
+
             SectionHeader("Datos en el dispositivo")
 
             SettingToggle(
@@ -2378,7 +2375,7 @@ fun SettingsScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Categorias de captura",
+                    Text("Frases para guardar por voz",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold)
                     Text(

@@ -157,7 +157,11 @@ class TramaWidgetProvider : AppWidgetProvider() {
             idleBackground = R.drawable.widget_fab_watch_idle,
             selected = watchActive,
             enabled = ((!recording && !processing) || watchActive) && !captureState.transferring,
-            description = if (watchActive) "Recuperar escucha en el teléfono" else "Pasar escucha al reloj"
+            description = if (watchActive) {
+                "Escucha en el reloj · cambiar al teléfono"
+            } else {
+                "Escucha en el teléfono · cambiar al reloj"
+            }
         )
         configureFab(
             context = context,

@@ -542,7 +542,8 @@ fun CalendarScreen(
         com.trama.app.ui.components.DeleteReasonDialog(
             entryCount = selectedEntryIds.size,
             onDismiss = { pendingBulkDelete = false },
-            onConfirm = { reason -> performBulkDelete(reason) }
+            onConfirm = { reason -> performBulkDelete(reason) },
+            onConfirmWithoutReason = { performBulkDelete(reason = null) }
         )
     }
 
@@ -572,7 +573,7 @@ fun CalendarScreen(
                     )
                 }
                 snackbarHostState.showSnackbar(
-                    message = "Añadida a pendientes",
+                    message = "Añadida a tareas",
                     duration = SnackbarDuration.Short
                 )
                 return@launchMutation
@@ -1460,7 +1461,11 @@ private fun VerticalQuickActionFabs(
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         ThumbFabAction(
-            label = if (watchActive) "Recuperar escucha en el teléfono" else "Pasar escucha al reloj",
+            label = if (watchActive) {
+                "Escucha en el reloj · cambiar al teléfono"
+            } else {
+                "Escucha en el teléfono · cambiar al reloj"
+            },
             icon = Icons.Default.Watch,
             enabled = presentation.deviceEnabled,
             selected = watchActive,
@@ -2076,7 +2081,7 @@ private fun DuplicateCard(
                     Text("Eliminar", color = MaterialTheme.colorScheme.error)
                 }
                 TextButton(onClick = onKeep) {
-                    Text("No es duplicado")
+                    Text("Conservar ambas")
                 }
             }
         }
@@ -2108,7 +2113,7 @@ private fun SuggestedReviewCard(
                 horizontalArrangement = Arrangement.End
             ) {
                 TextButton(onClick = onDismiss) { Text("Descartar") }
-                TextButton(onClick = onAccept) { Text("Añadir a pendientes") }
+                TextButton(onClick = onAccept) { Text("Añadir a tareas") }
             }
         }
     }
