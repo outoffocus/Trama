@@ -5,15 +5,19 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -22,7 +26,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -35,7 +38,6 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.TaskAlt
-import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.AlertDialog
@@ -85,6 +87,7 @@ import com.trama.app.ui.components.CalendarActionDialog
 import com.trama.shared.data.DatabaseProvider
 import com.trama.shared.model.DiaryEntry
 import com.trama.shared.model.EntryStatus
+import com.trama.shared.model.EntryActionType
 import com.trama.shared.model.Recording
 import com.trama.shared.model.RecordingKeyPoints
 import com.trama.shared.model.RecordingStatus
@@ -237,7 +240,7 @@ fun RecordingDetailScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("Grabación", style = MaterialTheme.typography.titleMedium) },
+                title = { Text("Reunión", style = MaterialTheme.typography.titleMedium) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
@@ -300,7 +303,7 @@ fun RecordingDetailScreen(
             item(key = "hero") {
                 val min = rec.durationSeconds / 60
                 val sec = rec.durationSeconds % 60
-                val accent = com.trama.app.ui.theme.LocalTramaColors.current.amber
+                val accent = com.trama.app.ui.theme.LocalTramaColors.current.red
                 Column(
                     modifier = Modifier.padding(top = 6.dp, bottom = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -314,7 +317,7 @@ fun RecordingDetailScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "GRABACIÓN",
+                            text = "REUNIÓN",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold,
                             color = accent,
@@ -322,13 +325,13 @@ fun RecordingDetailScreen(
                     }
                     Text(
                         text = rec.title ?: "Grabación sin procesar",
-                        style = MaterialTheme.typography.headlineSmall,
+                        style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onBackground,
                     )
                     Text(
-                        text = "${dateFormat.format(Date(rec.createdAt))} · %d:%02d".format(min, sec),
-                        style = MaterialTheme.typography.bodySmall,
+                        text = "${dateFormat.format(Date(rec.createdAt))} · %d:%02d · ${if (rec.source == Source.WATCH) "Reloj" else "Teléfono"}".format(min, sec),
+                        style = MaterialTheme.typography.labelMedium,
                         color = com.trama.app.ui.theme.LocalTramaColors.current.mutedText,
                     )
                 }
@@ -364,7 +367,7 @@ fun RecordingDetailScreen(
                 (rec.processingStatus == RecordingStatus.COMPLETED ||
                 rec.processingStatus == RecordingStatus.TRANSCRIPT_ONLY)) {
                 item(key = "meeting_notes") {
-                    SectionCard(
+                    DetailSection(
                         title = "Notas de la reunión",
                         action = {
                             TextButton(onClick = {
@@ -486,7 +489,7 @@ fun RecordingDetailScreen(
 
             if (selectedTab == MeetingDetailTab.ACTIONS && actions.isEmpty()) {
                 item(key = "actions_empty") {
-                    SectionCard(title = "Acciones extraídas") {
+                    DetailSection(title = "Acciones extraídas") {
                         Text(
                             "No se ha detectado ninguna acción en esta reunión.",
                             style = MaterialTheme.typography.bodyMedium,
@@ -498,7 +501,7 @@ fun RecordingDetailScreen(
 
             // ── Transcription ──
             if (selectedTab == MeetingDetailTab.TRANSCRIPT) item(key = "transcription") {
-                SectionCard(
+                DetailSection(
                     title = "Transcripción completa",
                     action = if (rec.audioFilePath != null &&
                         rec.processingStatus != RecordingStatus.TRANSCRIBING &&
@@ -692,38 +695,6 @@ private fun MeetingNotesDialog(
 }
 
 @Composable
-private fun RecordingHeader(recording: Recording, dateFormat: SimpleDateFormat) {
-    val t = com.trama.app.ui.theme.LocalTramaColors.current
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(
-            text = recording.title ?: "Grabación sin procesar",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Icon(
-                imageVector = if (recording.source == Source.WATCH) Icons.Default.Watch
-                              else Icons.Default.Mic,
-                contentDescription = null,
-                modifier = Modifier.size(12.dp),
-                tint = t.mutedText
-            )
-            val min = recording.durationSeconds / 60
-            val sec = recording.durationSeconds % 60
-            Text(
-                text = "${dateFormat.format(Date(recording.createdAt))} · %d:%02d".format(min, sec),
-                style = MaterialTheme.typography.labelMedium,
-                color = t.mutedText
-            )
-        }
-    }
-}
-
-@Composable
 private fun StatusBadge(recording: Recording) {
     val status = recording.processingStatus
     val (icon, label, color) = when {
@@ -775,32 +746,31 @@ private fun StatusBadge(recording: Recording) {
 }
 
 @Composable
-private fun SectionCard(
+private fun DetailSection(
     title: String,
     action: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
     val t = com.trama.app.ui.theme.LocalTramaColors.current
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = t.surface),
-        border = androidx.compose.foundation.BorderStroke(1.dp, t.softBorder),
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = title.uppercase(),
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = t.mutedText,
-                    modifier = Modifier.weight(1f)
-                )
-                action?.invoke()
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            content()
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = title.uppercase(),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = t.mutedText,
+                modifier = Modifier.weight(1f)
+            )
+            action?.invoke()
         }
+        HorizontalDivider(color = t.hairline)
+        Spacer(modifier = Modifier.height(12.dp))
+        content()
     }
 }
 
@@ -872,6 +842,7 @@ private fun RecordingActionItem(
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ActionItemCard(
     entry: DiaryEntry,
@@ -892,73 +863,76 @@ private fun ActionItemCard(
             containerColor = when {
                 isDuplicate -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f)
                 isSuggested -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
-                else -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                else -> com.trama.app.ui.theme.LocalTramaColors.current.surface
+            }
+        ),
+        border = BorderStroke(
+            1.dp,
+            when {
+                isDuplicate -> MaterialTheme.colorScheme.error.copy(alpha = 0.28f)
+                isSuggested -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.24f)
+                else -> com.trama.app.ui.theme.LocalTramaColors.current.softBorder
             }
         ),
         onClick = onClick
     ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Column(modifier = Modifier.padding(12.dp)) {
             // Priority accent
-            val priorityColor = when (entry.priority?.uppercase()) {
+            val priorityColor = when (entry.priority.uppercase()) {
                 "URGENT" -> MaterialTheme.colorScheme.error
                 "HIGH" -> MaterialTheme.colorScheme.tertiary
                 "LOW" -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
                 else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
             }
-            Icon(
-                if (isSuggested) Icons.Default.LightbulbCircle else Icons.Default.TaskAlt,
-                contentDescription = null,
-                tint = if (isSuggested) MaterialTheme.colorScheme.secondary else priorityColor,
-                modifier = Modifier.size(18.dp)
-            )
-            Spacer(modifier = Modifier.width(10.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = entry.displayText,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
+            Row(verticalAlignment = Alignment.Top) {
+                Icon(
+                    if (isSuggested) Icons.Default.LightbulbCircle else Icons.Default.TaskAlt,
+                    contentDescription = null,
+                    tint = if (isSuggested) MaterialTheme.colorScheme.secondary else priorityColor,
+                    modifier = Modifier.size(20.dp)
                 )
-                // Duplicate indicator
-                if (isDuplicate) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(top = 3.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.ContentCopy,
-                            contentDescription = null,
-                            modifier = Modifier.size(12.dp),
-                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "Ya existe: $duplicateOfText",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.padding(top = 2.dp)
-                ) {
-                    entry.actionType?.let { type ->
-                        Text(
-                            text = type,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                        )
-                    }
-                    entry.priority?.let { prio ->
-                        if (prio.uppercase() != "NORMAL") {
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = entry.displayText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (isDuplicate) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(top = 4.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.ContentCopy,
+                                contentDescription = null,
+                                modifier = Modifier.size(12.dp),
+                                tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = prio,
+                                text = "Ya existe: $duplicateOfText",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) {
+                        Text(
+                            text = EntryActionType.label(entry.actionType),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (entry.priority.uppercase() != "NORMAL") {
+                            Text(
+                                text = entry.priority.lowercase().replaceFirstChar { it.uppercase() },
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = priorityColor
@@ -967,35 +941,28 @@ private fun ActionItemCard(
                     }
                 }
             }
-            if (isSuggested && onAccept != null && onDismiss != null) {
-                // Accept / Dismiss buttons
-                IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp)) {
-                    Icon(
-                        Icons.Default.Close,
-                        contentDescription = "Descartar",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(2.dp))
-                IconButton(onClick = onAccept, modifier = Modifier.size(48.dp)) {
-                    Icon(
-                        Icons.Default.Add,
-                        contentDescription = "Añadir a tareas",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-            if (onQuickActionClick != null) {
-                Spacer(modifier = Modifier.width(2.dp))
-                IconButton(onClick = onQuickActionClick, modifier = Modifier.size(48.dp)) {
-                    Icon(
-                        quickActionIcon ?: Icons.Default.Add,
-                        contentDescription = quickActionLabel ?: "Ejecutar acción",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
-                    )
+
+            if ((isSuggested && onAccept != null && onDismiss != null) || onQuickActionClick != null) {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    if (isSuggested && onDismiss != null) {
+                        TextButton(onClick = onDismiss) { Text("Descartar") }
+                    }
+                    if (isSuggested && onAccept != null) {
+                        TextButton(onClick = onAccept) { Text("Añadir a tareas") }
+                    }
+                    if (onQuickActionClick != null) {
+                        TextButton(onClick = onQuickActionClick) {
+                            quickActionIcon?.let {
+                                Icon(it, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                            }
+                            Text(quickActionLabel ?: "Abrir")
+                        }
+                    }
                 }
             }
         }

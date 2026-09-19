@@ -24,7 +24,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Mic
@@ -76,6 +75,7 @@ import com.trama.app.audio.SherpaWhisperAsrEngine
 import com.trama.app.ui.SettingsDataStore
 import com.trama.app.ui.components.CalendarActionDialog
 import com.trama.app.ui.components.DeleteReasonDialog
+import com.trama.app.ui.components.SectionRule
 import com.trama.app.ui.components.SoftCard
 import com.trama.app.ui.theme.LocalTramaColors
 import com.trama.shared.data.DatabaseProvider
@@ -286,7 +286,12 @@ fun EntryDetailScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (isEditing) "Editar" else "Detalle") },
+                title = {
+                    Text(
+                        if (isEditing) "Editar"
+                        else if (entry.contentKind == EntryContentKind.ACTION) "Tarea" else "Nota"
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = { if (isEditing) cancelEdit() else onBack() }) {
                         Icon(
@@ -296,21 +301,7 @@ fun EntryDetailScreen(
                     }
                 },
                 actions = {
-                    if (isEditing) {
-                        IconButton(
-                            onClick = {
-                                requestedLocalReanalysis = false
-                                editor.save(entryId, requireLocalModel = false)
-                            },
-                            enabled = editedText.isNotBlank() &&
-                                !savingEdit && !recordingCorrection && !transcribingCorrection
-                        ) {
-                            Icon(
-                                Icons.Default.Check,
-                                contentDescription = "Guardar cambios"
-                            )
-                        }
-                    } else {
+                    if (!isEditing) {
                         Box {
                             IconButton(onClick = { showMenu = true }) {
                                 Icon(Icons.Default.MoreVert, contentDescription = "Más opciones")
@@ -349,7 +340,12 @@ fun EntryDetailScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
-            EntryHeadline(entry, dateFormat)
+            EntryHeadline(
+                entry = entry,
+                dateFormat = dateFormat,
+                showTitle = !isEditing,
+                onEdit = if (!isEditing) { { editor.start(entry.displayText) } } else null
+            )
             Spacer(Modifier.height(16.dp))
             if (isEditing) {
                 OutlinedTextField(
@@ -462,25 +458,6 @@ fun EntryDetailScreen(
                     }
                 }
             } else {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { editor.start(entry.displayText) }
-                        .padding(vertical = 4.dp)
-                ) {
-                    Text(
-                        entry.displayText,
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "Toca el texto para editarlo o corrígelo con tu voz.",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = LocalTramaColors.current.mutedText
-                    )
-                }
-                Spacer(Modifier.height(12.dp))
                 Button(
                     onClick = {
                         editor.start(entry.displayText)
@@ -557,14 +534,11 @@ fun EntryDetailScreen(
             )
 
             Spacer(Modifier.height(24.dp))
-            Text("Información", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(8.dp))
-            SoftCard(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                    DetailRow("Creada", dateFormat.format(Date(entry.createdAt)))
-                    entry.dueDate?.let { DetailRow("Para", dateFormat.format(Date(it))) }
-                    DetailRow("Origen", if (entry.source == Source.PHONE) "Teléfono" else "Reloj")
-                }
+            SectionRule(title = "Información")
+            Column(Modifier.padding(horizontal = 4.dp)) {
+                DetailRow("Creada", dateFormat.format(Date(entry.createdAt)))
+                entry.dueDate?.let { DetailRow("Para", dateFormat.format(Date(it))) }
+                DetailRow("Origen", if (entry.source == Source.PHONE) "Teléfono" else "Reloj")
             }
             Spacer(Modifier.height(24.dp))
         }
@@ -669,8 +643,18 @@ private fun DetailStateScaffold(onBack: () -> Unit, content: @Composable () -> U
 }
 
 @Composable
-private fun EntryHeadline(entry: DiaryEntry, dateFormat: SimpleDateFormat) {
-    Column {
+private fun EntryHeadline(
+    entry: DiaryEntry,
+    dateFormat: SimpleDateFormat,
+    showTitle: Boolean,
+    onEdit: (() -> Unit)?
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (onEdit != null) Modifier.clickable(onClick = onEdit) else Modifier)
+            .padding(vertical = 4.dp)
+    ) {
         val accent = when (entry.priority) {
             EntryPriority.URGENT -> MaterialTheme.colorScheme.error
             EntryPriority.HIGH -> LocalTramaColors.current.warn
@@ -691,6 +675,21 @@ private fun EntryHeadline(entry: DiaryEntry, dateFormat: SimpleDateFormat) {
                 statusLabel(entry.status),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if (showTitle) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                entry.displayText,
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Toca el texto para editarlo o corrígelo con tu voz.",
+                style = MaterialTheme.typography.labelMedium,
+                color = LocalTramaColors.current.mutedText
             )
         }
         entry.dueDate?.let {
