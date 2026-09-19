@@ -37,17 +37,20 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
@@ -310,7 +313,20 @@ fun SettingsScreen(
     // Backup state
     var backupInProgress by remember { mutableStateOf(false) }
     var backupLocationName by remember { mutableStateOf(AutoBackupWorker.getBackupFileName(context)) }
+    var backupStatusVersion by remember { mutableIntStateOf(0) }
     var diagnosticsExportInProgress by remember { mutableStateOf(false) }
+
+    DisposableEffect(context) {
+        val prefs = context.getSharedPreferences("backup", Context.MODE_PRIVATE)
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == "last_backup" || key == "last_backup_count" || key == "last_error") {
+                backupStatusVersion += 1
+                backupInProgress = false
+            }
+        }
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
 
     // SAF launchers — CreateDocument works with Google Drive (OpenDocumentTree doesn't)
     val backupFileSetupLauncher = rememberLauncherForActivityResult(
@@ -331,12 +347,13 @@ fun SettingsScreen(
         AutoBackupWorker.setBackupFile(context, uri, name ?: "trama-backup.json")
         backupLocationName = name ?: "trama-backup.json"
         // Trigger immediate backup so the file isn't empty
+        backupInProgress = true
         AutoBackupWorker.runNow(context)
         scope.launch {
             settings.setBackupEnabled(true)
             BackupScheduler.schedule(context, backupHour, backupMinute)
         }
-        Toast.makeText(context, "Backup configurado — guardando ahora...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "Copia configurada; guardando ahora…", Toast.LENGTH_SHORT).show()
     }
 
     val exportLauncher = rememberLauncherForActivityResult(
@@ -349,7 +366,11 @@ fun SettingsScreen(
                 val count = viewModel.exportBackup(uri)
                 Toast.makeText(context, "$count entradas exportadas", Toast.LENGTH_SHORT).show()
                 context.getSharedPreferences("backup", Context.MODE_PRIVATE)
-                    .edit().putLong("last_backup", System.currentTimeMillis()).apply()
+                    .edit()
+                    .putLong("last_backup", System.currentTimeMillis())
+                    .putInt("last_backup_count", count)
+                    .remove("last_error")
+                    .apply()
             } catch (e: Exception) {
                 Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
             }
@@ -724,7 +745,11 @@ fun SettingsScreen(
                     icon = Icons.Default.Security,
                     title = SettingsSection.PRIVACY_DATA.title,
                     subtitle = SettingsSection.PRIVACY_DATA.subtitle,
-                    summary = "Análisis local ${if (gemmaState is GemmaModelManager.DownloadState.Downloaded) "disponible" else "sin descargar"} · copia ${if (backupEnabled) "activa" else "desactivada"}",
+                    summary = "Modelo ${when {
+                        gemmaState !is GemmaModelManager.DownloadState.Downloaded -> "sin instalar"
+                        localModelEnabled -> "listo"
+                        else -> "desactivado"
+                    }} · copia ${if (backupEnabled) "diaria a las %02d:%02d".format(backupHour, backupMinute) else "desactivada"}",
                     onClick = { onOpenSection(SettingsSection.PRIVACY_DATA) },
                     accent = tramaColors.watch,
                 )
@@ -1776,17 +1801,10 @@ fun SettingsScreen(
             if (section == SettingsSection.PRIVACY_DATA) {
             SectionHeader("Análisis local")
 
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-                ),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.fillMaxWidth()) {
                     Text(
                         "Procesamiento local",
-                        style = MaterialTheme.typography.titleSmall,
+                        style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
@@ -1795,6 +1813,13 @@ fun SettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
                     )
+
+                    LocalModelStatus(
+                        state = gemmaState,
+                        enabled = localModelEnabled,
+                        modelName = selectedModelName
+                    )
+                    Spacer(Modifier.height(12.dp))
 
                     when (val state = gemmaState) {
                         is GemmaModelManager.DownloadState.NotDownloaded -> {
@@ -1893,13 +1918,22 @@ fun SettingsScreen(
                                             scope.launch {
                                                 val response = GemmaClient.generate(
                                                     context,
-                                                    "Responde exactamente con la palabra OK.",
-                                                    maxTokens = 8
+                                                    """
+                                                    Extrae la acción de esta frase: "Mañana a las nueve tengo que llamar a Marta".
+                                                    Responde solo con JSON válido usando exactamente este formato:
+                                                    {"action":"texto breve de la acción"}
+                                                    """.trimIndent(),
+                                                    maxTokens = 64,
+                                                    responsePrefix = "{"
                                                 )
-                                                modelTestStatus = if (response.isNullOrBlank()) {
-                                                    "Modelo incompatible con esta versión de Trama"
-                                                } else {
-                                                    "Modelo operativo"
+                                                val normalized = response.orEmpty().lowercase()
+                                                modelTestStatus = when {
+                                                    response.isNullOrBlank() ->
+                                                        "El modelo no ha respondido. Comprueba el archivo seleccionado."
+                                                    "llamar" in normalized && "marta" in normalized ->
+                                                        "Modelo operativo: ha extraído «Llamar a Marta»."
+                                                    else ->
+                                                        "El modelo responde, pero no extrae acciones con suficiente precisión."
                                                 }
                                                 modelTestInProgress = false
                                             }
@@ -1916,7 +1950,7 @@ fun SettingsScreen(
                                         Text(
                                             status,
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = if (status == "Modelo operativo") MaterialTheme.colorScheme.primary
+                                            color = if (status.startsWith("Modelo operativo")) MaterialTheme.colorScheme.primary
                                             else MaterialTheme.colorScheme.error,
                                             modifier = Modifier.padding(top = 6.dp)
                                         )
@@ -1971,7 +2005,6 @@ fun SettingsScreen(
                             }
                         }
                     }
-                }
             }
 
             if (showDeleteLocalModelDialog) {
@@ -2291,42 +2324,44 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            val backupPrefs = remember { context.getSharedPreferences("backup", Context.MODE_PRIVATE) }
-            val lastBackup = remember { backupPrefs.getLong("last_backup", 0L) }
-            val lastCount = remember { backupPrefs.getInt("last_backup_count", 0) }
-            val lastError = remember { AutoBackupWorker.getLastError(context) }
-            if (lastBackup > 0) {
-                val dateStr = java.text.SimpleDateFormat("d MMM yyyy, HH:mm",
-                    java.util.Locale("es")).format(lastBackup)
-                Text(
-                    "Último: $dateStr ($lastCount elementos)",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(8.dp))
+            val lastBackup = remember(backupStatusVersion) {
+                AutoBackupWorker.getLastBackupTime(context)
             }
-            if (lastError != null) {
-                Text(
-                    "⚠ $lastError",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error
-                )
-                Spacer(modifier = Modifier.height(8.dp))
+            val lastCount = remember(backupStatusVersion) {
+                AutoBackupWorker.getLastBackupCount(context)
             }
+            val lastError = remember(backupStatusVersion) {
+                AutoBackupWorker.getLastError(context)
+            }
+            BackupStatus(
+                inProgress = backupInProgress,
+                lastBackup = lastBackup,
+                lastCount = lastCount,
+                lastError = lastError
+            )
+            Spacer(modifier = Modifier.height(8.dp))
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
                 if (backupLocationName != null) {
                     FilledTonalButton(
                         onClick = {
+                            backupInProgress = true
                             AutoBackupWorker.runNow(context)
-                            Toast.makeText(context, "Backup iniciado...", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Creando copia…", Toast.LENGTH_SHORT).show()
                         },
                         enabled = !backupInProgress,
                         shape = RoundedCornerShape(10.dp)
                     ) {
-                        Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        if (backupInProgress) {
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        }
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Crear copia")
+                        Text(if (backupInProgress) "Creando…" else "Crear copia ahora")
                     }
                 }
 
@@ -2594,6 +2629,147 @@ private fun PatternLegendChip(
             color = contentColor,
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
         )
+    }
+}
+
+@Composable
+private fun LocalModelStatus(
+    state: GemmaModelManager.DownloadState,
+    enabled: Boolean,
+    modelName: String
+) {
+    val (title, detail, color, icon) = when (state) {
+        is GemmaModelManager.DownloadState.NotDownloaded -> ModelStatusPresentation(
+            "Sin instalar",
+            "Descarga un modelo para analizar tareas y reuniones en el dispositivo.",
+            MaterialTheme.colorScheme.onSurfaceVariant,
+            Icons.Default.CloudDownload
+        )
+        is GemmaModelManager.DownloadState.Downloading -> ModelStatusPresentation(
+            "Descargando ${state.progress}%",
+            "Puedes salir de esta pantalla mientras termina la descarga.",
+            MaterialTheme.colorScheme.primary,
+            Icons.Default.CloudDownload
+        )
+        is GemmaModelManager.DownloadState.Downloaded -> if (enabled) {
+            ModelStatusPresentation(
+                "Listo para analizar",
+                modelName,
+                com.trama.app.ui.theme.LocalTramaColors.current.teal,
+                Icons.Default.CheckCircle
+            )
+        } else {
+            ModelStatusPresentation(
+                "Instalado, pero desactivado",
+                modelName,
+                com.trama.app.ui.theme.LocalTramaColors.current.warn,
+                Icons.Default.AutoAwesome
+            )
+        }
+        is GemmaModelManager.DownloadState.Failed -> ModelStatusPresentation(
+            "Necesita atención",
+            state.message,
+            MaterialTheme.colorScheme.error,
+            Icons.Default.Error
+        )
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = color.copy(alpha = 0.1f),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+private data class ModelStatusPresentation(
+    val title: String,
+    val detail: String,
+    val color: Color,
+    val icon: ImageVector
+)
+
+@Composable
+private fun BackupStatus(
+    inProgress: Boolean,
+    lastBackup: Long?,
+    lastCount: Int,
+    lastError: String?
+) {
+    val successColor = com.trama.app.ui.theme.LocalTramaColors.current.teal
+    val color = when {
+        inProgress -> MaterialTheme.colorScheme.primary
+        lastError != null -> MaterialTheme.colorScheme.error
+        lastBackup != null -> successColor
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val title = when {
+        inProgress -> "Creando copia"
+        lastError != null -> "La última copia falló"
+        lastBackup != null -> "Copia actualizada"
+        else -> "Aún no hay copias"
+    }
+    val detail = when {
+        inProgress -> "Guardando los datos y las transcripciones…"
+        lastError != null -> lastError
+        lastBackup != null -> {
+            val date = java.text.SimpleDateFormat(
+                "d MMM yyyy, HH:mm",
+                java.util.Locale("es")
+            ).format(lastBackup)
+            "$date · $lastCount elementos"
+        }
+        else -> "Configura un archivo o crea una copia manual."
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = color.copy(alpha = 0.1f),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (inProgress) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.dp,
+                    color = color
+                )
+            } else {
+                Icon(
+                    when {
+                        lastError != null -> Icons.Default.Error
+                        lastBackup != null -> Icons.Default.CheckCircle
+                        else -> Icons.Default.Schedule
+                    },
+                    contentDescription = null,
+                    tint = color,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
     }
 }
 

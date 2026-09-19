@@ -97,7 +97,7 @@ class AutoBackupWorker(
                 val fileUri = getBackupFileUri(applicationContext)
                 if (fileUri == null) {
                     Log.w(TAG, "No backup file configured, skipping")
-                    saveLastError(applicationContext, "No hay archivo de backup configurado")
+                    saveLastError(applicationContext, "No hay un archivo de copia configurado.")
                     return@withContext Result.success()
                 }
 
@@ -123,7 +123,7 @@ class AutoBackupWorker(
                 Log.e(TAG, "Auto-backup permission lost", e)
                 saveLastError(
                     applicationContext,
-                    "Permiso de escritura perdido. Reconfigura la ubicación del backup."
+                    "Se ha perdido el permiso de escritura. Vuelve a elegir el archivo de la copia."
                 )
                 Result.failure()
             } catch (e: Exception) {
