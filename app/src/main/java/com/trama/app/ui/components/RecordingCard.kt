@@ -128,7 +128,7 @@ fun RecordingCard(
 
                 // Title or fallback
                 Text(
-                    text = recording.title ?: "Grabación sin procesar",
+                    text = recording.title ?: "Reunión sin procesar",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,

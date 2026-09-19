@@ -471,6 +471,7 @@ class WatchKeywordListenerService : LifecycleService() {
 
         val intentId = result.pattern?.id ?: result.customKeyword ?: "nota"
         Log.i(TAG, "Intent '$intentId' [${result.label}]: '${text.take(60)}'")
+        WatchServiceController.notifyTriggerRecognized()
         lifecycleScope.launch(Dispatchers.IO) {
             MicCoordinator.sendWatchDebug(applicationContext, "trigger detectado", result.capturedText)
         }
@@ -757,6 +758,7 @@ class WatchKeywordListenerService : LifecycleService() {
 
         lastSavedText = text
         lastSavedTime = now
+        WatchServiceController.notifyTriggerRecognized()
 
         if (captureInFlight) {
             Log.i(TAG, "Skipping trigger capture because another capture is in flight")

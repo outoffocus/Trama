@@ -167,7 +167,7 @@ private fun CaptureFab(
             enabled = enabled,
             shape = CircleShape,
             color = if (selected) accent else colors.surface2,
-            shadowElevation = 10.dp,
+            shadowElevation = 3.dp,
             border = BorderStroke(
                 width = if (selected) 0.dp else 1.dp,
                 color = if (selected) Color.Transparent else accent.copy(alpha = 0.4f)

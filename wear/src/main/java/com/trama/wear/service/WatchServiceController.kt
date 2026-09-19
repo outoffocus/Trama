@@ -10,7 +10,9 @@ import com.trama.shared.sync.MicCoordinator
 import com.trama.wear.sync.WatchToPhoneSyncer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,6 +37,10 @@ object WatchServiceController {
 
     private val _isPhoneActive = MutableStateFlow(false)
     val isPhoneActive: StateFlow<Boolean> = _isPhoneActive.asStateFlow()
+
+    private val _triggerRecognized = MutableStateFlow(false)
+    val triggerRecognized: StateFlow<Boolean> = _triggerRecognized.asStateFlow()
+    private var triggerResetJob: Job? = null
 
     /**
      * Start keyword listening. Stops recording if active (modes are exclusive).
@@ -108,6 +114,7 @@ object WatchServiceController {
         allowBackgroundStart: Boolean,
         directCapture: Boolean
     ) {
+        clearTriggerRecognized()
         // Stop keyword listener — modes are exclusive
         if (_isRunning.value) {
             expectedStop = true
@@ -163,6 +170,7 @@ object WatchServiceController {
     }
 
     fun stop(context: Context) {
+        clearTriggerRecognized()
         expectedStop = true
         context.stopService(Intent(context, WatchKeywordListenerService::class.java))
         _isRunning.value = false
@@ -207,6 +215,7 @@ object WatchServiceController {
      * Transfer active mode to phone. Stops everything locally.
      */
     fun transferToPhone(context: Context) {
+        clearTriggerRecognized()
         val wasRecording = RecordingController.isRecording.value
 
         // Stop everything locally
@@ -283,6 +292,22 @@ object WatchServiceController {
         startInFlight = false
     }
 
+    /** Shows the recognized-keyword state long enough to be understood without animation. */
+    fun notifyTriggerRecognized() {
+        triggerResetJob?.cancel()
+        _triggerRecognized.value = true
+        triggerResetJob = scope.launch {
+            delay(3_500L)
+            _triggerRecognized.value = false
+        }
+    }
+
+    private fun clearTriggerRecognized() {
+        triggerResetJob?.cancel()
+        triggerResetJob = null
+        _triggerRecognized.value = false
+    }
+
     fun isUserEnabled(context: Context): Boolean {
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getBoolean(KEY_USER_ENABLED, false)
@@ -299,6 +324,7 @@ object WatchServiceController {
     }
 
     fun notifyPhoneActive(context: Context) {
+        clearTriggerRecognized()
         expectedStop = true
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().putBoolean(KEY_PHONE_ACTIVE, true).apply()

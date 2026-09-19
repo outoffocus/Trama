@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -280,6 +281,12 @@ fun SettingsScreen(
     var hasCalendarReadPermission by remember {
         mutableStateOf(CalendarHelper.hasCalendarPermission(context))
     }
+    var gmailAvailable by remember {
+        mutableStateOf(context.packageManager.getLaunchIntentForPackage("com.google.android.gm") != null)
+    }
+    var keepAvailable by remember {
+        mutableStateOf(context.packageManager.getLaunchIntentForPackage("com.google.android.keep") != null)
+    }
     var calendarImportInProgress by remember { mutableStateOf(false) }
     var speakerStateVersion by remember { mutableIntStateOf(0) }
     var speakerTrainingInProgress by remember { mutableStateOf(false) }
@@ -450,6 +457,11 @@ fun SettingsScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
+                hasCalendarReadPermission = CalendarHelper.hasCalendarPermission(context)
+                gmailAvailable = context.packageManager
+                    .getLaunchIntentForPackage("com.google.android.gm") != null
+                keepAvailable = context.packageManager
+                    .getLaunchIntentForPackage("com.google.android.keep") != null
                 backgroundLocationGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
                     ContextCompat.checkSelfPermission(
                         context,
@@ -1490,7 +1502,31 @@ fun SettingsScreen(
             // IA Y RESUMEN
             // ═══════════════════════════════════════════════════════════════
             if (section == SettingsSection.AGENDA_CALENDARS) {
-            SectionHeader("Agenda y automatizaciones")
+            SectionHeader("Integraciones")
+
+            IntegrationStatusRow(
+                icon = Icons.Default.CalendarMonth,
+                title = "Google Calendar",
+                status = if (hasCalendarReadPermission) "Conectado" else "Necesita acceso",
+                detail = "Eventos, avisos y llamadas programadas",
+                available = hasCalendarReadPermission
+            )
+            IntegrationStatusRow(
+                icon = Icons.Default.Email,
+                title = "Gmail",
+                status = if (gmailAvailable) "Disponible" else "No instalada",
+                detail = "Las tareas de correo abren un borrador para revisarlo",
+                available = gmailAvailable
+            )
+            IntegrationStatusRow(
+                icon = Icons.Default.Edit,
+                title = "Google Keep",
+                status = if (keepAvailable) "Disponible" else "No instalada",
+                detail = "Las notas se comparten con Keep antes de guardarlas",
+                available = keepAvailable
+            )
+
+            SectionDivider()
 
             SectionHeader("Google Calendar")
 
@@ -2630,6 +2666,59 @@ private fun PatternLegendChip(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
         )
     }
+}
+
+@Composable
+private fun IntegrationStatusRow(
+    icon: ImageVector,
+    title: String,
+    status: String,
+    detail: String,
+    available: Boolean
+) {
+    val t = com.trama.app.ui.theme.LocalTramaColors.current
+    val accent = if (available) t.teal else t.warn
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Surface(
+            color = accent.copy(alpha = 0.12f),
+            shape = RoundedCornerShape(10.dp)
+        ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = accent,
+                modifier = Modifier.padding(9.dp).size(20.dp)
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    status,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = accent,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Text(
+                detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+    HorizontalDivider(color = t.hairline)
 }
 
 @Composable

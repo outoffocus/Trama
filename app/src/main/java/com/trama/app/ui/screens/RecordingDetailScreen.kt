@@ -324,7 +324,7 @@ fun RecordingDetailScreen(
                         )
                     }
                     Text(
-                        text = rec.title ?: "Grabación sin procesar",
+                        text = rec.title ?: "Reunión sin procesar",
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onBackground,

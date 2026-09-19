@@ -1,10 +1,5 @@
 package com.trama.app.ui.components
 
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -25,10 +20,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -36,7 +29,7 @@ import com.trama.app.ui.theme.LocalTramaColors
 
 /**
  * Compact tinted indicator bar shown while a recording is active. Matches the
- * Trama Redesign v2 pattern: tinted surface with 1px border, pulsing dot,
+ * Trama Redesign v2 pattern: tinted surface with 1px border, static status dot,
  * monospaced timer and outlined Stop pill.
  */
 @Composable
@@ -49,14 +42,6 @@ fun RecordingIndicatorBar(
     val minutes = elapsedSeconds / 60
     val seconds = elapsedSeconds % 60
     val timeStr = "Grabando — %d:%02d".format(minutes, seconds)
-
-    val infiniteTransition = rememberInfiniteTransition(label = "rec_pulse")
-    val dotAlpha by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = 0.3f,
-        animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
-        label = "dot"
-    )
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -72,7 +57,6 @@ fun RecordingIndicatorBar(
             Box(
                 modifier = Modifier
                     .size(8.dp)
-                    .alpha(dotAlpha)
                     .clip(CircleShape)
                     .background(t.red)
             )

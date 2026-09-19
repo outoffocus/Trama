@@ -123,7 +123,7 @@ fun SectionRule(
     }
 }
 
-/** Status pill shown in headers. Single-line state indicator with a glowing dot. */
+/** Status pill shown in headers. Single-line state indicator with a static dot. */
 enum class TramaStatus { Idle, Listening, TriggerRecognized, Recording, Watch, Location, Error }
 
 @Composable
@@ -143,9 +143,6 @@ fun StatusPill(
         TramaStatus.Location -> Quad(t.teal, t.tealBg, t.teal, "Ubicación activa")
         TramaStatus.Error -> Quad(t.red, t.redBg, t.red, "Error de escucha")
     }
-    val pulse = status == TramaStatus.Listening || status == TramaStatus.Recording
-    val alpha = if (pulse) breathingAlpha() else 1f
-
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(8.dp),
@@ -159,7 +156,7 @@ fun StatusPill(
                 modifier = Modifier
                     .size(7.dp)
                     .clip(CircleShape)
-                    .background(dot.copy(alpha = alpha))
+                    .background(dot)
             )
             Spacer(Modifier.width(7.dp))
             Text(
@@ -177,21 +174,6 @@ fun StatusPill(
 }
 
 private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
-
-@Composable
-private fun breathingAlpha(): Float {
-    val infinite = rememberInfiniteTransition(label = "breathe")
-    val v by infinite.animateFloat(
-        initialValue = 0.55f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1100, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "breathe-alpha"
-    )
-    return v
-}
 
 /** Soft "chip" button used for context strips, suggestions and inline quick actions. */
 @Composable

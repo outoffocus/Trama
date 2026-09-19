@@ -47,6 +47,7 @@ fun WatchHomeScreen() {
     val context = LocalContext.current
     val serviceRunning by WatchServiceController.isRunning.collectAsState()
     val phoneActive by WatchServiceController.isPhoneActive.collectAsState()
+    val triggerRecognized by WatchServiceController.triggerRecognized.collectAsState()
     val isRecording by RecordingController.isRecording.collectAsState()
     val elapsedSeconds by RecordingController.elapsedSeconds.collectAsState()
     val recordingKind by RecordingController.recordingKind.collectAsState()
@@ -54,12 +55,12 @@ fun WatchHomeScreen() {
     val batteryLow = batteryPct in 1..20
     val isDirectCapture = isRecording && recordingKind == com.trama.wear.service.WatchRecordingService.KIND_DIRECT_CAPTURE
 
-    val listenColor = Color(0xFFC8753A)
-    val recordColor = Color(0xFFD45A4A)
-    val directColor = Color(0xFF35A88E)
-    val transferColor = Color(0xFF5588EE)
-    val idleSurface = Color(0xFF1C1C1F)
-    val mutedIcon = Color(0xFF6E6D68)
+    val listenColor = Color(0xFFD48A52)
+    val recordColor = Color(0xFFE06A5C)
+    val directColor = Color(0xFF79B8A6)
+    val transferColor = Color(0xFF6EA1FF)
+    val idleSurface = Color(0xFF171A1C)
+    val mutedIcon = Color(0xFF9A958C)
 
     ScalingLazyColumn(
         modifier = Modifier.fillMaxSize()
@@ -76,6 +77,7 @@ fun WatchHomeScreen() {
                     text = when {
                         isDirectCapture -> "Captura rápida"
                         isRecording -> "Reunión"
+                        triggerRecognized -> "Palabra clave reconocida"
                         serviceRunning -> "Escucha continua"
                         phoneActive -> "Control en teléfono"
                         else -> "Trama Watch"
@@ -92,6 +94,7 @@ fun WatchHomeScreen() {
                                 append("Grabando ")
                                 append("%02d:%02d".format(minutes, seconds))
                             }
+                            triggerRecognized -> append("Escuchando tu petición")
                             serviceRunning -> append("Escuchando en el reloj")
                             phoneActive -> append("El teléfono está escuchando")
                             else -> append("Elige un modo")
@@ -102,6 +105,7 @@ fun WatchHomeScreen() {
                     color = when {
                         isDirectCapture -> directColor
                         isRecording -> recordColor
+                        triggerRecognized -> directColor
                         serviceRunning -> listenColor
                         phoneActive -> transferColor
                         else -> Color.Gray
@@ -159,10 +163,13 @@ fun WatchHomeScreen() {
             item {
                 Chip(
                     onClick = {
-                        if (serviceRunning) WatchServiceController.stopByUser(context)
-                        else WatchServiceController.start(context)
+                        when {
+                            phoneActive -> WatchServiceController.reclaimFromPhone(context)
+                            serviceRunning -> WatchServiceController.stopByUser(context)
+                            else -> WatchServiceController.start(context)
+                        }
                     },
-                    enabled = !phoneActive && !batteryLow,
+                    enabled = !batteryLow,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
                     label = { Text(if (serviceRunning) "Pausar escucha" else "Escuchar aquí") },
                     icon = {
@@ -190,20 +197,15 @@ fun WatchHomeScreen() {
                     )
                 )
             }
-            item {
+            if (!phoneActive) item {
                 Chip(
-                    onClick = {
-                        if (phoneActive) WatchServiceController.reclaimFromPhone(context)
-                        else WatchServiceController.transferToPhone(context)
-                    },
+                    onClick = { WatchServiceController.transferToPhone(context) },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-                    label = {
-                        Text(if (phoneActive) "Recuperar aquí" else "Usar el teléfono")
-                    },
+                    label = { Text("Usar el teléfono") },
                     icon = { Icon(Icons.Default.PhoneAndroid, contentDescription = null) },
                     colors = ChipDefaults.chipColors(
-                        backgroundColor = if (phoneActive) transferColor else idleSurface,
-                        contentColor = if (phoneActive) Color.White else transferColor
+                        backgroundColor = idleSurface,
+                        contentColor = transferColor
                     )
                 )
             }
